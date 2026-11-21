@@ -1,4 +1,5 @@
 import type { MapProjection } from './geo';
+import { decodePng } from './png';
 
 const TILE = 256;
 const INVALID_RGB = (128 << 16) | (0 << 8) | 0;
@@ -21,8 +22,12 @@ export function decodeDemElevation(red: number, green: number, blue: number) {
   return (encoded < INVALID_VALUE ? encoded : encoded - VALUE_RANGE) * 0.01;
 }
 
-async function decodeTile(blob: Blob) {
-  const bitmap = await createImageBitmap(blob);
+/** Only for PNG layouts `decodePng` does not read: the canvas may be colour managed or carry noise. */
+async function canvasPixels(bytes: Uint8Array<ArrayBuffer>) {
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }), {
+    colorSpaceConversion: 'none',
+    premultiplyAlpha: 'none',
+  });
   const canvas = new OffscreenCanvas(TILE, TILE);
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) {
@@ -31,12 +36,16 @@ async function decodeTile(blob: Blob) {
   }
   context.drawImage(bitmap, 0, 0, TILE, TILE);
   bitmap.close();
-  const image = context.getImageData(0, 0, TILE, TILE).data;
+  return { channels: 4, data: context.getImageData(0, 0, TILE, TILE).data };
+}
+
+async function decodeTile(bytes: Uint8Array<ArrayBuffer>) {
+  const png = await decodePng(bytes);
+  const { channels, data } = png && png.width === TILE && png.height === TILE ? png : await canvasPixels(bytes);
   const values = new Float32Array(TILE * TILE);
   for (let index = 0; index < values.length; index += 1) {
-    const offset = index * 4;
-    values[index] =
-      decodeDemElevation(image[offset], image[offset + 1], image[offset + 2]) ?? Number.NaN;
+    const offset = index * channels;
+    values[index] = decodeDemElevation(data[offset], data[offset + 1], data[offset + 2]) ?? Number.NaN;
   }
   return values;
 }
@@ -51,7 +60,7 @@ async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSigna
       if (!response.ok) {
         continue;
       }
-      return await decodeTile(await response.blob());
+      return await decodeTile(new Uint8Array(await response.arrayBuffer()));
     } catch (error) {
       if (signal?.aborted) {
         throw error;

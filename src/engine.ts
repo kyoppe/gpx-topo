@@ -1,3 +1,4 @@
+import { nearestTurn } from './angle';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
 import { separation, type ScreenPoint } from './overlap';
 import { createRenderer, type DrawItem, type TextureLayer, type Vec3 } from './renderer';
@@ -1219,6 +1220,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     st.ev += (-2 * zeta * w * st.ev - w * w * (st.e - st.eT)) * dt;
     st.e += st.ev * dt;
     const ease = 1 - Math.exp(-dt * 10);
+    // whole turns may only be dropped once fully raised: on the way up the camera scales the turn, so it would jump
+    if (st.e >= 0.5 && st.eT >= 0.5 && Math.abs(st.yawT) > Math.PI) {
+      const turns = nearestTurn(st.yawT);
+      st.yaw -= turns;
+      st.yawT -= turns;
+    }
     st.yaw += (st.yawT - st.yaw) * ease;
     st.tilt += (st.tiltT - st.tilt) * ease;
     st.zoom *= Math.exp((Math.log(st.zoomT) - Math.log(st.zoom)) * ease);
@@ -1804,7 +1811,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       return;
     }
     if (moved > 4 && st.eT < 0.5) apart(1);
-    st.yawT = clamp(st.yawT - dx * 0.0055, -2.2, 2.2);
+    st.yawT -= dx * 0.0055;
     st.tiltT = clamp(st.tiltT - dy * 0.0045, -HERO.tilt + 0.12, 1.32 - HERO.tilt);
     need();
   };
