@@ -4,9 +4,9 @@ import { renderBasemaps, streamRelief } from './basemap';
 import { gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel } from './engine';
 import { calculateStats, parseGpx, serializeGpx, type GpxRoute } from './gpx';
-import { createMapProjection, pathD, projectTrack, waypointFromMap, type MapProjection } from './geo';
+import { createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
-import { planWaypoints, trackProgress } from './plan';
+import { defaultWaypoints, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { buildTerrain } from './terrain';
 
@@ -109,6 +109,41 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** A route as loaded: one that brings no waypoints gets the default ones, which then edit like any other. */
+function withWaypoints(route: GpxRoute): GpxRoute {
+  return route.waypoints.length ? route : { ...route, waypoints: defaultWaypoints(route.points) };
+}
+
+/** A waypoint's km: typing a new one moves it along the route once Enter is pressed or the field is left; Esc puts it back. */
+function KmField({ km, label, onCommit }: { km: number; label: string; onCommit: (km: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelled = useRef(false);
+  return (
+    <input
+      className="way-km"
+      inputMode="decimal"
+      spellCheck={false}
+      aria-label={label}
+      value={draft ?? km.toFixed(1)}
+      onFocus={(event) => {
+        cancelled.current = false;
+        setDraft(km.toFixed(1));
+        event.currentTarget.select();
+      }}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') cancelled.current = true;
+        if (event.key === 'Enter' || event.key === 'Escape') event.currentTarget.blur();
+      }}
+      onBlur={() => {
+        const value = parseKm(draft ?? '');
+        setDraft(null);
+        if (!cancelled.current && value !== null) onCommit(value);
+      }}
+    />
+  );
+}
+
 function Fallback() {
   return (
     <main className="unsupported">
@@ -136,6 +171,7 @@ export default function App() {
   const [demGrid, setDemGrid] = useState<{ projection: MapProjection; grid: ElevationGrid } | null>(null);
   const [apart, setApart] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [addKm, setAddKm] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [detailWanted, setDetailWanted] = useState<DetailRequest | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
@@ -254,7 +290,7 @@ export default function App() {
         return response.text();
       })
       .then((xml) => {
-        if (!cancelled && !touchedRef.current) setRoute(parseGpx(xml));
+        if (!cancelled && !touchedRef.current) setRoute(withWaypoints(parseGpx(xml)));
       })
       .catch(() => setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。'));
     return () => {
@@ -340,24 +376,72 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  // ---------------------------------------------------------------- engine
-  const onMapClick = useCallback(
-    (x: number, y: number) => {
-      if (!projection) return;
+  // ---------------------------------------------------------------- waypoints
+  /** Where a waypoint `at` km along the route stands (clamped to the route). */
+  const placeAt = useCallback(
+    (at: number) => {
+      if (!points || !progress) return null;
+      const spot = pointAtKm(points, progress.km, at);
+      if (spot.ele === null && terrain && projection) {
+        const p = projection.project(spot);
+        spot.ele = Math.round(terrain.elev(p.x, p.y));
+      }
+      return spot;
+    },
+    [points, progress, terrain, projection],
+  );
+  const addWay = useCallback(
+    (at: number) => {
+      const spot = placeAt(at);
+      if (!spot) return;
       setRoute((current) => {
         if (!current) return current;
-        const count = current.waypoints.filter((w) => w.id.startsWith('user-')).length + 1;
-        const ele = terrain ? Math.round(terrain.elev(x, y)) : null;
-        const waypoint = waypointFromMap(x, y, projection, `user-${Date.now().toString(36)}`, `WP ${count}`, ele);
-        setToast(`${waypoint.name} を追加しました。`);
+        const waypoint = { id: `user-${Date.now().toString(36)}`, name: nextWaypointName(current.waypoints), ...spot };
+        setToast(`${waypoint.name} を ${spot.km.toFixed(1)} km に追加しました。`);
         return { ...current, waypoints: [...current.waypoints, waypoint] };
       });
+    },
+    [placeAt],
+  );
+  const editWay = (id: string, change: Partial<GpxRoute['waypoints'][number]>) =>
+    setRoute((current) => current && { ...current, waypoints: current.waypoints.map((w) => (w.id === id ? { ...w, ...change } : w)) });
+  const moveWay = (id: string, at: number) => {
+    const spot = placeAt(at);
+    if (spot) editWay(id, spot);
+  };
+  const removeWay = (id: string) => {
+    setRoute((current) => current && { ...current, waypoints: current.waypoints.filter((w) => w.id !== id) });
+    setOverrides((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setPop((current) => (current?.kind === 'time' && current.target === id ? null : current));
+  };
+  const addAtTypedKm = () => {
+    const value = parseKm(addKm);
+    if (value === null) {
+      setToast('追加する位置を km で入力してください。');
+      return;
+    }
+    addWay(value);
+    setAddKm('');
+  };
+  const onRouteClick = useCallback(
+    (km: number | null) => {
+      if (km === null) {
+        setToast('ルートの上をクリックしてください。');
+        return;
+      }
+      addWay(km);
       setPlacing(false);
     },
-    [projection, terrain],
+    [addWay],
   );
-  const mapClickRef = useRef(onMapClick);
-  mapClickRef.current = onMapClick;
+  const routeClickRef = useRef(onRouteClick);
+  routeClickRef.current = onRouteClick;
+
+  // ---------------------------------------------------------------- engine
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current as HtmlInCanvasElement | null;
@@ -369,7 +453,7 @@ export default function App() {
     try {
       engine = createEngine(canvas, page, {
         onApartChange: setApart,
-        onMapClick: (x, y) => mapClickRef.current(x, y),
+        onRouteClick: (km) => routeClickRef.current(km),
         onDetail: setDetailWanted,
         onTimeCommit: (target, minutes) => {
           if (target === 'start') setStartTime(clockInput(minutes));
@@ -502,7 +586,7 @@ export default function App() {
     if (!file) return;
     touchedRef.current = true;
     try {
-      const next = parseGpx(await file.text());
+      const next = withWaypoints(parseGpx(await file.text()));
       engineRef.current?.together();
       setPop(null);
       setOverrides({});
@@ -624,12 +708,6 @@ export default function App() {
                     aria-label="ルート名"
                     onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
                   />
-                  <p data-selectable="">
-                    {points ? `${points.length.toLocaleString('ja-JP')} 点` : '-'} ·{' '}
-                    {terrain
-                      ? `${terrain.grid.source === 'gsi-dem' ? 'GSI DEM10B' : 'GPX 標高'} · 等高線 10 m (計曲線 50 m) · 高さ 1:1`
-                      : '地形を読み込み中'}
-                  </p>
                 </div>
               </section>
 
@@ -751,21 +829,57 @@ export default function App() {
                 <div className="in in-ways" data-piece="content" drawable="">
                   <div className="row">
                     <span className="label">ウェイポイント</span>
-                    <small data-selectable="">押すとその時刻の光になります</small>
+                    <small data-selectable="">番号を押すとその時刻の光になります</small>
                   </div>
+                  <form
+                    className="way-add"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      addAtTypedKm();
+                    }}
+                  >
+                    <input
+                      className="way-add-km"
+                      inputMode="decimal"
+                      spellCheck={false}
+                      placeholder="km"
+                      aria-label="追加する位置 (km)"
+                      value={addKm}
+                      onChange={(event) => setAddKm(event.target.value)}
+                    />
+                    <span>km に</span>
+                    <button type="submit" className="field">
+                      追加
+                    </button>
+                  </form>
                   <ol className="ways" data-scroll="">
                     {ways.map((way, index) => (
                       <li key={way.id} className="way" data-way={way.id}>
-                        <button type="button" className="way-go" onClick={() => engineRef.current?.focusWay(way.id)}>
+                        <button
+                          type="button"
+                          className="way-go"
+                          aria-label={`${way.name} の時刻の光にする`}
+                          onClick={() => engineRef.current?.focusWay(way.id)}
+                        >
                           <b>{index + 1}</b>
-                          <span>
-                            <strong>{way.name}</strong>
-                            <small>
-                              {way.km.toFixed(1)} km · {way.ele != null ? `${Math.round(way.ele).toLocaleString('ja-JP')} m` : '-'}
-                              {way.estimated ? ' · 推定' : ''}
-                            </small>
-                          </span>
                         </button>
+                        <span className="way-body">
+                          <input
+                            className="way-name"
+                            value={way.name}
+                            spellCheck={false}
+                            aria-label={`${index + 1} 番の名前`}
+                            onChange={(event) => editWay(way.id, { name: event.target.value })}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') event.currentTarget.blur();
+                            }}
+                          />
+                          <small>
+                            <KmField km={way.km} label={`${way.name} の km`} onCommit={(km) => moveWay(way.id, km)} />
+                            km · {way.ele != null ? `${Math.round(way.ele).toLocaleString('ja-JP')} m` : '-'}
+                            {way.estimated ? ' · 推定' : ''}
+                          </small>
+                        </span>
                         <button
                           id={`pop-${way.id}`}
                           type="button"
@@ -776,6 +890,9 @@ export default function App() {
                         >
                           {clockInput(way.minutes)}
                           {way.minutes >= 1440 && <small>+{Math.floor(way.minutes / 1440)}d</small>}
+                        </button>
+                        <button type="button" className="way-del" aria-label={`${way.name} を削除`} onClick={() => removeWay(way.id)}>
+                          ×
                         </button>
                       </li>
                     ))}
@@ -942,7 +1059,7 @@ export default function App() {
               aria-pressed={placing}
               onClick={() => setPlacing((on) => !on)}
             >
-              {placing ? '地図をクリック' : 'ウェイポイント追加'}
+              {placing ? 'ルートをクリック' : 'ウェイポイント追加'}
             </button>
             <button
               type="button"

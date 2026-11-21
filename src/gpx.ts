@@ -13,6 +13,8 @@ export type Waypoint = {
   ele: number | null;
   desc?: string;
   targetTime?: string;
+  /** Distance along the route (km) of a waypoint placed on it; changing it moves the waypoint along the route. */
+  km?: number;
 };
 
 export type GpxRoute = {

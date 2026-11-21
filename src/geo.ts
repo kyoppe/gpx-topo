@@ -1,4 +1,4 @@
-import type { GpxRoute, TrackPoint, Waypoint } from './gpx';
+import type { GpxRoute, TrackPoint } from './gpx';
 
 const TILE = 256;
 const EARTH_CIRCUMFERENCE_M = 40_075_016.686;
@@ -169,14 +169,18 @@ export function pathD(points: readonly { x: number; y: number }[]) {
   return d;
 }
 
-export function waypointFromMap(
-  x: number,
-  y: number,
-  projection: MapProjection,
-  id: string,
-  name: string,
-  ele: number | null,
-): Waypoint {
-  const position = projection.inverse(x, y);
-  return { id, name, lat: position.lat, lon: position.lon, ele };
+/** The point of a line through `line` (each with its km along the route) nearest to (x, y): its km and how far off it is. */
+export function nearestAlong(line: readonly { x: number; y: number; km: number }[], x: number, y: number) {
+  let best: { km: number; dist: number } | null = null;
+  for (let i = 0; i + 1 < line.length; i += 1) {
+    const a = line[i];
+    const b = line[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2)) : 0;
+    const dist = Math.hypot(a.x + dx * t - x, a.y + dy * t - y);
+    if (!best || dist < best.dist) best = { km: a.km + (b.km - a.km) * t, dist };
+  }
+  return best;
 }

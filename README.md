@@ -20,20 +20,22 @@ The bundled `SFMT2026-110km.gpx` fixture loads first. `GPX を開く` loads a lo
 | --- | --- |
 | `立体にする` / `平面に戻す` | Raise the map into the 3D model, or put it back |
 | Drag | Turn the model, as many times round as you like (the side panel turns with it until it leans 20 degrees on screen, then holds there, and swings level and over to the other side as the map passes half a turn; its cards step aside rather than cover each other). Going back to the plain view turns the short way |
-| Right drag, middle drag, or Shift + drag | Move the model |
+| Right drag, middle drag, or Shift + drag | Move the model. A right drag works from anywhere, pins and panel included; the browser menu stays away except in text fields |
 | Wheel (or pinch) in | On the flat map, raise it into the 3D model; in 3D, zoom toward the pointer. Close views fetch finer tiles for the part in view, nearest the middle first |
 | Wheel (or pinch) out | Zoom out; once all the way out, lower the model back to the flat map |
 | Hover the ground (3D) | Show the elevation there and light the contour at that height |
 | Esc | Close an open picker, or go back to the flat map |
-| Click a waypoint row or map pin | Move the sun to that waypoint's target time |
+| Click a waypoint's number or map pin | Move the sun to that waypoint's target time |
 | Sun slider | Scrub the time of day |
 | Start, date, or a waypoint's time | Open a picker: drag, wheel, arrow keys, or type four digits; Enter confirms, Esc cancels. Hovering a day previews its light |
-| `ウェイポイント追加`, then click the map | Add a waypoint |
-| `PNG` / `GPX` | Download the current view, or the route with the file's and the added waypoints |
+| `ウェイポイント追加`, then click the route | Add a waypoint there. Clicks off the route add nothing |
+| Type a km in the waypoint card and press `追加` | Add a waypoint that far along the route (full-width digits work too) |
+| A waypoint's name or km in the card | Rename it, or move it along the route; `×` deletes it |
+| `PNG` / `GPX` | Download the current view, or the route with its waypoints as they are now |
 
 Raising and zooming are separate wheel gestures: pause the wheel to go from one to the next. A page left part way up finishes the way the wheel was going.
 
-Waypoints without a target time get an estimate of 6 min/km plus 0.1 min per metre climbed. A file without waypoints gets a start, a checkpoint every 25 km, the high point, and the finish.
+Waypoints without a target time get an estimate of 6 min/km plus 0.1 min per metre climbed. A file without waypoints gets a start, a checkpoint every 25 km, the high point, and the finish, which can be renamed, moved, and deleted like any other.
 
 ## Local development
 

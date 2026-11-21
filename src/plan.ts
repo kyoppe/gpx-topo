@@ -1,4 +1,4 @@
-import type { GpxRoute, TrackPoint } from './gpx';
+import type { GpxRoute, TrackPoint, Waypoint } from './gpx';
 import { parseClock } from './sun';
 
 const EARTH_RADIUS_M = 6_371_000;
@@ -16,7 +16,6 @@ export type PlannedWaypoint = {
   minutes: number;
   /** True when the time is the estimate, not a target the user or the file gave. */
   estimated: boolean;
-  auto: boolean;
 };
 
 function meters(a: TrackPoint, b: TrackPoint) {
@@ -39,6 +38,47 @@ export function trackProgress(points: readonly TrackPoint[]) {
     up[i] = up[i - 1] + (a !== null && b !== null && b > a ? b - a : 0);
   }
   return { km, up };
+}
+
+/** Where `at` km from the start falls on the track (clamped to it): the point before it and the share (0 to 1) of the way to the next. */
+export function alongTrack(km: ArrayLike<number>, at: number) {
+  const d = Math.max(0, Math.min(km[km.length - 1], at));
+  let a = 0;
+  let b = km.length - 1;
+  while (b - a > 1) {
+    const m = (a + b) >> 1;
+    if (km[m] <= d) a = m;
+    else b = m;
+  }
+  const span = km[b] - km[a];
+  return { index: a, t: span > 0 ? (d - km[a]) / span : 0, km: d };
+}
+
+/** The point on the track `at` km from the start (clamped to the track). */
+export function pointAtKm(points: readonly TrackPoint[], km: ArrayLike<number>, at: number) {
+  const { index, t, km: d } = alongTrack(km, at);
+  const a = points[index];
+  const b = points[Math.min(index + 1, points.length - 1)];
+  const ele = a.ele !== null && b.ele !== null ? a.ele + (b.ele - a.ele) * t : (a.ele ?? b.ele);
+  return { km: d, lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t, ele };
+}
+
+/** For a file without waypoints: a start, a checkpoint every 25 km, the high point and the finish. */
+export function defaultWaypoints(points: readonly TrackPoint[]): Waypoint[] {
+  const { km } = trackProgress(points);
+  const total = km[km.length - 1];
+  const at = (id: string, name: string, d: number): Waypoint => ({ id, name, ...pointAtKm(points, km, d) });
+  const out = [at('auto-start', 'Start', 0)];
+  for (let mark = 25; mark < total - 8; mark += 25) out.push(at(`auto-${mark}`, `${mark} km`, mark));
+  let high = 0;
+  points.forEach((point, index) => {
+    if ((point.ele ?? -Infinity) > (points[high].ele ?? -Infinity)) high = index;
+  });
+  if (points[high].ele !== null && out.every((w) => Math.abs((w.km ?? 0) - km[high]) > 3)) {
+    out.push(at('auto-high', 'High point', km[high]));
+  }
+  out.push(at('auto-finish', 'Finish', total));
+  return out;
 }
 
 export function nearestTrackIndex(points: readonly TrackPoint[], lat: number, lon: number) {
@@ -71,7 +111,7 @@ export function estimateMinutes(km: number, up: number) {
 
 /**
  * The waypoints shown on the map and in the list, in course order, each with a target time.
- * A file without waypoints gets a start, checkpoints every 25 km, the high point and the finish.
+ * One placed on the route sits at its distance; one from a file sits at the nearest track point.
  */
 export function planWaypoints(
   route: GpxRoute,
@@ -80,68 +120,51 @@ export function planWaypoints(
 ): PlannedWaypoint[] {
   const points = route.points;
   const { km, up } = trackProgress(points);
-  const total = km[km.length - 1];
-  type Seed = { id: string; name: string; index: number; lat: number; lon: number; ele: number | null; time?: number; auto: boolean };
-  const seeds: Seed[] = [];
-  const atIndex = (id: string, name: string, index: number): Seed => ({
-    id,
-    name,
-    index,
-    lat: points[index].lat,
-    lon: points[index].lon,
-    ele: points[index].ele,
-    auto: true,
+  const seeds = route.waypoints.map((waypoint) => {
+    let at: number;
+    let climbed: number;
+    if (waypoint.km !== undefined) {
+      const along = alongTrack(km, waypoint.km);
+      at = along.km;
+      climbed = up[along.index] + (up[Math.min(along.index + 1, up.length - 1)] - up[along.index]) * along.t;
+    } else {
+      const index = nearestTrackIndex(points, waypoint.lat, waypoint.lon);
+      at = km[index];
+      climbed = up[index];
+    }
+    return { waypoint, at, climbed, time: clockOf(waypoint.targetTime) ?? undefined };
   });
-
-  const fileWaypoints = route.waypoints.filter((w) => !w.id.startsWith('user-'));
-  if (fileWaypoints.length === 0) {
-    seeds.push(atIndex('auto-start', 'Start', 0));
-    for (let mark = 25; mark < total - 8; mark += 25) {
-      let index = 0;
-      while (index < km.length - 1 && km[index] < mark) index += 1;
-      seeds.push(atIndex(`auto-${mark}`, `${mark} km`, index));
-    }
-    let high = 0;
-    points.forEach((point, index) => {
-      if ((point.ele ?? -Infinity) > (points[high].ele ?? -Infinity)) high = index;
-    });
-    if (points[high].ele !== null && seeds.every((seed) => Math.abs(km[seed.index] - km[high]) > 3)) {
-      seeds.push(atIndex('auto-high', 'High point', high));
-    }
-    seeds.push(atIndex('auto-finish', 'Finish', points.length - 1));
-  }
-  for (const waypoint of route.waypoints) {
-    const clock = clockOf(waypoint.targetTime);
-    seeds.push({
-      id: waypoint.id,
-      name: waypoint.name,
-      index: nearestTrackIndex(points, waypoint.lat, waypoint.lon),
-      lat: waypoint.lat,
-      lon: waypoint.lon,
-      ele: waypoint.ele,
-      time: clock ?? undefined,
-      auto: false,
-    });
-  }
-  seeds.sort((a, b) => km[a.index] - km[b.index]);
+  seeds.sort((a, b) => a.at - b.at);
 
   let previous = startMinutes;
-  return seeds.map((seed) => {
-    const estimate = startMinutes + estimateMinutes(km[seed.index], up[seed.index]);
-    let minutes = overrides[seed.id] ?? seed.time ?? estimate;
+  return seeds.map(({ waypoint, at, climbed, time }) => {
+    const estimate = startMinutes + estimateMinutes(at, climbed);
+    let minutes = overrides[waypoint.id] ?? time ?? estimate;
     // a clock time earlier than the one before it is on the next day
     while (minutes < previous - 1) minutes += 1440;
     previous = minutes;
     return {
-      id: seed.id,
-      name: seed.name,
-      lat: seed.lat,
-      lon: seed.lon,
-      ele: seed.ele,
-      km: km[seed.index],
+      id: waypoint.id,
+      name: waypoint.name,
+      lat: waypoint.lat,
+      lon: waypoint.lon,
+      ele: waypoint.ele,
+      km: at,
       minutes,
-      estimated: overrides[seed.id] === undefined && seed.time === undefined,
-      auto: seed.auto,
+      estimated: overrides[waypoint.id] === undefined && time === undefined,
     };
   });
+}
+
+/** A distance typed in km, also with full-width digits or a 。 or comma for the point; null when there is no number. */
+export function parseKm(text: string) {
+  const value = Number.parseFloat(text.normalize('NFKC').replace(/[。、,]/g, '.'));
+  return Number.isFinite(value) ? value : null;
+}
+
+/** The next free "WP n" name. */
+export function nextWaypointName(waypoints: readonly Waypoint[]) {
+  let n = 0;
+  for (const w of waypoints) n = Math.max(n, Number(/^WP (\d+)$/.exec(w.name)?.[1] ?? 0));
+  return `WP ${n + 1}`;
 }

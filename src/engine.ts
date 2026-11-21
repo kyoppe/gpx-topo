@@ -1,4 +1,5 @@
 import { nearestTurn } from './angle';
+import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
 import { holdLean } from './lean';
 import { separation, type ScreenPoint } from './overlap';
@@ -31,7 +32,8 @@ export type DetailRequest = { x: number; y: number; w: number; h: number; densit
 
 export type EngineCallbacks = {
   onApartChange(apart: boolean): void;
-  onMapClick(x: number, y: number): void;
+  /** A click while placing a waypoint: how far along the route (km) it landed, or null when it missed the route. */
+  onRouteClick(km: number | null): void;
   onDetail(request: DetailRequest | null): void;
   /** A time picker was confirmed: minutes after midnight for `target` ('start' or a waypoint id). */
   onTimeCommit(target: string, minutes: number): void;
@@ -127,6 +129,10 @@ const DRUM_STEP = 0.35;
 const DRUM_ROWS = 7;
 const INTERACTIVE = 'input,button,textarea,select,label,a,[contenteditable]';
 const SELECTABLE = '[data-selectable], [data-selectable] *';
+/** Fields that take typing: they keep the browser's own menu and Esc only leaves them. */
+const EDITABLE = 'input:not([type=range]):not([type=button]):not([type=submit]),textarea,[contenteditable]';
+/** A click this close (CSS px) to the route line places a waypoint on it. */
+const ROUTE_REACH = 12;
 
 export type Engine = ReturnType<typeof createEngine>;
 
@@ -1728,10 +1734,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const onPointerDown = (ev: PointerEvent) => {
     intro = false;
     const t = ev.target as Element;
-    if (t !== canvas && t.closest && (t.closest(INTERACTIVE) || t.closest(SELECTABLE))) return;
+    // the right and middle buttons move the model from anywhere but a field being typed in
+    const panning = ev.button === 2 || ev.button === 1;
+    if (t !== canvas && t.closest && (panning ? t.closest(EDITABLE) : t.closest(INTERACTIVE) || t.closest(SELECTABLE))) return;
     ev.preventDefault();
     if (t !== canvas && t.closest?.('[data-hud]')) return;
-    const hit = drumAt(t);
+    const hit = panning ? null : drumAt(t);
     if (hit) {
       // turn a time drum by dragging it
       drag = 'drum';
@@ -1747,7 +1755,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     px = ev.clientX;
     py = ev.clientY;
     downOnMap = onTerrain(t);
-    drag = ev.button === 2 || ev.button === 1 || ev.shiftKey ? 'pan' : 'turn';
+    drag = panning || ev.shiftKey ? 'pan' : 'turn';
     panFrom = null;
     if (drag === 'pan') {
       const [sx, sy] = canvasPoint(ev);
@@ -1830,20 +1838,25 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       return;
     }
     canvas.classList.remove('turning');
-    if (was === 'turn' && moved < 5 && placing && downOnMap) {
+    if (was === 'turn' && moved < 5 && placing && downOnMap && model) {
+      // the route as it is drawn on screen, lying on the ground
       const [sx, sy] = canvasPoint(ev);
-      const P = pick(cam, sx, sy, liftOf(st.e));
-      if (P) {
-        const x = P[0] - MAPX;
-        const y = P[1] - MAPY;
-        if (x >= 0 && y >= 0 && x <= MW && y <= MH) callbacks.onMapClick(x, y);
+      const lift = liftOf(st.e);
+      const line: { x: number; y: number; km: number }[] = [];
+      for (const r of model.route) {
+        const s = toScreen([MAPX + r.x, MAPY + r.y, groundZ(r.x, r.y, lift)]);
+        if (s) line.push({ x: s[0], y: s[1], km: r.km });
       }
+      const near = nearestAlong(line, sx, sy);
+      callbacks.onRouteClick(near && near.dist <= ROUTE_REACH ? near.km : null);
     }
     need();
   };
+  // the right button moves the model, so the browser's menu stays shut except over a field being typed in
   const onContextMenu = (ev: Event) => {
     const t = ev.target as Element;
-    if (t === canvas || !t.closest?.(INTERACTIVE + ',' + SELECTABLE)) ev.preventDefault();
+    if (t !== canvas && t.closest?.(EDITABLE)) return;
+    ev.preventDefault();
   };
   // The wheel raises the flat page into the model, then zooms toward the point under the pointer;
   // zoomed all the way out, it lowers the model back to the page.
@@ -1929,7 +1942,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       return;
     }
     if (ev.key === 'Escape') {
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+      if (ev.target instanceof HTMLElement && ev.target.matches(EDITABLE)) return;
       together();
     }
   };
@@ -1937,7 +1952,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
-  canvas.addEventListener('contextmenu', onContextMenu);
+  window.addEventListener('contextmenu', onContextMenu, true);
   canvas.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('keydown', onKey);
 
@@ -2094,7 +2109,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.removeEventListener('pointermove', onPointerMove);
     canvas.removeEventListener('pointerup', onPointerUp);
     canvas.removeEventListener('pointercancel', onPointerUp);
-    canvas.removeEventListener('contextmenu', onContextMenu);
+    window.removeEventListener('contextmenu', onContextMenu, true);
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('pointerleave', onLeave);
     window.removeEventListener('keydown', onKey);
