@@ -6,7 +6,7 @@ import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type E
 import { calculateStats, parseGpx, serializeGpx, type GpxRoute } from './gpx';
 import { createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
-import { defaultWaypoints, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
+import { defaultWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { buildTerrain } from './terrain';
 
@@ -171,6 +171,7 @@ export default function App() {
   const [demGrid, setDemGrid] = useState<{ projection: MapProjection; grid: ElevationGrid } | null>(null);
   const [apart, setApart] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [showHigh, setShowHigh] = useState(false);
   const [addKm, setAddKm] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [detailWanted, setDetailWanted] = useState<DetailRequest | null>(null);
@@ -219,6 +220,23 @@ export default function App() {
   const mapReady = !!projection && basemap === projection;
 
   // elevation profile: distance across, height up
+  /** The highest point of the route, from the file's elevations or else the terrain's. */
+  const high = useMemo(() => {
+    if (!points || !progress || !projection) return null;
+    const index = highestIndex(points);
+    if (index >= 0) {
+      const { x, y } = projection.project(points[index]);
+      return { km: progress.km[index], ele: points[index].ele as number, x, y };
+    }
+    if (!terrain) return null;
+    let best: { km: number; ele: number; x: number; y: number } | null = null;
+    for (const p of track) {
+      const ele = terrain.elev(p.x, p.y);
+      if (!best || ele > best.ele) best = { km: progress.km[p.index], ele, x: p.x, y: p.y };
+    }
+    return best;
+  }, [points, progress, projection, terrain, track]);
+
   const profile = useMemo(() => {
     if (!points || !progress || track.length < 2) return null;
     const total = progress.km[progress.km.length - 1] || 1;
@@ -440,6 +458,13 @@ export default function App() {
   );
   const routeClickRef = useRef(onRouteClick);
   routeClickRef.current = onRouteClick;
+  const toggleHigh = () => {
+    if (!showHigh && !high) {
+      setToast('標高が分からないため、最高点を出せません。');
+      return;
+    }
+    setShowHigh((on) => !on);
+  };
 
   // ---------------------------------------------------------------- engine
 
@@ -480,12 +505,13 @@ export default function App() {
       terrain,
       route: ribbon.map((p) => ({ x: p.x, y: p.y, km: progress.km[p.index] })),
       ways: ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })),
+      marks: showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
       profilePoint: (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))],
     };
-  }, [layout, terrain, track, progress, ways, date, projection, profile]);
+  }, [layout, terrain, track, progress, ways, showHigh, high, date, projection, profile]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
@@ -612,7 +638,6 @@ export default function App() {
   if (!native) return <Fallback />;
 
   const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, 630));
-  const finish = plan.length ? plan[plan.length - 1] : null;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
 
   return (
@@ -682,6 +707,14 @@ export default function App() {
                   </span>
                 </button>
               ))}
+              {showHigh && high && (
+                <div className="pin pin-high" data-piece="pin" data-mark="high" drawable="" role="img" aria-label={`最高点 ${Math.round(high.ele)} m`}>
+                  <span className="pin-label">
+                    <b>▲</b>
+                    <strong>{Math.round(high.ele).toLocaleString('ja-JP')} m</strong>
+                  </span>
+                </div>
+              )}
               <div className="hiker" data-piece="hiker" drawable="" role="img" aria-label="この時刻の位置" />
               <div className="probe" data-piece="probe" drawable="" aria-hidden="true">
                 <b data-probe-text="">-</b>
@@ -729,20 +762,6 @@ export default function App() {
                         <span>m</span>
                       </dd>
                     </div>
-                    <div>
-                      <dt>最高点</dt>
-                      <dd>
-                        {stats?.maxEle != null ? Math.round(stats.maxEle).toLocaleString('ja-JP') : '-'}
-                        <span>m</span>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>ゴール</dt>
-                      <dd className="mono">
-                        {finish ? formatClock(finish.minutes).split(' ')[0] : '-'}
-                        {finish && finish.minutes >= 1440 && <span>+{Math.floor(finish.minutes / 1440)}d</span>}
-                      </dd>
-                    </div>
                   </dl>
                   <svg className="profile" viewBox={`0 0 ${PROFILE_WIDTH} ${PROFILE_HEIGHT}`} role="img" aria-label="標高プロファイル">
                     {profile && (
@@ -762,6 +781,12 @@ export default function App() {
                             </g>
                           );
                         })}
+                        {showHigh && high && (
+                          <path
+                            className="profile-high"
+                            d={`M${profile.X(high.km).toFixed(1)} ${(profile.Y(profile.eleAt(high.km)) - 11).toFixed(1)}l-5 8h10z`}
+                          />
+                        )}
                         <circle className="profile-cursor" data-cursor="" r={4} cx={-10} cy={-10} />
                       </>
                     )}
@@ -850,6 +875,10 @@ export default function App() {
                     <span>km に</span>
                     <button type="submit" className="field">
                       追加
+                    </button>
+                    <button type="button" className="high-toggle" role="switch" aria-checked={showHigh} onClick={toggleHigh}>
+                      ▲ 最高点
+                      <i aria-hidden="true" />
                     </button>
                   </form>
                   <ol className="ways" data-scroll="">

@@ -63,22 +63,24 @@ export function pointAtKm(points: readonly TrackPoint[], km: ArrayLike<number>, 
   return { km: d, lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t, ele };
 }
 
-/** For a file without waypoints: a start, a checkpoint every 25 km, the high point and the finish. */
+/** For a file without waypoints: a start, a checkpoint every 25 km and the finish. */
 export function defaultWaypoints(points: readonly TrackPoint[]): Waypoint[] {
   const { km } = trackProgress(points);
   const total = km[km.length - 1];
   const at = (id: string, name: string, d: number): Waypoint => ({ id, name, ...pointAtKm(points, km, d) });
   const out = [at('auto-start', 'Start', 0)];
   for (let mark = 25; mark < total - 8; mark += 25) out.push(at(`auto-${mark}`, `${mark} km`, mark));
-  let high = 0;
-  points.forEach((point, index) => {
-    if ((point.ele ?? -Infinity) > (points[high].ele ?? -Infinity)) high = index;
-  });
-  if (points[high].ele !== null && out.every((w) => Math.abs((w.km ?? 0) - km[high]) > 3)) {
-    out.push(at('auto-high', 'High point', km[high]));
-  }
   out.push(at('auto-finish', 'Finish', total));
   return out;
+}
+
+/** Index of the highest track point that has an elevation, or -1 when none has. */
+export function highestIndex(points: readonly TrackPoint[]) {
+  let best = -1;
+  points.forEach((point, index) => {
+    if (point.ele !== null && (best < 0 || point.ele > (points[best].ele as number))) best = index;
+  });
+  return best;
 }
 
 export function nearestTrackIndex(points: readonly TrackPoint[], lat: number, lon: number) {

@@ -31,11 +31,12 @@ The bundled `SFMT2026-110km.gpx` fixture loads first. `GPX を開く` loads a lo
 | `ウェイポイント追加`, then click the route | Add a waypoint there. Clicks off the route add nothing |
 | Type a km in the waypoint card and press `追加` | Add a waypoint that far along the route (full-width digits work too) |
 | A waypoint's name or km in the card | Rename it, or move it along the route; `×` deletes it |
+| `▲ 最高点` switch in the waypoint card | Show or hide the route's high point (`▲` and its height) on the map and on the elevation profile |
 | `PNG` / `GPX` | Download the current view, or the route with its waypoints as they are now |
 
 Raising and zooming are separate wheel gestures: pause the wheel to go from one to the next. A page left part way up finishes the way the wheel was going.
 
-Waypoints without a target time get an estimate of 6 min/km plus 0.1 min per metre climbed. A file without waypoints gets a start, a checkpoint every 25 km, the high point, and the finish, which can be renamed, moved, and deleted like any other.
+Waypoints without a target time get an estimate of 6 min/km plus 0.1 min per metre climbed. A file without waypoints gets a start, a checkpoint every 25 km, and the finish, which can be renamed, moved, and deleted like any other.
 
 ## Local development
 

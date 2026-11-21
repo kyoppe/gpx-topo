@@ -197,6 +197,16 @@ body {
   font-weight: 600;
 }
 
+.pin-high b {
+  background: none;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.pin-high strong {
+  font: 600 11.5px var(--mono);
+}
+
 .pin small {
   color: var(--ink2);
   font: 11px var(--mono);
@@ -334,7 +344,7 @@ body {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   margin: 0;
 }
 
@@ -405,6 +415,10 @@ body {
   font: 700 8.5px var(--sans);
   text-anchor: middle;
   dominant-baseline: central;
+}
+
+.profile-high {
+  fill: var(--ink);
 }
 
 .profile-cursor {
@@ -640,6 +654,56 @@ body {
   box-shadow:
     inset 0 0 0 1.5px var(--accent),
     0 0 0 3px rgba(48, 84, 240, 0.14);
+}
+
+.high-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+  color: var(--ink3);
+  font: inherit;
+  cursor: pointer;
+}
+
+.high-toggle i {
+  position: relative;
+  width: 26px;
+  height: 14px;
+  border-radius: 999px;
+  background: #d5dae1;
+}
+
+.high-toggle i::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 1px rgba(24, 32, 43, 0.2);
+  content: '';
+}
+
+.high-toggle[aria-checked='true'] {
+  color: var(--ink);
+}
+
+.high-toggle[aria-checked='true'] i {
+  background: var(--ink);
+}
+
+.high-toggle[aria-checked='true'] i::after {
+  left: 14px;
+}
+
+.high-toggle:focus {
+  outline: none;
 }
 
 .credit {

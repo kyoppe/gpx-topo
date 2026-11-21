@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GpxRoute } from './gpx';
-import { alongTrack, defaultWaypoints, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
+import { alongTrack, defaultWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 
 // about 1.11 km per point northwards, flat at 100 m with one hill at point 40
 const points = Array.from({ length: 60 }, (_, i) => ({
@@ -44,13 +44,24 @@ describe('points along the track', () => {
 });
 
 describe('default waypoints', () => {
-  it('gives a file without waypoints a start, checkpoints, the high point and the finish', () => {
+  it('gives a file without waypoints a start, checkpoints and the finish', () => {
     const plan = planWaypoints({ ...bare, waypoints: defaultWaypoints(points) }, 360, {});
-    expect(plan.map((w) => w.name)).toEqual(['Start', '25 km', 'High point', '50 km', 'Finish']);
-    expect(plan.map((w) => +w.km.toFixed(1))).toEqual([0, 25, +km[40].toFixed(1), 50, +km[59].toFixed(1)]);
+    expect(plan.map((w) => w.name)).toEqual(['Start', '25 km', '50 km', 'Finish']);
+    expect(plan.map((w) => +w.km.toFixed(1))).toEqual([0, 25, 50, +km[59].toFixed(1)]);
     expect(plan.every((w) => w.estimated)).toBe(true);
     expect(plan[0].minutes).toBe(360);
-    expect(plan.at(-1)!.minutes).toBeGreaterThan(plan[3].minutes);
+    expect(plan.at(-1)!.minutes).toBeGreaterThan(plan[2].minutes);
+  });
+});
+
+describe('high point', () => {
+  it('finds the highest point with an elevation', () => {
+    expect(highestIndex(points)).toBe(40);
+    expect(highestIndex(points.map((p, i) => (i === 40 ? { ...p, ele: null } : p)))).toBe(0);
+  });
+
+  it('gives -1 when no point has an elevation', () => {
+    expect(highestIndex(points.map((p) => ({ ...p, ele: null })))).toBe(-1);
   });
 });
 

@@ -20,6 +20,8 @@ export type EngineModel = {
   /** The route in map px with the distance from the start (km), every few px. */
   route: { x: number; y: number; km: number }[];
   ways: EngineWay[];
+  /** Marks on the map (map px) that are not waypoints, such as the high point. */
+  marks: { id: string; x: number; y: number }[];
   date: string;
   lat: number;
   lon: number;
@@ -619,8 +621,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     });
     pins = of('pin').map((el) => {
       const p = get(el, 'pin');
-      const way = model?.ways.find((w) => w.id === el.dataset.way);
-      p.at = way ? { x: way.x, y: way.y } : { x: 0, y: 0 };
+      const spot = model?.ways.find((w) => w.id === el.dataset.way) ?? model?.marks.find((m) => m.id === el.dataset.mark);
+      p.at = spot ? { x: spot.x, y: spot.y } : { x: 0, y: 0 };
       p.stand = 26;
       return p;
     });
