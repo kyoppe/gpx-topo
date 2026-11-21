@@ -1,0 +1,157 @@
+import type { MapProjection } from './geo';
+
+const TILE = 256;
+const INVALID_RGB = (128 << 16) | (0 << 8) | 0;
+const INVALID_VALUE = 1 << 23;
+const VALUE_RANGE = 1 << 24;
+
+/** Elevations in metres on an (nx + 1) x (ny + 1) lattice spanning the whole map. */
+export type ElevationGrid = {
+  nx: number;
+  ny: number;
+  values: Float32Array;
+  source: 'gsi-dem' | 'gpx';
+};
+
+export function decodeDemElevation(red: number, green: number, blue: number) {
+  const encoded = red * 2 ** 16 + green * 2 ** 8 + blue;
+  if (((red << 16) | (green << 8) | blue) === INVALID_RGB || encoded === INVALID_VALUE) {
+    return null;
+  }
+  return (encoded < INVALID_VALUE ? encoded : encoded - VALUE_RANGE) * 0.01;
+}
+
+async function decodeTile(blob: Blob) {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = new OffscreenCanvas(TILE, TILE);
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    bitmap.close();
+    throw new Error('DEM tile could not be read.');
+  }
+  context.drawImage(bitmap, 0, 0, TILE, TILE);
+  bitmap.close();
+  const image = context.getImageData(0, 0, TILE, TILE).data;
+  const values = new Float32Array(TILE * TILE);
+  for (let index = 0; index < values.length; index += 1) {
+    const offset = index * 4;
+    values[index] =
+      decodeDemElevation(image[offset], image[offset + 1], image[offset + 2]) ?? Number.NaN;
+  }
+  return values;
+}
+
+async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSignal) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(`/api/gsi/dem_png/${z}/${x}/${y}.png`, { signal });
+      if (response.status === 404) {
+        return 'sea' as const;
+      }
+      if (!response.ok) {
+        continue;
+      }
+      return await decodeTile(await response.blob());
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+    }
+  }
+  return null;
+}
+
+/** Samples GSI DEM tiles (DEM10B) on the lattice the terrain is built from. */
+export async function loadDemGrid(
+  projection: MapProjection,
+  nx: number,
+  ny: number,
+  signal?: AbortSignal,
+): Promise<ElevationGrid> {
+  const zoom = projection.zoomFor((2 * nx) / projection.width, 5, 14);
+  const tiles = projection.tiles(zoom);
+  const decoded = new Map<string, Float32Array | 'sea'>();
+  let failed = 0;
+  await Promise.all(
+    tiles.map(async (tile) => {
+      const values = await fetchDemTile(tile.z, tile.x, tile.y, signal);
+      if (values === null) {
+        failed += 1;
+      } else {
+        decoded.set(`${tile.x}/${tile.y}`, values);
+      }
+    }),
+  );
+  if (decoded.size === 0 || failed > tiles.length / 2) {
+    throw new Error('GSI DEM tiles are unavailable for this area.');
+  }
+
+  const count = 2 ** zoom;
+  const pixel = (gx: number, gy: number) => {
+    const tx = Math.floor(gx / TILE);
+    const ty = Math.floor(gy / TILE);
+    const tile = decoded.get(`${((tx % count) + count) % count}/${ty}`);
+    if (!tile || tile === 'sea') {
+      return 0;
+    }
+    const value = tile[(gy - ty * TILE) * TILE + (gx - tx * TILE)];
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  const values = new Float32Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j += 1) {
+    const worldY = projection.originY + ((j / ny) * projection.height) / projection.scale;
+    const py = worldY * count - 0.5;
+    const y0 = Math.floor(py);
+    const fy = py - y0;
+    for (let i = 0; i <= nx; i += 1) {
+      const worldX = projection.originX + ((i / nx) * projection.width) / projection.scale;
+      const px = worldX * count - 0.5;
+      const x0 = Math.floor(px);
+      const fx = px - x0;
+      const a = pixel(x0, y0);
+      const b = pixel(x0 + 1, y0);
+      const c = pixel(x0, y0 + 1);
+      const d = pixel(x0 + 1, y0 + 1);
+      values[j * (nx + 1) + i] = a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+    }
+  }
+  return { nx, ny, values, source: 'gsi-dem' };
+}
+
+/** When the DEM cannot be read: a rough surface interpolated from the track's own elevations. */
+export function gpxElevationGrid(
+  points: readonly { x: number; y: number; ele: number | null }[],
+  nx: number,
+  ny: number,
+  width: number,
+  height: number,
+): ElevationGrid {
+  const known = points.filter((point) => point.ele !== null);
+  const step = Math.max(1, Math.ceil(known.length / 400));
+  const samples = known.filter((_, index) => index % step === 0);
+  const values = new Float32Array((nx + 1) * (ny + 1));
+  const lowest = samples.reduce((low, point) => Math.min(low, point.ele ?? low), Infinity);
+  for (let j = 0; j <= ny; j += 1) {
+    for (let i = 0; i <= nx; i += 1) {
+      const x = (i / nx) * width;
+      const y = (j / ny) * height;
+      let weight = 0;
+      let sum = 0;
+      let nearest = Infinity;
+      for (const point of samples) {
+        const distance2 = (point.x - x) ** 2 + (point.y - y) ** 2;
+        nearest = Math.min(nearest, distance2);
+        const w = 1 / (distance2 + 400) ** 1.5;
+        weight += w;
+        sum += w * (point.ele ?? 0);
+      }
+      const value = weight > 0 ? sum / weight : 0;
+      const fade = Math.exp(-Math.sqrt(nearest) / 90);
+      values[j * (nx + 1) + i] = Number.isFinite(lowest)
+        ? lowest - 60 + (value - lowest + 60) * fade
+        : 0;
+    }
+  }
+  return { nx, ny, values, source: 'gpx' };
+}
