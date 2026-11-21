@@ -19,7 +19,7 @@ The bundled `SFMT2026-110km.gpx` fixture loads first. `GPX を開く` loads a lo
 | Action | Result |
 | --- | --- |
 | `立体にする` / `平面に戻す` | Raise the map into the 3D model, or put it back |
-| Drag | Turn the model, as many times round as you like (the side panel turns with it until it leans 20 degrees on screen, then holds there; its cards step aside rather than cover each other). Going back to the plain view turns the short way |
+| Drag | Turn the model, as many times round as you like (the side panel turns with it until it leans 20 degrees on screen, then holds there, and swings level and over to the other side as the map passes half a turn; its cards step aside rather than cover each other). Going back to the plain view turns the short way |
 | Right drag, middle drag, or Shift + drag | Move the model |
 | Wheel (or pinch) in | On the flat map, raise it into the 3D model; in 3D, zoom toward the pointer. Close views fetch finer tiles for the part in view, nearest the middle first |
 | Wheel (or pinch) out | Zoom out; once all the way out, lower the model back to the flat map |

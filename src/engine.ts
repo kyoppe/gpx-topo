@@ -1,5 +1,6 @@
 import { nearestTurn } from './angle';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
+import { holdLean } from './lean';
 import { separation, type ScreenPoint } from './overlap';
 import { createRenderer, type DrawItem, type TextureLayer, type Vec3 } from './renderer';
 import { formatClock, lightAt, type Light } from './sun';
@@ -97,13 +98,6 @@ const smooth = (t: number) => {
   const x = clamp(t, 0, 1);
   return x * x * (3 - 2 * x);
 };
-/** `x` itself up to 0.8 of `limit`, then easing toward the limit without reaching past it. */
-const softLimit = (x: number, limit: number) => {
-  const knee = limit * 0.8;
-  const m = Math.abs(x);
-  return m <= knee ? x : Math.sign(x) * (limit - (limit - knee) * Math.exp(-(m - knee) / (limit - knee)));
-};
-
 // The page is laid out to fill the window above a minimum size; these margins leave room for the bar.
 export const FRAME_X = 40;
 export const FRAME_Y = 120;
@@ -115,6 +109,8 @@ const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
 /** Cards turn with the map until their lower edge leans this far on screen (rad), then hold. */
 const CARD_LEAN_MAX = (20 * Math.PI) / 180;
+/** Within this much (rad) of the map's half turn, cards swing level and over to the other side rather than jump across. */
+const CARD_FLIP = (40 * Math.PI) / 180;
 /**
  * Cards step aside to keep this many screen px between them (less than they have at rest) and, where they can,
  * this far inside the sides and top of the view; they glide to where they step at this rate (1/s).
@@ -230,13 +226,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
   /**
    * How far (rad, about the vertical) a card whose lower edge is centred on `at` swivels against the page:
-   * none while the page's lean on screen is under the limit, then enough to hold the edge at the limit.
+   * none while the page's lean on screen is under the limit, then enough to hold the edge at the limit,
+   * going level as the map passes its half turn.
    */
   function cardSwivel(at: Vec3) {
     const a = screenStep(at, [1, 0, 0]);
     const b = screenStep(at, [0, 1, 0]);
     const lean = Math.atan2(a[1], a[0]);
-    const want = softLimit(lean, CARD_LEAN_MAX);
+    // the page's x lies flat on screen, so its lean crosses over, exactly when the camera is half a turn round
+    const turn = Math.abs(cam.yaw - nearestTurn(cam.yaw));
+    const want = holdLean(lean, turn, CARD_LEAN_MAX, CARD_FLIP);
     if (want === lean) return 0;
     // the edge runs along (cos ph, -sin ph, 0), so on screen along a cos ph - b sin ph; turn it onto `want`
     const t = [Math.cos(want), Math.sin(want)];
