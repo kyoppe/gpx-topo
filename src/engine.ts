@@ -1046,7 +1046,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function poleFor(fh: number) {
     return fh + MH * FLAG_UNDER + fh * 0.04;
   }
-  /** Sizes the cloth to the window: as wide as FLAG_WIDTH, or as much narrower as keeps the top of its pole in view. */
+  /** Sizes the cloth to the window: as wide as FLAG_WIDTH, or as much narrower as keeps its pole's top and its far end in view. */
   function fitFlag() {
     if (!flagPiece || !flagPiece.w) return;
     const c = camera(1, st.yawT, st.tiltT, st.zoomT, st.panT);
@@ -1055,14 +1055,18 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const G: Vec3 = [MAPX + gx, MAPY + gy, groundZ(gx, gy, 1)];
     const side: Vec3 = [Math.cos(HERO.yaw), -Math.sin(HERO.yaw), 0];
     const aspect = flagPiece.h / flagPiece.w;
-    const screenY = (P: Vec3) => {
+    const screen = (P: Vec3): [number, number] => {
       const q = mulBy(c.vp, [P[0], P[1], P[2], 1]);
-      return q[3] > 0 ? ((-q[1] / q[3]) * 0.5 + 0.5) * vh : -Infinity;
+      return q[3] > 0 ? [((q[0] / q[3]) * 0.5 + 0.5) * vw, ((-q[1] / q[3]) * 0.5 + 0.5) * vh] : [-Infinity, -Infinity];
     };
-    // the higher of the pole's top and the cloth's far corner, for a cloth `fw` wide
+    // how far inside the window the pole's top and the cloth's far corners stay, for a cloth `fw` wide
     const top = (fw: number) => {
       const z = G[2] + poleFor(fw * aspect);
-      return Math.min(screenY([G[0], G[1], z]), screenY([G[0] - side[0] * fw, G[1] - side[1] * fw, z]));
+      const far: Vec3 = [G[0] - side[0] * fw, G[1] - side[1] * fw, z];
+      const [, py] = screen([G[0], G[1], z]);
+      const [fx, fy] = screen(far);
+      const [bx] = screen([far[0], far[1], z - fw * aspect]);
+      return Math.min(py, fy, fx, bx);
     };
     let fw = MH * FLAG_WIDTH;
     if (top(fw) < FLAG_MARGIN) {
