@@ -1137,7 +1137,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const faceN = back ? neg(c) : c;
       items.push(quad(k, { glow: 1 }));
       // the sides and the shadow belong to the key, not to each face
-      if (back || !solid) continue;
+      if (back || !solid || k.name === 'fly') continue;
       const rr = Math.min(7, k.h / 3) * s;
       items.push({ solid: side, useNormal: true, nrm: b, O: P(-hw + rr, hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
       items.push({ solid: side, useNormal: true, nrm: neg(b), O: P(-hw + rr, -hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
