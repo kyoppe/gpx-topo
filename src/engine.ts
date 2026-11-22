@@ -2615,9 +2615,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     placeFlag();
     const H = hudFrame(dt, smooth(st.e / 0.5));
-    if (H.busy) moving = true;
     const PF = popFrame(dt);
-    if (PF.busy) moving = true;
+    // keys rising under the pointer and pickers turning keep the frames coming, but are drawn sharp: their words are
+    // what is being read
+    const settling = H.busy || PF.busy;
     // Chrome 157 keeps old hit-test answers after a geometry change; touching an element outside the canvas clears them.
     if (GEOMETRY) document.documentElement.setAttribute('data-g', String(++geoN & 1023));
 
@@ -2724,8 +2725,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         qs = Math.max(0.5, qs * 0.8);
         slow = 0;
       }
+      // and back up again once they run quickly
+      if (dt < 0.018 && qs < 1) qs = Math.min(1, qs * 1.02);
     }
-    if (busy || wasBusy || flying) need();
+    if (busy || wasBusy || flying || settling) need();
     wasBusy = busy;
     // finer tiles belong to the model only; the flat page keeps the whole-map picture
     if (st.eT < 1) dropDetail();
