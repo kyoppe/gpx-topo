@@ -1333,8 +1333,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const lit = smooth(st.e / 0.4);
     cam = camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
     const camRight = cam.r;
-    // pins keep about the same size on screen as the view zooms in
-    const shrink = 1 / Math.pow(st.zoom, 0.85);
+    // pins grow on screen as the view zooms in, slower than the map so they do not cover it
+    const shrink = 1 / Math.pow(st.zoom, 0.5);
 
     // where everything is
     const EPS = 0.03;
