@@ -1,5 +1,7 @@
 import { useEffect, useState, type RefObject } from 'react';
 
+import { addAction } from './observability';
+
 // What is on the (i) flag. The engine draws the flag's element as silk and keeps it the real, clickable element, so
 // the text is selected right on it. The selection is shown as strokes of a dry brush behind the text (the brush of the
 // guide in timeseries-alternative, in gold), measured on a hidden twin of the text laid out flat, since the flag itself is
@@ -76,7 +78,17 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
         <div className="flag-foot">
           <p className="flag-author">
             作った人：キョウヘイ
-            <a className="flag-icon" href="https://x.com/kyouhei" target="_blank" rel="noreferrer" aria-label="X" title="X">
+            <a
+              className="flag-icon"
+              href="https://x.com/kyouhei"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="X"
+              title="X"
+              onClick={() => {
+                if (!twin) addAction('info_link_clicked', { destination: 'x' });
+              }}
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M17.8 3h3.1l-6.8 7.7 8 10.3h-6.2l-4.9-6.3L5.4 21H2.3l7.3-8.3L2 3h6.4l4.4 5.8L17.8 3Zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5Z" />
               </svg>
@@ -88,6 +100,9 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
               rel="noreferrer"
               aria-label="Podcast (Spotify)"
               title="Podcast (Spotify)"
+              onClick={() => {
+                if (!twin) addAction('info_link_clicked', { destination: 'spotify' });
+              }}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.4-1.8-9-1a.6.6 0 1 1-.3-1.2c3.9-.9 7.2-.5 9.9 1.1.3.2.4.6.3.9Zm1.2-2.7a.8.8 0 0 1-1.1.3c-2.7-1.7-6.9-2.2-10.1-1.2a.8.8 0 1 1-.5-1.5c3.7-1.1 8.3-.6 11.4 1.3.4.2.5.7.3 1.1Zm.1-2.8C14.7 9 9.4 8.8 6.3 9.7a.9.9 0 1 1-.5-1.8c3.5-1.1 9.4-.9 13.1 1.3a.9.9 0 1 1-.9 1.6Z" />
@@ -98,12 +113,26 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
             <h3>その他のアプリ</h3>
             <ul className="flag-links">
               <li>
-                <a href="https://www.boxhouse120.com/gpx-wallpaper" target="_blank" rel="noreferrer">
+                <a
+                  href="https://www.boxhouse120.com/gpx-wallpaper"
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => {
+                    if (!twin) addAction('info_link_clicked', { destination: 'gpx_wallpaper' });
+                  }}
+                >
                   GPX壁紙なんちゃら
                 </a>
               </li>
               <li>
-                <a href="https://zessoku.pages.dev/help/" target="_blank" rel="noreferrer">
+                <a
+                  href="https://zessoku.pages.dev/help/"
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => {
+                    if (!twin) addAction('info_link_clicked', { destination: 'zessoku_help' });
+                  }}
+                >
                   レース中に開くなんちゃら
                 </a>
               </li>

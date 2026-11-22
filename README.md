@@ -56,6 +56,12 @@ npm test
 npm run build
 ```
 
+## Observability
+
+Datadog Browser RUM and Browser Logs configuration, event naming, environment
+selection, and commit version tagging are documented in
+[`docs/observability.md`](docs/observability.md).
+
 ## Data
 
 GSI tiles (Geospatial Information Authority of Japan), attributed in the side panel:
