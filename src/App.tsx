@@ -1015,8 +1015,7 @@ export default function App() {
                 <div className="in in-title" data-piece="content" drawable="">
                   <div className="brand">
                     <img className="brand-mark" src="/gpx-topo-logo.png" alt="" aria-hidden="true" />
-                    <span>gpx-topo</span>
-                    <small data-selectable="">{fileName}</small>
+                    <span>GPX箱庭なんちゃら</span>
                   </div>
                   <input
                     className="route-name"
@@ -1025,6 +1024,9 @@ export default function App() {
                     aria-label="ルート名"
                     onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
                   />
+                  <small className="file-name" data-selectable="">
+                    {fileName}
+                  </small>
                 </div>
               </section>
 
@@ -1347,7 +1349,7 @@ export default function App() {
               </div>
             )}
             {/* the (i) flag: a pirate flag the engine drops onto the map and flies in the wind; its links stay real links */}
-            <div ref={flagRef} className="flag" data-piece="flag" drawable="" role="dialog" aria-label="gpx-topo について" aria-hidden={!infoOpen}>
+            <div ref={flagRef} className="flag" data-piece="flag" drawable="" role="dialog" aria-label="GPX箱庭なんちゃら について" aria-hidden={!infoOpen}>
               <FlagContent brushes={flagBrushes} />
             </div>
           </div>

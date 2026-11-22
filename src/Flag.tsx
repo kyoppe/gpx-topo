@@ -46,7 +46,7 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
             <span key={i} className="flag-brush" style={{ left: b.x - 6, top: b.y - 1, width: b.w + 12, height: b.h + 2 }} />
           ))}
         </div>
-        <h2>gpx-topo</h2>
+        <h2>GPX箱庭なんちゃら</h2>
         <p className="flag-lead">GPX のルートを、国土地理院の地図と標高から作った立体模型の上で見るアプリです。</p>
         <div className="flag-cols">
           <section>
