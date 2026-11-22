@@ -251,6 +251,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
+  const routeNameRef = useRef<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const flatRef = useRef<HTMLCanvasElement | null>(null);
   const reliefRef = useRef<HTMLCanvasElement | null>(null);
@@ -260,6 +261,7 @@ export default function App() {
   const touchedRef = useRef(false);
   const fileRequestRef = useRef(0);
   const statsCacheRef = useRef<{ points: GpxRoute['points']; stats: ReturnType<typeof calculateStats> } | null>(null);
+  routeNameRef.current = route?.name ?? null;
 
   const layout = useMemo(() => layoutFor(viewport.width, viewport.height), [viewport]);
   const points = route?.points ?? null;
@@ -674,7 +676,10 @@ export default function App() {
           addAction('info_flag_toggled', { open });
           setInfoOpen(open);
         },
-        onPhotoChange: (open) => {
+        onPhotoChange: (open, via) => {
+          const routeName = routeNameRef.current || 'gpx-topo';
+          if (open) addAction('photo_shown', { route_name: routeName });
+          else if (via) addAction('photo_closed', { route_name: routeName, via });
           setShotOpen(open);
           // back in the key, the picture is let go
           if (!open)
@@ -895,13 +900,14 @@ export default function App() {
   // the camera key takes a photo of the view; it comes out as a print floating over the map (see the engine's photo),
   // with buttons to save, copy, or post it
   const exportPng = async () => {
-    addAction('png_export_requested', { route_name: route?.name || 'gpx-topo' });
+    const engine = engineRef.current;
+    // one photo at a time: while one is out, the key takes no other
+    if (!engine || shotOpen || shot) return;
+    addAction('photo_requested', { route_name: route?.name || 'gpx-topo' });
     try {
-      const engine = engineRef.current;
-      // one photo at a time: while one is out, the key takes no other
-      if (!engine || shotOpen || shot) return;
       const blob = await engine.capture();
       if (!blob) {
+        reportError('export_png', new Error('PNG capture returned no blob'), { route_name: route?.name || 'gpx-topo' });
         setToast('PNG を書き出せませんでした。');
         return;
       }
@@ -919,23 +925,34 @@ export default function App() {
     }
   };
   const shotName = () => `${route?.name || 'gpx-topo'}.png`;
+  const saveShot = () => {
+    if (!shot) return;
+    try {
+      downloadBlob(shot.blob, shotName());
+      addAction('photo_saved', { route_name: route?.name || 'gpx-topo' });
+    } catch (error) {
+      reportError('save_png', error, { route_name: route?.name || 'gpx-topo' });
+      setToast('画像を保存できませんでした。');
+    }
+  };
   const copyShot = async () => {
     if (!shot) return false;
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': shot.blob })]);
+      addAction('photo_copied', { route_name: route?.name || 'gpx-topo' });
       return true;
     } catch (error) {
-      reportWarning('copy_png', { message: error instanceof Error ? error.message : String(error) });
+      reportWarning('copy_png', error);
       setToast('画像をコピーできませんでした。');
       return false;
     }
   };
   const SHARE_TEXT = 'GPX箱庭なんちゃらで作りました。\nhttps://gpx-topo.pages.dev/\n#GPX箱庭なんちゃら';
   const postShot = async () => {
-    addAction('png_post_requested', { route_name: route?.name || 'gpx-topo' });
     // X takes no picture from here: it goes on the clipboard, to paste into the post
     const copied = await copyShot();
-    window.open(`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}`, '_blank', 'noopener');
+    const postWindow = window.open(`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}`, '_blank', 'noopener');
+    if (postWindow) addAction('photo_post_opened', { route_name: route?.name || 'gpx-topo' });
     if (copied) setToast('画像をコピーしました。投稿画面で ⌘V（Ctrl+V）で貼り付けてください。');
   };
 
@@ -1420,7 +1437,7 @@ export default function App() {
                   GPX箱庭なんちゃら<small>{route?.name}</small>
                 </span>
                 <span className="photo-actions">
-                  <button type="button" onClick={() => shot && downloadBlob(shot.blob, shotName())}>
+                  <button type="button" onClick={saveShot}>
                     保存
                   </button>
                   <button
@@ -1432,7 +1449,7 @@ export default function App() {
                   <button type="button" className="photo-post" onClick={() => void postShot()}>
                     X に投稿
                   </button>
-                  <button type="button" onClick={() => engineRef.current?.hidePhoto()}>
+                  <button type="button" onClick={() => engineRef.current?.hidePhoto('button')}>
                     閉じる
                   </button>
                 </span>

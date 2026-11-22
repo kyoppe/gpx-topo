@@ -36,6 +36,8 @@ export type EngineModel = {
 /** A part of the map (map px) to draw sharper for a close view, at `density` image px per map px. */
 export type DetailRequest = { x: number; y: number; w: number; h: number; density: number; zoom: number };
 
+export type PhotoCloseVia = 'button' | 'escape';
+
 export type EngineCallbacks = {
   onApartChange(apart: boolean): void;
   /** A click while placing a waypoint: how far along the route (km) it landed, or null when it missed the route. */
@@ -49,7 +51,7 @@ export type EngineCallbacks = {
   /** The (i) flag was raised over the map, or taken down. */
   onInfoChange(open: boolean): void;
   /** The photo of the view came out of the camera key, or went back into it. */
-  onPhotoChange(open: boolean): void;
+  onPhotoChange(open: boolean, via?: PhotoCloseVia): void;
 };
 export type FlightPhase = 'intro' | 'run' | 'outro' | 'return' | 'paused';
 type FlightResumePhase = Exclude<FlightPhase, 'return' | 'paused'>;
@@ -307,6 +309,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let photoCast: DrawItem[] = [];
   // while it flies to and from the key it is drawn with the bar, over the model: else the raised land hides it at the key
   let photoFlying = false;
+  let photoCloseVia: PhotoCloseVia | null = null;
   /** the middle of the camera key's face, as the bar was last drawn (world px) */
   let cameraKeyAt: Vec3 | null = null;
   let flagPlaced = false;
@@ -1480,12 +1483,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (photoBack) photoBack.stale = true;
     if (photoPlaced) unplace(photoFront);
     photoPlaced = false;
+    photoCloseVia = null;
     callbacks.onPhotoChange(true);
     need();
   }
   /** Sends the photo back into the camera key. */
-  function hidePhoto() {
+  function hidePhoto(via?: PhotoCloseVia) {
     if (!photo || photo.phase === 'out') return;
+    photoCloseVia = via ?? null;
     photo.phase = 'out';
     photo.t = 0;
     need();
@@ -1514,7 +1519,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       photo = null;
       if (photoPlaced) unplace(photoFront);
       photoPlaced = false;
-      callbacks.onPhotoChange(false);
+      const via = photoCloseVia ?? undefined;
+      photoCloseVia = null;
+      callbacks.onPhotoChange(false, via);
       return items;
     }
     if (noHud) return items;
@@ -3470,7 +3477,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (active instanceof HTMLElement) active.blur();
       if (ev.target instanceof HTMLElement && ev.target.matches(EDITABLE)) return;
       if (photo && photo.phase !== 'out') {
-        hidePhoto();
+        hidePhoto('escape');
         return;
       }
       if (info) {

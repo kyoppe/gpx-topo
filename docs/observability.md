@@ -63,7 +63,13 @@ attributes:
 - `waypoint_add_requested`, `waypoint_add_rejected`, `waypoint_edit`,
   `waypoint_move`, `waypoint_remove`, and `waypoint_focus_requested`
 - `elapsed_time_picker_opened` and `elapsed_time_committed`
-- `png_export_requested`
+- `photo_requested` when the camera key accepts a capture
+- `photo_shown` when the print starts floating over the map
+- `photo_saved` when the browser download is initiated
+- `photo_copied` when the image is copied to the clipboard
+- `photo_post_opened` when the X post composer opens
+- `photo_closed` when the print returns to the camera key, with `via` set to
+  `button` or `escape`; automatic closing during a flyover is not counted
 - `info_link_clicked` for links inside the falling Info flag
 - `highest_point_toggled` and `waypoint_placement_toggled`
 - `info_flag_toggled`
