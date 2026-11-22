@@ -77,3 +77,28 @@ Clock times are Japan Standard Time.
 - Build command: `npm run build`
 - Output directory: `dist`
 - `functions/api/gsi/[[path]].ts` proxies allowed GSI layers with a one-day edge cache.
+
+The `gpx-topo` Pages project is not connected to a Git provider. A push to
+GitHub does not deploy it automatically. Deploy the built directory with
+Wrangler:
+
+```bash
+npx wrangler login
+npx wrangler whoami
+export CF_PAGES_COMMIT_SHA="$(git rev-parse HEAD)"
+npm ci
+npm run build
+npx wrangler pages deploy dist \
+  --project-name gpx-topo \
+  --branch main \
+  --commit-hash "$CF_PAGES_COMMIT_SHA" \
+  --commit-message "$(git log -1 --format=%s)"
+```
+
+`CF_PAGES_COMMIT_SHA` is injected into the build as the Datadog `version`.
+Use the full commit SHA so the deployed RUM and Browser Logs can be matched
+to the source commit. Check recent deployments with:
+
+```bash
+npx wrangler pages deployment list --project-name gpx-topo
+```
