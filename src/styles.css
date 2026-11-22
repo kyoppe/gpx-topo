@@ -383,11 +383,14 @@ body {
   font: 500 10px var(--sans);
 }
 
+.profile-box {
+  margin-top: 10px;
+}
+
 .profile {
   display: block;
   width: 364px;
   height: 84px;
-  margin-top: 10px;
   overflow: visible;
 }
 

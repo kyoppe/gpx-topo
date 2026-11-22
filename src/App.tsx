@@ -190,7 +190,6 @@ export default function App() {
   /** the part of the map the detail canvas holds now */
   const detailDrawn = useRef<DetailRequest | null>(null);
   const touchedRef = useRef(false);
-  const introFor = useRef<GpxRoute['points'] | null>(null);
 
   const layout = useMemo(() => layoutFor(viewport.width, viewport.height), [viewport]);
   const points = route?.points ?? null;
@@ -250,6 +249,7 @@ export default function App() {
     const top = 14;
     const bottom = PROFILE_HEIGHT - 4;
     const X = (km: number) => 6 + (km / total) * (PROFILE_WIDTH - 12);
+    const K = (x: number) => Math.min(total, Math.max(0, ((x - 6) / (PROFILE_WIDTH - 12)) * total));
     const Y = (ele: number) => bottom - ((ele - lo) / Math.max(1, hi - lo)) * (bottom - top);
     const eleAt = (km: number) => {
       let a = 0;
@@ -262,7 +262,7 @@ export default function App() {
       return series[b].ele;
     };
     const line = series.map((s, i) => `${i ? 'L' : 'M'}${X(s.km).toFixed(1)} ${Y(s.ele).toFixed(1)}`).join('');
-    return { X, Y, eleAt, line, area: `${line}L${X(total).toFixed(1)} ${bottom}L${X(0).toFixed(1)} ${bottom}Z`, bottom, total, lo, hi };
+    return { X, K, Y, eleAt, line, area: `${line}L${X(total).toFixed(1)} ${bottom}L${X(0).toFixed(1)} ${bottom}Z`, bottom, total, lo, hi };
   }, [points, progress, track, terrain]);
 
   const sunRange = useMemo(() => {
@@ -510,19 +510,13 @@ export default function App() {
       lat: projection.centerLat,
       lon: projection.centerLon,
       profilePoint: (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))],
+      profileKm: profile.K,
     };
   }, [layout, terrain, track, progress, ways, showHigh, high, date, projection, profile]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
   }, [model]);
-
-  useEffect(() => {
-    if (terrain && mapReady && points && introFor.current !== points) {
-      introFor.current = points;
-      engineRef.current?.startIntro();
-    }
-  }, [terrain, mapReady, points]);
 
   useEffect(() => {
     engineRef.current?.setPlacing(placing);
@@ -763,34 +757,36 @@ export default function App() {
                       </dd>
                     </div>
                   </dl>
-                  <svg className="profile" viewBox={`0 0 ${PROFILE_WIDTH} ${PROFILE_HEIGHT}`} role="img" aria-label="標高プロファイル">
-                    {profile && (
-                      <>
-                        <path className="profile-area" d={profile.area} />
-                        <path className="profile-line" d={profile.line} />
-                        {ways.map((way, index) => {
-                          const x = profile.X(way.km);
-                          const y = profile.Y(profile.eleAt(way.km));
-                          return (
-                            <g key={way.id}>
-                              <line className="profile-tick" x1={x} x2={x} y1={y + 6} y2={profile.bottom} />
-                              <circle className="profile-dot" cx={x} cy={y} r={6} />
-                              <text x={x} y={y + 0.5}>
-                                {index + 1}
-                              </text>
-                            </g>
-                          );
-                        })}
-                        {showHigh && high && (
-                          <path
-                            className="profile-high"
-                            d={`M${profile.X(high.km).toFixed(1)} ${(profile.Y(profile.eleAt(high.km)) - 11).toFixed(1)}l-5 8h10z`}
-                          />
-                        )}
-                        <circle className="profile-cursor" data-cursor="" r={4} cx={-10} cy={-10} />
-                      </>
-                    )}
-                  </svg>
+                  <div className="profile-box" data-profile="">
+                    <svg className="profile" viewBox={`0 0 ${PROFILE_WIDTH} ${PROFILE_HEIGHT}`} role="img" aria-label="標高プロファイル">
+                      {profile && (
+                        <>
+                          <path className="profile-area" d={profile.area} />
+                          <path className="profile-line" d={profile.line} />
+                          {ways.map((way, index) => {
+                            const x = profile.X(way.km);
+                            const y = profile.Y(profile.eleAt(way.km));
+                            return (
+                              <g key={way.id}>
+                                <line className="profile-tick" x1={x} x2={x} y1={y + 6} y2={profile.bottom} />
+                                <circle className="profile-dot" cx={x} cy={y} r={6} />
+                                <text x={x} y={y + 0.5}>
+                                  {index + 1}
+                                </text>
+                              </g>
+                            );
+                          })}
+                          {showHigh && high && (
+                            <path
+                              className="profile-high"
+                              d={`M${profile.X(high.km).toFixed(1)} ${(profile.Y(profile.eleAt(high.km)) - 11).toFixed(1)}l-5 8h10z`}
+                            />
+                          )}
+                          <circle className="profile-cursor" data-cursor="" r={8} cx={-20} cy={-20} />
+                        </>
+                      )}
+                    </svg>
+                  </div>
                 </div>
               </section>
 

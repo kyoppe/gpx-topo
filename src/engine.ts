@@ -27,6 +27,8 @@ export type EngineModel = {
   lon: number;
   /** Where a distance along the route sits on the elevation profile drawing. */
   profilePoint(km: number): [number, number];
+  /** The distance along the route (km) at an x on the elevation profile drawing. */
+  profileKm(x: number): number;
 };
 
 /** A part of the map (map px) to draw sharper for a close view, at `density` image px per map px. */
@@ -129,6 +131,8 @@ const DETAIL_MAX_SIDE = 2048;
 /** Time drums: the angle between rows (rad); seven row elements go round and are relabelled. */
 const DRUM_STEP = 0.35;
 const DRUM_ROWS = 7;
+/** A press this close (px) to the runner's dot on the elevation profile picks it up. */
+const RUNNER_REACH = 12;
 const INTERACTIVE = 'input,button,textarea,select,label,a,[contenteditable]';
 const SELECTABLE = '[data-selectable], [data-selectable] *';
 /** Fields that take typing: they keep the browser's own menu and Esc only leaves them. */
@@ -165,13 +169,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let sunEl: HTMLInputElement | null = null;
   let clockEl: HTMLElement | null = null;
   let cursorEl: SVGCircleElement | null = null;
+  let profileEl: HTMLElement | null = null;
 
   const st = {
     sunT: null as number | null,
     sunSlow: false,
     km: 0,
     kmT: 0,
-    t: 0,
     e: 0,
     ev: 0,
     eT: 0,
@@ -184,15 +188,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     pan: [0, 0, 0] as Vec3,
     panT: [0, 0, 0] as Vec3,
     bouncy: false,
-    slow: false,
   };
   const HERO = { yaw: 0.14, tilt: 0.99 };
-  let intro = false;
   let vw = 1;
   let vh = 1;
   let last = 0;
   let pending = false;
-  let drag: 'turn' | 'pan' | 'drum' | null = null;
+  let drag: 'turn' | 'pan' | 'drum' | 'runner' | null = null;
   let activeWay: string | null = null;
   let placing = false;
   let disposed = false;
@@ -497,6 +499,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const r = canvas.getBoundingClientRect();
     return [ev.clientX - r.left, ev.clientY - r.top];
   }
+  /** Where a canvas point lands on a piece, in px of the piece's own layout, however it is turned. */
+  function onPiece(p: Piece, sx: number, sy: number): [number, number] | null {
+    const { o, d } = ray(cam, sx, sy);
+    const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const w: Vec3 = [o[0] - p.O[0], o[1] - p.O[1], o[2] - p.O[2]];
+    const n = cross(p.ey, d);
+    const det = dot(p.ex, n);
+    if (Math.abs(det) < 1e-12) return null;
+    return [dot(w, n) / det, dot(p.ex, cross(w, d)) / det];
+  }
 
   // element px -> canvas CSS px, as a DOMMatrix, from the same camera the picture uses
   let GEOMETRY = false;
@@ -658,6 +671,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     sunEl = page.querySelector<HTMLInputElement>('input[data-sun]');
     clockEl = page.querySelector<HTMLElement>('[data-clock]');
     cursorEl = page.querySelector<SVGCircleElement>('[data-cursor]');
+    profileEl = page.querySelector<HTMLElement>('[data-profile]');
   }
 
   function offsetIn(el: HTMLElement) {
@@ -764,6 +778,30 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       cursorEl.setAttribute('cx', cx.toFixed(1));
       cursorEl.setAttribute('cy', cy.toFixed(1));
     }
+  }
+  /** The time the plan has the runner `km` along the route. */
+  function minutesAt(km: number) {
+    const ways = model?.ways ?? [];
+    if (!ways.length) return 0;
+    if (km <= ways[0].km) return ways[0].minutes;
+    for (let i = 1; i < ways.length; i += 1) {
+      const a = ways[i - 1];
+      const b = ways[i];
+      if (km <= b.km) return lerp(a.minutes, b.minutes, b.km > a.km ? (km - a.km) / (b.km - a.km) : 1);
+    }
+    return ways[ways.length - 1].minutes;
+  }
+  /** Put the runner `km` along the route, and the clock and the light at the time the plan has it there. */
+  function runTo(km: number) {
+    const ways = model?.ways ?? [];
+    if (!sunEl || !ways.length) return;
+    const at = clamp(km, ways[0].km, ways[ways.length - 1].km);
+    sunEl.value = String(Math.round(minutesAt(at)));
+    st.sunT = null;
+    updateSun();
+    st.km = st.kmT = at;
+    walkTo(at);
+    need();
   }
   function updateSun() {
     if (!model || !sunEl) return;
@@ -1215,15 +1253,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (disposed) return;
     const dt = fixed ?? Math.min(0.05, last ? (now - last) / 1000 : 0.016);
     last = now;
-    st.t += dt;
-    if (intro && st.t > 0.45) {
-      intro = false;
-      apart(1, true);
-      st.slow = true;
-    }
     // springs
-    const w = st.slow ? 3.3 : st.bouncy ? 6.2 : 13;
-    const zeta = st.slow ? 0.86 : st.bouncy ? 0.66 : 1;
+    const w = st.bouncy ? 6.2 : 13;
+    const zeta = st.bouncy ? 0.66 : 1;
     st.ev += (-2 * zeta * w * st.ev - w * w * (st.e - st.eT)) * dt;
     st.e += st.ev * dt;
     const ease = 1 - Math.exp(-dt * 10);
@@ -1247,8 +1279,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       Math.abs(st.yaw - st.yawT) > 1e-4 ||
       Math.abs(st.tilt - st.tiltT) > 1e-4 ||
       Math.abs(st.zoom / st.zoomT - 1) > 1e-4 ||
-      panMoving ||
-      intro;
+      panMoving;
     if (!moving) {
       st.e = st.eT;
       st.ev = 0;
@@ -1681,7 +1712,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function apart(v: number, bouncy = false) {
     st.eT = clamp(v, 0, 1);
     st.bouncy = bouncy;
-    st.slow = false;
     if (st.eT < 0.5) setHover(null);
     callbacks.onApartChange(st.eT > 0.5);
     need();
@@ -1698,7 +1728,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     apart(0, true);
   }
   function toggle() {
-    intro = false;
     if (st.eT > 0.5) together();
     else apart(1, true);
   }
@@ -1727,6 +1756,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   }
   const onTerrain = (t: Element) => t === canvas || !!t.closest?.('[data-piece="sheet"]');
+  /** The pointer on the elevation profile drawing (px), wherever its card stands. */
+  function profileAt(ev: { clientX: number; clientY: number }): [number, number] | null {
+    const host = profileEl?.closest<HTMLElement>('[data-piece]');
+    const p = host ? byEl.get(host) : undefined;
+    if (!profileEl || !host || !p || p.hidden) return null;
+    const [sx, sy] = canvasPoint(ev);
+    const at = onPiece(p, sx, sy);
+    if (!at) return null;
+    const [ox, oy] = offsetWithin(profileEl, host);
+    return [at[0] - ox, at[1] - oy];
+  }
 
   let px = 0;
   let py = 0;
@@ -1734,7 +1774,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let downOnMap = false;
   let panFrom: { cam: Cam; P: Vec3; pan: Vec3 } | null = null;
   const onPointerDown = (ev: PointerEvent) => {
-    intro = false;
     const t = ev.target as Element;
     // the right and middle buttons move the model from anywhere but a field being typed in
     const panning = ev.button === 2 || ev.button === 1;
@@ -1749,6 +1788,19 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       drumDrag = { drum: hit.drum, y0: ev.clientY, v0: hit.drum.v, lastY: ev.clientY, lastT: now, vel: 0, moved: 0, row: hit.row };
       canvas.setPointerCapture(ev.pointerId);
       return;
+    }
+    if (!panning && cursorEl && (t === canvas || t.closest?.('[data-profile]'))) {
+      // the runner's dot on the elevation profile is picked up and carried along the route
+      const at = profileAt(ev);
+      const cx = Number(cursorEl.getAttribute('cx'));
+      const cy = Number(cursorEl.getAttribute('cy'));
+      if (at && Math.hypot(at[0] - cx, at[1] - cy) <= RUNNER_REACH) {
+        drag = 'runner';
+        setHover(null);
+        canvas.setPointerCapture(ev.pointerId);
+        canvas.classList.add('turning');
+        return;
+      }
     }
     if (t !== canvas && t.closest?.('[data-pop-part]')) return;
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) document.activeElement.blur();
@@ -1800,6 +1852,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       drumDrag.lastY = ev.clientY;
       drumDrag.lastT = now;
       need();
+      return;
+    }
+    if (drag === 'runner') {
+      const at = profileAt(ev);
+      if (at && model) runTo(model.profileKm(at[0]));
       return;
     }
     const dx = ev.clientX - px;
@@ -1860,22 +1917,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (t !== canvas && t.closest?.(EDITABLE)) return;
     ev.preventDefault();
   };
-  // The wheel raises the flat page into the model, then zooms toward the point under the pointer;
-  // zoomed all the way out, it lowers the model back to the page.
+  // The wheel raises the flat page into the model as far as it is turned, and a page left part way up
+  // stays there; risen, it zooms toward the point under the pointer; zoomed all the way out, it lowers
+  // the model back to the page.
   const WHEEL_GAP = 200;
   let wheelAt = 0;
   let wheelPhase: 'rise' | 'zoom' | null = null;
-  let wheelDir = 0;
-  let settleTimer = 0;
-  // a page left part way up goes the rest of the way, the way the wheel was going
-  function settleRise() {
-    if (st.eT <= 0 || st.eT >= 1) return;
-    if (wheelDir < 0 ? st.eT >= 0.1 : st.eT > 0.9) apart(1);
-    else {
-      home();
-      apart(0);
-    }
-  }
   const onWheel = (ev: WheelEvent) => {
     const t = ev.target as Element;
     const hit = drumAt(t);
@@ -1899,7 +1946,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (list.scrollHeight > list.clientHeight + 1) return;
     }
     ev.preventDefault();
-    intro = false;
     const dy = ev.deltaMode === 1 ? ev.deltaY * 30 : ev.deltaY;
     if (!dy) return;
     const now = performance.now();
@@ -1914,11 +1960,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (wheelPhase && wheelPhase !== phase) return;
     wheelPhase = phase;
     if (phase === 'rise') {
-      wheelDir = Math.sign(dy);
-      apart(st.eT - dy * rate * 1.1);
+      apart(st.eT - dy * rate * 0.5);
       if (st.eT === 0) home();
-      window.clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(settleRise, 240);
       return;
     }
     const z0 = st.zoomT;
@@ -1997,7 +2040,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function focusWay(id: string) {
     const way = model?.ways.find((w) => w.id === id);
     if (!way) return;
-    intro = false;
     activeWay = id;
     hotWay(id);
     st.sunSlow = false;
@@ -2009,13 +2051,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function setPlacing(on: boolean) {
     placing = on;
     canvas.classList.toggle('placing', on);
-  }
-
-  function startIntro() {
-    if (st.eT > 0.5) return;
-    intro = true;
-    st.t = 0;
-    need();
   }
 
   // the picture without the bar
@@ -2032,7 +2067,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const debug = {
     st,
     pose(o: Partial<typeof st>) {
-      intro = false;
       Object.assign(st, o);
       if (o.e !== undefined) {
         st.eT = o.e;
@@ -2097,7 +2131,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function dispose() {
     disposed = true;
     window.clearTimeout(detailTimer);
-    window.clearTimeout(settleTimer);
     canvas.removeEventListener('paint', onPaint);
     for (const t of touchEvents) stage.removeEventListener(t, markTouched, true);
     stage.removeEventListener('pointerover', onKeyOver);
@@ -2144,7 +2177,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     toggle,
     focusWay,
     setPlacing,
-    startIntro,
     capture,
     dispose,
     need,
