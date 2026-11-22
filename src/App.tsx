@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { renderBasemaps, streamRelief, type MapStyle } from './basemap';
 import { gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
-import { calculateStats, parseGpx, serializeGpx, type GpxRoute } from './gpx';
+import { calculateStats, parseGpx, type GpxRoute } from './gpx';
 import { createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
@@ -551,6 +551,10 @@ export default function App() {
     };
   }, [native]);
 
+  useEffect(() => {
+    engineRef.current?.refreshHud();
+  }, [flyoverPhase]);
+
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !progress || !profile) return null;
     const ribbon = track.filter((_, i) => i % 2 === 0 || i === track.length - 1);
@@ -714,15 +718,13 @@ export default function App() {
     else setToast('PNG を書き出せませんでした。');
   };
 
-  const exportGpx = () => {
-    if (!route) return;
-    downloadBlob(new Blob([serializeGpx(route)], { type: 'application/gpx+xml' }), `${route.name || 'gpx-topo'}.gpx`);
-  };
-
   if (!native) return <Fallback />;
 
   const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, 630));
-  const flyoverPlaying = flyoverPhase === 'intro' || flyoverPhase === 'run' || flyoverPhase === 'outro';
+  const flyoverPlaying =
+    flyoverPhase === 'intro' || flyoverPhase === 'run' || flyoverPhase === 'outro' || flyoverPhase === 'paused';
+  const flyoverRunning = flyoverPhase === 'intro' || flyoverPhase === 'run' || flyoverPhase === 'outro';
+  const flyoverPaused = flyoverPhase === 'paused';
   const flyoverReturning = flyoverPhase === 'return';
   const photoRouteOverlay = baseMapStyle === 'photo' && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
@@ -1172,8 +1174,10 @@ export default function App() {
               <span className="well" data-well="place" />
               <span className="well well-flip" data-well="flip" />
               <span className="well" data-well="fly" />
-              <span className="well" data-well="png" />
-              <span className="well" data-well="gpx" />
+              {flyoverPlaying && (
+                <span className="well" data-well="stop" data-appear="" />
+              )}
+              <span className="well" data-well="camera" />
               <span className="bar-hint">
                 ドラッグで回転 · 右ドラッグで移動
                 <br />
@@ -1221,23 +1225,37 @@ export default function App() {
             </button>
             <button
               type="button"
-              className="key key-fly"
+              className={`key key-fly${flyoverRunning ? ' key-flip' : ''}`}
               data-piece="key"
               data-key="fly"
-              data-latched={flyoverPlaying ? '' : undefined}
+              data-playing={flyoverRunning ? '' : undefined}
               drawable=""
-              aria-label={flyoverPlaying ? 'Flyoverを停止' : 'Flyoverを再生'}
+              aria-label={flyoverPlaying ? (flyoverPaused ? 'Flyoverを再開' : 'Flyoverを一時停止') : 'Flyoverを再生'}
               aria-pressed={flyoverPlaying}
               disabled={flyoverReturning}
-              onClick={() => engineRef.current?.flyover()}
+              onClick={() => (flyoverPlaying ? engineRef.current?.toggleFlyoverPause() : engineRef.current?.flyover())}
             >
-              {flyoverPlaying ? '■' : '▶'}
+              {flyoverPlaying ? (flyoverPaused ? '▶' : 'Ⅱ') : '▶'}
             </button>
-            <button type="button" className="key key-png" data-piece="key" data-key="png" drawable="" onClick={() => void exportPng()}>
-              PNG
-            </button>
-            <button type="button" className="key key-gpx" data-piece="key" data-key="gpx" drawable="" onClick={exportGpx}>
-              GPX
+            {flyoverPlaying && (
+              <button
+                type="button"
+                className="key key-stop"
+                data-piece="key"
+                data-key="stop"
+                data-appear=""
+                drawable=""
+                aria-label="Flyoverを停止"
+                onClick={() => engineRef.current?.flyover()}
+              >
+                ■
+              </button>
+            )}
+            <button type="button" className="key key-camera" data-piece="key" data-key="camera" drawable="" aria-label="PNGを保存" onClick={() => void exportPng()}>
+              <svg className="camera-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M7.5 6.5 9 4h6l1.5 2.5H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3.5Z" />
+                <circle cx="12" cy="12.5" r="3.5" />
+              </svg>
             </button>
           </nav>
         </div>

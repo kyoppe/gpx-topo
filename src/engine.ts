@@ -46,7 +46,8 @@ export type EngineCallbacks = {
   onPopClosed(seq: string): void;
   onFlightChange(phase: FlightPhase | null): void;
 };
-export type FlightPhase = 'intro' | 'run' | 'outro' | 'return';
+export type FlightPhase = 'intro' | 'run' | 'outro' | 'return' | 'paused';
+type FlightResumePhase = Exclude<FlightPhase, 'return' | 'paused'>;
 
 type Kind = 'sheet' | 'terrain' | 'relief' | 'detail' | 'card' | 'content' | 'pin' | 'bar' | 'key' | 'pop' | 'row';
 type Drum = {
@@ -101,6 +102,7 @@ type Piece = {
 type Rig = { look: Vec3; yaw: number; pitch: number; dist: number };
 type Flight = {
   phase: FlightPhase;
+  resumePhase: FlightResumePhase;
   t: number;
   saved: { e: number; yaw: number; tilt: number; zoom: number; pan: Vec3; km: number; kmT: number; sun: number | null };
   /** the saved view as a rig, to fly from and back to */
@@ -109,8 +111,9 @@ type Flight = {
   /** where the phase under way set out from, and how far the page was raised then */
   from: Rig;
   fromE: number;
-  /** the way the chase camera faces, turned no faster than CHASE_TURN_MAX */
+  /** the way the chase camera faces, and how fast it is turning (rad/s, no faster than CHASE_TURN_MAX) */
   heading: number;
+  turn: number;
   /** how far off the whole raised model is seen, against which the view counts as zoomed for pins and route lines */
   fitD: number;
 };
@@ -218,6 +221,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let drag: 'turn' | 'pan' | 'drum' | 'runner' | null = null;
   let activeWay: string | null = null;
   let flight: Flight | null = null;
+  let panelAlpha = 1;
+  let panelAlphaT = 1;
   let placing = false;
   let disposed = false;
   let cam: Cam = { vp: new Float32Array(16), eye: [0, 0, 1], r: [1, 0, 0], u: [0, -1, 0], dir: [0, 0, 1], base: [0, 0, 0], yaw: 0, D: 1 };
@@ -475,9 +480,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const CHASE_LEAD = 0.2;
   /** It keeps this high (m) over the ground, and over the line to the runner. */
   const CHASE_CLEAR_M = 150;
-  /** It turns after the route at this rate (1/s), and never faster than CHASE_TURN_MAX (rad/s). */
-  const CHASE_TURN = 1.5;
-  const CHASE_TURN_MAX = 0.5;
+  /** It rides the route averaged over this many km either side (and no more than CHASE_SMOOTH of the route), so small bends pass under it. */
+  const CHASE_SMOOTH_KM = 3;
+  const CHASE_SMOOTH = 0.03;
+  /** It turns after the averaged route like a spring of this rate (rad/s), and never faster than CHASE_TURN_MAX (rad/s). */
+  const CHASE_TURN = 0.9;
+  const CHASE_TURN_MAX = 0.4;
   /** Route lines are drawn as if zoomed this far while flying. */
   const FLYOVER_STROKE_ZOOM = 3;
 
@@ -541,6 +549,27 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     };
   }
 
+  /** Keep the current Flyover rig when manual input takes over the 3D view. */
+  function adoptRig(g: Rig) {
+    const yaw = wrapAngle(g.yaw - HERO.yaw);
+    let zoom = 1;
+    let tilt = g.pitch - HERO.tilt;
+    for (let i = 0; i < 5; i += 1) {
+      const stand = 1 - ZOOM_STAND * clamp(Math.log(zoom) / Math.log(ZOOM_MAX), 0, 1);
+      tilt = clamp(g.pitch / Math.max(0.2, stand) - HERO.tilt, -HERO.tilt + 0.02, 1.48 / Math.max(0.2, stand) - HERO.tilt);
+      const c = camera(1, yaw, tilt, zoom, [0, 0, 0]);
+      zoom = clamp(zoom * (c.D / Math.max(1, g.dist)), ZOOM_MIN, ZOOM_MAX);
+    }
+    const c = camera(1, yaw, tilt, zoom, [0, 0, 0]);
+    st.e = st.eT = 1;
+    st.ev = 0;
+    st.yaw = st.yawT = yaw;
+    st.tilt = st.tiltT = tilt;
+    st.zoom = st.zoomT = zoom;
+    st.pan = g.look.map((v, i) => v - c.base[i]) as Vec3;
+    st.panT = [...st.pan];
+  }
+
   /** World px per metre on the ground: from the terrain, or from the route's own length before it is in. */
   function pxPerM() {
     const k = perM();
@@ -566,21 +595,62 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return groundZ(clamp(X - MAPX, 0, MW), clamp(Y - MAPY, 0, MH), lift);
   }
 
+  function surfaceNormal(mx: number, my: number, lift: number): Vec3 {
+    const step = 2;
+    const x0 = clamp(mx - step, 0, MW);
+    const x1 = clamp(mx + step, 0, MW);
+    const y0 = clamp(my - step, 0, MH);
+    const y1 = clamp(my + step, 0, MH);
+    const dx = (groundZ(x1, my, lift) - groundZ(x0, my, lift)) / Math.max(1, x1 - x0);
+    const dy = (groundZ(mx, y1, lift) - groundZ(mx, y0, lift)) / Math.max(1, y1 - y0);
+    const n: Vec3 = [-dx, -dy, 1];
+    const length = Math.hypot(n[0], n[1], n[2]) || 1;
+    return n.map((v) => v / length) as Vec3;
+  }
+
   function runnerAt(km: number, lift: number): Vec3 {
     const point = routeAt(km);
     return [MAPX + point.x, MAPY + point.y, groundZ(point.x, point.y, lift)];
   }
 
+  function smoothKm() {
+    const { start, end } = routeSpan();
+    return Math.max(0.05, Math.min(CHASE_SMOOTH_KM, (end - start) * CHASE_SMOOTH));
+  }
+
+  /** The route about `km`, averaged over `w` km either side with weights easing off towards the ends: where it runs, and its general way. */
+  function smoothRouteAt(km: number, w: number, lift: number) {
+    const { start, end } = routeSpan();
+    const N = 16;
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let tx = 0;
+    let ty = 0;
+    let sum = 0;
+    for (let i = -N; i <= N; i += 1) {
+      const wt = (1 + Math.cos((Math.PI * i) / (N + 1))) / 2;
+      const p = routeAt(clamp(km + (w * i) / N, start, end));
+      x += p.x * wt;
+      y += p.y * wt;
+      z += groundZ(p.x, p.y, lift) * wt;
+      tx += p.tx * wt;
+      ty += p.ty * wt;
+      sum += wt;
+    }
+    // a hairpin's two legs cancel out: then the way the route runs right there will do
+    if (Math.hypot(tx, ty) < sum * 0.05) {
+      const p = routeAt(km);
+      tx = p.tx;
+      ty = p.ty;
+    }
+    return { x: x / sum, y: y / sum, z: z / sum, tx, ty };
+  }
+
   /** The yaw that stands the camera behind the runner, along the route's general way over a few km either side. */
   function behindAt(km: number) {
-    const { start, end } = routeSpan();
-    const span = clamp((end - start) * 0.025, 0.2, 2.5);
-    const before = routeAt(Math.max(start, km - span));
-    const after = routeAt(Math.min(end, km + span));
-    const tx = after.x - before.x;
-    const ty = after.y - before.y;
-    if (Math.hypot(tx, ty) < 1e-6) return Math.atan2(-routeAt(km).tx, -routeAt(km).ty);
-    return Math.atan2(-tx, -ty);
+    const s = smoothRouteAt(km, smoothKm() * 2, 1);
+    return Math.atan2(-s.tx, -s.ty);
   }
 
   /** The chase camera behind the runner `km` along, raised where the ground or a ridge would come between them. */
@@ -588,7 +658,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const P = runnerAt(km, lift);
     const dist = chaseDist() * pull;
     const lead = dist * CHASE_LEAD;
-    const look: Vec3 = [P[0] - Math.sin(yaw) * lead, P[1] - Math.cos(yaw) * lead, P[2]];
+    // it looks along the averaged route rather than at the runner, so the runner's small bends do not shake the view
+    const S = smoothRouteAt(km, smoothKm(), lift);
+    const look: Vec3 = [MAPX + S.x - Math.sin(yaw) * lead, MAPY + S.y - Math.cos(yaw) * lead, S.z];
     const eye = eyeOf({ look, yaw, pitch, dist });
     const clear = CHASE_CLEAR_M * pxPerM() * lift;
     let raise = 0;
@@ -680,6 +752,28 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   }
 
+  function leaveFlightAtCurrentView() {
+    if (!flight || flight.phase === 'return') return;
+    adoptRig(flight.current);
+    flight = null;
+    panelAlphaT = 0;
+    callbacks.onFlightChange(null);
+    need();
+  }
+
+  function toggleFlyoverPause() {
+    if (!flight || flight.phase === 'return') return;
+    if (flight.phase === 'paused') {
+      flight.phase = flight.resumePhase;
+      callbacks.onFlightChange(flight.phase);
+    } else {
+      flight.resumePhase = flight.phase;
+      flight.phase = 'paused';
+      callbacks.onFlightChange('paused');
+    }
+    need();
+  }
+
   function holdRaised(e: number) {
     st.e = e;
     st.eT = e;
@@ -690,6 +784,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   // Run: chase the runner from behind and above. Outro: swing round the runner at the finish, then rise over the whole route.
   function advanceFlight(dt: number): Rig | null {
     if (!flight || !model?.route.length) return null;
+    if (flight.phase === 'paused') return flight.current;
     flight.t += dt;
     const { start, end } = routeSpan();
     if (flight.phase === 'intro') {
@@ -707,8 +802,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       holdRaised(1);
       const q = clamp(flight.t / FLYOVER_DURATION, 0, 1);
       const km = lerp(start, end, smooth(q));
-      const want = wrapAngle(behindAt(km) - flight.heading);
-      flight.heading += clamp(want * (1 - Math.exp(-dt * CHASE_TURN)), -CHASE_TURN_MAX * dt, CHASE_TURN_MAX * dt);
+      // the heading follows like a damped spring, so it eases into and out of each turn rather than starting and stopping
+      const behind = behindAt(km);
+      for (let left = dt; left > 0; left -= 1 / 120) {
+        const h = Math.min(left, 1 / 120);
+        const err = wrapAngle(behind - flight.heading);
+        flight.turn = clamp(flight.turn + (CHASE_TURN * CHASE_TURN * err - 2 * CHASE_TURN * flight.turn) * h, -CHASE_TURN_MAX, CHASE_TURN_MAX);
+        flight.heading += flight.turn * h;
+      }
       // closing on the finish, the camera comes in lower
       const close = smooth((q - 0.88) / 0.12);
       const target = chaseRig(km, flight.heading, liftOf(1), lerp(1, 0.65, close), lerp(CHASE_PITCH, CHASE_PITCH * 0.8, close));
@@ -746,9 +847,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       returnFromFlight();
       return;
     }
+    panelAlphaT = 1;
     const home = rigOf(camera(st.e, st.yaw, st.tilt, st.zoom, st.pan));
     flight = {
       phase: 'intro',
+      resumePhase: 'intro',
       t: 0,
       saved: {
         e: st.e,
@@ -765,6 +868,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       from: home,
       fromE: st.e,
       heading: behindAt(routeSpan().start),
+      turn: 0,
       fitD: camera(1, 0, 0, 1, [0, 0, 0]).D,
     };
     st.eT = 1;
@@ -1266,7 +1370,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const faceN = back ? neg(c) : c;
       items.push(quad(k, { glow: 1 }));
       // the sides and the shadow belong to the key, not to each face
-      if (back || !solid || k.name === 'fly') continue;
+      if (!solid) continue;
       const rr = Math.min(7, k.h / 3) * s;
       items.push({ solid: side, useNormal: true, nrm: b, O: P(-hw + rr, hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
       items.push({ solid: side, useNormal: true, nrm: neg(b), O: P(-hw + rr, -hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
@@ -1654,6 +1758,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       Math.abs(st.tilt - st.tiltT) > 1e-4 ||
       Math.abs(st.zoom / st.zoomT - 1) > 1e-4 ||
       panMoving;
+    if (Math.abs(panelAlpha - panelAlphaT) > 1e-3) {
+      panelAlpha += (panelAlphaT - panelAlpha) * (1 - Math.exp(-dt * 9));
+      if (Math.abs(panelAlpha - panelAlphaT) <= 1e-3) panelAlpha = panelAlphaT;
+      moving = true;
+    }
     if (!moving) {
       st.e = st.eT;
       st.ev = 0;
@@ -1687,7 +1796,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
 
     const flyPose = advanceFlight(dt);
-    if (flight || flyPose) moving = true;
+    if ((flight && flight.phase !== 'paused') || flyPose) moving = true;
     const lift = liftOf(st.e);
     const lit = 0.78 * smooth(st.e / 0.4);
     cam = flyPose ? rigCam(flyPose) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
@@ -1697,10 +1806,39 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
           const gap = 10;
           const totalH = cards.reduce((sum, card) => sum + card.h, 0) + gap * Math.max(0, cards.length - 1);
           const fit = Math.min(1, Math.max(0.45, (vh - 36 - gap * Math.max(0, cards.length - 1)) / Math.max(1, totalH)));
-          const depth = Math.max(1, cam.D * 0.58);
-          const unit = (2 * depth * Math.tan(FOV / 2)) / vh;
+          const width = Math.max(1, ...cards.map((card) => card.w * fit));
+          const left = vw - 18 - width;
+          const top = 18;
+          const bottom = top + totalH * fit;
+          const baseDepth = Math.max(1, cam.D * 0.58);
+          let depth = baseDepth;
+          let slope: Vec3 | null = null;
+          for (const sy of [top, (top + bottom) / 2, bottom]) {
+            for (const sx of [left, (left + vw - 18) / 2, vw - 18]) {
+              const { o, d } = ray(cam, sx, sy);
+              const P = pick(cam, sx, sy, lift);
+              if (!P || P[0] < MAPX || P[0] > MAPX + MW || P[1] < MAPY || P[1] > MAPY + MH) continue;
+              const groundDepth = (P[0] - o[0]) * d[0] + (P[1] - o[1]) * d[1] + (P[2] - o[2]) * d[2];
+              const viewAngle = Math.max(0.05, -(d[0] * cam.dir[0] + d[1] * cam.dir[1] + d[2] * cam.dir[2]));
+              const safeDepth = (groundDepth - 8) * viewAngle;
+              if (safeDepth < depth) {
+                depth = Math.max(1, safeDepth);
+                slope = surfaceNormal(P[0] - MAPX, P[1] - MAPY, lift);
+              }
+            }
+          }
+          const avoid = clamp((baseDepth - depth) / Math.max(1, baseDepth * 0.4), 0, 1);
+          let n = cam.dir;
+          if (slope && avoid > 0) {
+            n = slope.map((v, i) => lerp(cam.dir[i], v, 0.38 * avoid)) as Vec3;
+            const nl = Math.hypot(n[0], n[1], n[2]) || 1;
+            n = n.map((v) => v / nl) as Vec3;
+          }
+          let u: Vec3 = [cam.r[1] * n[2] - cam.r[2] * n[1], cam.r[2] * n[0] - cam.r[0] * n[2], cam.r[0] * n[1] - cam.r[1] * n[0]];
+          if (u[0] * cam.u[0] + u[1] * cam.u[1] + u[2] * cam.u[2] < 0) u = u.map((v) => -v) as Vec3;
           const plane = cam.eye.map((v, i) => v - cam.dir[i] * depth) as Vec3;
-          return { gap, fit, unit, plane };
+          const unit = (2 * depth * Math.tan(FOV / 2)) / vh;
+          return { gap, fit, unit, plane, r: cam.r, u, n };
         })()
       : null;
     // pins grow on screen as the view zooms in, slower than the map so they do not cover it
@@ -1709,6 +1847,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     // where everything is
     const EPS = 0.03;
     let order = 1;
+    const cardHome = (card: Piece): Vec3 => {
+      const spread = (1 - panelAlpha) * (110 + card.order * 28);
+      const side = card.order % 2 ? -1 : 1;
+      return [0, 1, 2].map(
+        (i) => [card.x + card.w / 2, card.y + card.h, card.z][i] + cam.r[i] * spread + cam.u[i] * side * spread * 0.12,
+      ) as Vec3;
+    };
     for (const p of pieces) {
       order += 1;
       p.ex = [1, 0, 0];
@@ -1718,11 +1863,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
           const top = 18 + cards.slice(0, p.order).reduce((sum, card) => sum + card.h * fixedPanel.fit, 0) + fixedPanel.gap * p.order;
           const left = vw - 18 - p.w * fixedPanel.fit;
           const center = fixedPanel.plane.map(
-            (v, i) => v + cam.r[i] * (left + (p.w * fixedPanel.fit) / 2 - vw / 2) * fixedPanel.unit + cam.u[i] * (vh / 2 - top - (p.h * fixedPanel.fit) / 2) * fixedPanel.unit,
+            (v, i) => v + fixedPanel.r[i] * (left + (p.w * fixedPanel.fit) / 2 - vw / 2) * fixedPanel.unit + fixedPanel.u[i] * (vh / 2 - top - (p.h * fixedPanel.fit) / 2) * fixedPanel.unit,
           ) as Vec3;
-          p.ex = cam.r.map((v) => v * fixedPanel.unit * fixedPanel.fit) as Vec3;
-          p.ey = cam.u.map((v) => -v * fixedPanel.unit * fixedPanel.fit) as Vec3;
-          p.nrm = cam.dir;
+          p.ex = fixedPanel.r.map((v) => v * fixedPanel.unit * fixedPanel.fit) as Vec3;
+          p.ey = fixedPanel.u.map((v) => -v * fixedPanel.unit * fixedPanel.fit) as Vec3;
+          p.nrm = fixedPanel.n;
           p.O = [0, 1, 2].map((i) => center[i] - (p.ex[i] * p.w) / 2 - (p.ey[i] * p.h) / 2) as Vec3;
           p.z = 0;
           p.topZ = 0;
@@ -1738,13 +1883,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         for (const c of cards) if (c.order > p.order) seat += c.h * sa * 0.94;
         p.z = 12 * smooth((st.e / 0.4) * 1.4 - (0.4 * p.order) / 3) + seat + EPS * (20 + order);
         p.topZ = p.z + p.h * sa;
-        const home: Vec3 = [p.x + p.w / 2, p.y + p.h, p.z];
+        const home = cardHome(p);
         seatCard(p, home, cardSwivel(home) * k, sa, ca);
         if (p === cards[cards.length - 1]) {
           // where they step to is worked out from their seats alone; each then turns to face the view from there
           if (dodgeCards(dt, k, sa, ca)) moving = true;
           for (const c of cards) {
-            const at = [c.x + c.w / 2, c.y + c.h, c.z].map((v, i) => v + cam.r[i] * c.dodge[0] + cam.u[i] * c.dodge[1]) as Vec3;
+            const at = cardHome(c).map((v, i) => v + cam.r[i] * c.dodge[0] + cam.u[i] * c.dodge[1]) as Vec3;
             seatCard(c, at, cardSwivel(at) * k, sa, ca);
           }
         }
@@ -1819,10 +1964,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const q = quad;
     const opaque: DrawItem[] = [];
     for (const c of cards) {
+      const back = c.nrm.map((v) => -v) as Vec3;
+      const depth = 8;
+      const backO = c.O.map((v, i) => v - c.nrm[i] * depth) as Vec3;
+      opaque.push(q(c, { O: backO, solid: [0.97, 0.97, 0.96], nrm: back, useNormal: true }));
       opaque.push(q(c));
       if (lit > 0.05) {
         // a card has thickness: its lower and side edges
-        const T2 = 3.2 * lit;
+        const T2 = 6 + 2 * lit;
         const edge: Vec3 = [0.9, 0.9, 0.89];
         const dn = c.nrm.map((v) => -v * T2) as Vec3;
         const at = (fx: number, fy: number) => [0, 1, 2].map((i) => c.O[i] + c.ex[i] * fx + c.ey[i] * fy) as Vec3;
@@ -1973,6 +2122,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   /** The app drew into the map canvases: upload them again. */
   function refreshMap() {
     for (const p of [land, relief]) if (p) p.stale = true;
+    need();
+  }
+  /** Re-collect HUD pieces after React conditionally adds or removes a key. */
+  function refreshHud() {
+    collect();
+    measure();
+    for (const p of pieces) p.stale = true;
     need();
   }
   /** The app moved or drew into the detail picture: measure it again and upload it once it has painted. */
@@ -2131,6 +2287,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function apart(v: number, bouncy = false) {
     st.eT = clamp(v, 0, 1);
     st.bouncy = bouncy;
+    if (st.eT > 0.5) panelAlphaT = 1;
     if (st.eT < 0.5) setHover(null);
     callbacks.onApartChange(st.eT > 0.5);
     need();
@@ -2194,7 +2351,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let panFrom: { cam: Cam; P: Vec3; pan: Vec3 } | null = null;
   const onPointerDown = (ev: PointerEvent) => {
     const t = ev.target as Element;
-    if (flight && !t.closest?.('[data-key="fly"]')) returnFromFlight();
+    if (flight && !t.closest?.('[data-key="fly"],[data-key="stop"]')) leaveFlightAtCurrentView();
     // the right and middle buttons move the model from anywhere but a field being typed in
     const panning = ev.button === 2 || ev.button === 1;
     if (t !== canvas && t.closest && (panning ? t.closest(EDITABLE) : t.closest(INTERACTIVE) || t.closest(SELECTABLE))) return;
@@ -2345,7 +2502,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let wheelPhase: 'rise' | 'zoom' | null = null;
   const onWheel = (ev: WheelEvent) => {
     const t = ev.target as Element;
-    if (flight) returnFromFlight();
+    if (flight) leaveFlightAtCurrentView();
     const hit = drumAt(t);
     if (hit || t.closest?.('[data-pop-part]')) {
       ev.preventDefault();
@@ -2413,7 +2570,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   const onKey = (ev: KeyboardEvent) => {
-    if (flight) returnFromFlight();
+    if (flight) leaveFlightAtCurrentView();
     if (popKey(ev)) {
       ev.preventDefault();
       return;
@@ -2609,9 +2766,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     together,
     toggle,
     flyover,
+    toggleFlyoverPause,
     focusWay,
     setPlacing,
     capture,
+    refreshHud,
     dispose,
     need,
   };

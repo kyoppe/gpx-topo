@@ -1193,9 +1193,12 @@ body {
   width: 48px;
 }
 
-.well[data-well='png'],
-.well[data-well='gpx'] {
+.well[data-well='camera'] {
   width: 72px;
+}
+
+.well[data-well='stop'] {
+  width: 48px;
 }
 
 .bar-hint {
@@ -1273,9 +1276,41 @@ body {
   font-size: 16px;
 }
 
-.key-png,
-.key-gpx {
+.key-stop {
+  width: 38px;
+  font-size: 15px;
+}
+
+.key-camera {
   width: 62px;
+}
+
+.key-stop[data-appear],
+.well[data-well='stop'][data-appear] {
+  animation: key-stop-split 320ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+
+@keyframes key-stop-split {
+  from {
+    clip-path: inset(0 100% 0 0 round 9px);
+    opacity: 0;
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 9px);
+    opacity: 1;
+  }
+}
+
+.camera-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .key[data-latched] {
