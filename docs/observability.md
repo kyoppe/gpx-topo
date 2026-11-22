@@ -40,6 +40,10 @@ workflow performs the build or deployment.
 - Browser Logs enabled
 - `forwardErrorsToLogs: true`
 - `forwardConsoleLogs: "all"`
+- `beforeSend` preserves explicit `event_type` values and supplies
+  `browser_console`, `browser_error`, or `browser_log` to automatic logs.
+- Browser Logs also receive `service`, `env`, and `version` when the SDK event
+  does not already contain them.
 
 User-entered values are not masked. Waypoint names, GPX file names, and GPX
 content may be included in RUM context or Browser Logs when they are relevant

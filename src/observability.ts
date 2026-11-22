@@ -1,4 +1,4 @@
-import { datadogLogs } from '@datadog/browser-logs';
+import { datadogLogs, type LogsEvent } from '@datadog/browser-logs';
 import { datadogRum } from '@datadog/browser-rum';
 import { reactPlugin } from '@datadog/browser-rum-react';
 
@@ -7,10 +7,27 @@ const CLIENT_TOKEN = 'pubd8fe53f9f169d37ec0ca3bf772e6ee88';
 const SITE = 'datadoghq.com';
 const SERVICE = 'gpx-topo-web';
 const ENV = import.meta.env.DEV ? 'dev' : 'kyo';
+const VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown';
 
 type Context = Record<string, unknown>;
 
 let started = false;
+
+const ERROR_STATUSES = new Set(['error', 'critical', 'alert', 'emerg']);
+
+export function enrichBrowserLog(event: LogsEvent): boolean {
+  if (typeof event.event_type !== 'string' || event.event_type.length === 0) {
+    event.event_type = ERROR_STATUSES.has(event.status)
+      ? 'browser_error'
+      : event.origin === 'console'
+        ? 'browser_console'
+        : 'browser_log';
+  }
+  event.service ??= SERVICE;
+  event.env ??= ENV;
+  event.version ??= VERSION;
+  return true;
+}
 
 export function startObservability(): void {
   if (started) return;
@@ -20,7 +37,7 @@ export function startObservability(): void {
     site: SITE,
     service: SERVICE,
     env: ENV,
-    version: __APP_VERSION__,
+    version: VERSION,
   };
   try {
     datadogRum.init({
@@ -46,6 +63,7 @@ export function startObservability(): void {
       ...shared,
       forwardErrorsToLogs: true,
       forwardConsoleLogs: 'all',
+      beforeSend: enrichBrowserLog,
     });
   } catch (error) {
     console.error('gpx_topo_logs_init_failed', error);
