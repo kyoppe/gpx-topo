@@ -834,6 +834,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let keys: Piece[] = [];
   let keyHot: string | null = null;
   let keyDown: string | null = null;
+  let riseStep = -1;
   let noHud = false;
   const hex = (s: string): Vec3 | null => {
     const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(s.trim());
@@ -857,13 +858,21 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (!bar || noHud) return { items, busy };
     measureHud();
     if (!bar.w) return { items, busy };
+    // the wells and the key faces in CSS follow the rise too, in steps so the textures are not redrawn every frame
+    const step = Math.round(rise * 20) / 20;
+    if (step !== riseStep) {
+      riseStep = step;
+      bar.el.parentElement?.style.setProperty('--rise', String(step));
+      for (const p of [bar, ...keys]) p.stale = true;
+      need();
+    }
     // a plane where one world unit is one CSS px, kept between the near and far planes
     const Dh = vh / 2 / Math.tan(FOV / 2);
     const Dq = clamp(Dh, cam.D * 0.2, cam.D * 6);
     const s = Dq / Dh;
     const { r, u, dir, eye } = cam;
-    // the slab leans back like a keyboard on the table, more once the page stands up
-    const beta = 0.42 + 0.3 * rise;
+    // flat, the slab faces the camera and its keys lie flush; it leans back like a keyboard on the table as the page stands up
+    const beta = 0.72 * rise;
     const cb = Math.cos(beta);
     const sb = Math.sin(beta);
     const ex = r;
@@ -881,13 +890,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     bar.ey = sc(ey, 1);
     place(bar);
     items.push(quad(bar, { glow: 0.25 }));
-    const T = 10;
-    const slabSide: Vec3 = [0.74, 0.75, 0.78];
-    items.push({ solid: slabSide, useNormal: true, nrm: ey, O: at(16, bh, 0), ex: sc(ex, bw - 32), ey: sc(n, -T) });
-    items.push({ solid: slabSide, useNormal: true, nrm: [-ex[0], -ex[1], -ex[2]], O: at(0, 16, 0), ex: sc(ey, bh - 32), ey: sc(n, -T) });
-    items.push({ solid: slabSide, useNormal: true, nrm: ex, O: at(bw, 16, 0), ex: sc(ey, bh - 32), ey: sc(n, -T) });
-    // its soft shadow on whatever is behind
-    items.push({ O: at(-26, -14, -T - 2), ex: sc(ex, bw + 52), ey: sc(ey, bh + 46), shade: { w: bw + 52, h: bh + 46, blur: 18, strength: 0.22 } });
+    const T = 10 * rise;
+    const solid = rise > 0.02;
+    if (solid) {
+      const slabSide: Vec3 = [0.74, 0.75, 0.78];
+      items.push({ solid: slabSide, useNormal: true, nrm: ey, O: at(16, bh, 0), ex: sc(ex, bw - 32), ey: sc(n, -T) });
+      items.push({ solid: slabSide, useNormal: true, nrm: [-ex[0], -ex[1], -ex[2]], O: at(0, 16, 0), ex: sc(ey, bh - 32), ey: sc(n, -T) });
+      items.push({ solid: slabSide, useNormal: true, nrm: ex, O: at(bw, 16, 0), ex: sc(ey, bh - 32), ey: sc(n, -T) });
+      // its soft shadow on whatever is behind
+      items.push({ O: at(-26, -14, -T - 2), ex: sc(ex, bw + 52), ey: sc(ey, bh + 46), shade: { w: bw + 52, h: bh + 46, blur: 18, strength: 0.22 * rise } });
+    }
 
     const ease = 1 - Math.exp(-dt * 20);
     const turn = 1 - Math.exp(-dt * 6);
@@ -905,7 +917,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         k.flip = flipT;
       }
       const [wx, wy, ww, wh] = k.well;
-      const d = Math.max(1.8, 9 + 2 * k.hot - 6.8 * k.press);
+      // flat, a key keeps half a px off the slab so its face does not fight the slab's
+      const d = Math.max(0.5, rise * Math.max(1.8, 9 + 2 * k.hot - 6.8 * k.press));
       const th = k.flip;
       // a flipping key rises out of its well so it never cuts into the slab
       const up = (k.h / 2) * Math.abs(Math.sin(th)) + 2 * Math.sin(th / 2) ** 2;
@@ -926,7 +939,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       else unplace(k);
       items.push(quad(k, { glow: 1 }));
       // the sides and the shadow belong to the key, not to each face
-      if (back) continue;
+      if (back || !solid) continue;
       const rr = Math.min(7, k.h / 3) * s;
       const neg = (v: Vec3) => v.map((x) => -x) as Vec3;
       const side = k.side;
@@ -942,7 +955,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         O: at(kx - m, ky - m, 0.15),
         ex: sc(ex, k.w + 2 * m),
         ey: sc(ey, k.h + 2 * m),
-        shade: { w: k.w + 2 * m, h: k.h + 2 * m, blur, strength: 0.16 + d * 0.022 },
+        shade: { w: k.w + 2 * m, h: k.h + 2 * m, blur, strength: (0.16 + d * 0.022) * rise },
       });
     }
     return { items, busy };

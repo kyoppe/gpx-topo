@@ -1071,7 +1071,9 @@ body {
 
 /* ---------------------------------------------------------------- the bar inside the canvas */
 /* Laid out once here; the engine stands the slab and its keys up in front of the camera. */
+/* --rise (set by the engine) is 0 on the flat map, where the bar is plain flat buttons, and 1 once the page stands. */
 .hud {
+  --rise: 0;
   position: absolute;
   top: 0;
   left: 0;
@@ -1089,10 +1091,13 @@ body {
   gap: 8px;
   padding: 9px 12px;
   border-radius: 16px;
-  background: linear-gradient(#fbfbfa, #eceef1);
+  background: linear-gradient(
+    color-mix(in srgb, #fbfbfa calc(var(--rise) * 100%), #f3f4f5),
+    color-mix(in srgb, #eceef1 calc(var(--rise) * 100%), #f3f4f5)
+  );
   box-shadow:
     inset 0 0 0 1px rgba(24, 32, 43, 0.09),
-    inset 0 1px 0 #fff;
+    inset 0 1px 0 rgb(255 255 255 / var(--rise));
   user-select: none;
 }
 
@@ -1106,6 +1111,7 @@ body {
   box-shadow:
     inset 0 2px 4px rgba(24, 32, 43, 0.26),
     inset 0 0 0 1px rgba(24, 32, 43, 0.08);
+  opacity: var(--rise);
 }
 
 .well[data-well='open'] {
@@ -1133,8 +1139,14 @@ body {
   white-space: nowrap;
 }
 
+/* risen, a key's face shades from --top to --bottom; flat, it is one colour and --tint darkens it on hover and press */
 .key {
   --side: #c3c9d2;
+  --top: #ffffff;
+  --bottom: #f1f2f4;
+  --flat: color-mix(in srgb, var(--top), var(--bottom));
+  --edge: inset 0 0 0 1px rgba(24, 32, 43, 0.1);
+  --tint: 0;
   position: absolute;
   top: 0;
   left: 0;
@@ -1142,9 +1154,14 @@ body {
   padding: 0;
   border: 0;
   border-radius: 9px;
-  background: linear-gradient(#ffffff, #f1f2f4);
+  background: linear-gradient(
+    color-mix(in srgb, var(--top) calc(var(--rise) * 100%), var(--flat)),
+    color-mix(in srgb, var(--bottom) calc(var(--rise) * 100%), var(--flat))
+  );
   appearance: none;
-  box-shadow: inset 0 0 0 1px rgba(24, 32, 43, 0.1);
+  box-shadow:
+    var(--edge),
+    inset 0 0 0 99px rgb(24 32 43 / calc(var(--tint) * (1 - var(--rise))));
   color: var(--ink);
   font: 600 13px var(--sans);
   white-space: nowrap;
@@ -1155,8 +1172,16 @@ body {
   outline: none;
 }
 
+.key:hover {
+  --tint: 0.06;
+}
+
+.key:active {
+  --tint: 0.12;
+}
+
 .key:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--accent);
+  --edge: inset 0 0 0 2px var(--accent);
 }
 
 .key-open {
@@ -1169,9 +1194,10 @@ body {
 
 .key-flip {
   --side: #1d38b0;
+  --top: #4166f6;
+  --bottom: #2d50e4;
+  --edge: inset 0 0 0 1px rgba(10, 20, 80, 0.25);
   width: 120px;
-  background: linear-gradient(#4166f6, #2d50e4);
-  box-shadow: inset 0 0 0 1px rgba(10, 20, 80, 0.25);
   color: #fff;
 }
 
@@ -1182,7 +1208,8 @@ body {
 
 .key[data-latched] {
   --side: #0a0e15;
-  background: linear-gradient(#273140, #18202b);
+  --top: #273140;
+  --bottom: #18202b;
   color: #fff;
 }
 

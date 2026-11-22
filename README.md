@@ -6,7 +6,7 @@
 - The flat map is the GSI pale map with its hillshade. On the 3D model the hillshade, the map's own contour lines, and its vegetation marks are taken out, so the relief is drawn by the model's contours and its sunlight only.
 - React owns the page: the map, waypoint pins, the side panel, the bar, and the pickers are ordinary HTML.
 - HTML-in-Canvas (`<canvas layoutsubtree>`, `texElementSubImage2D`, `updateElementGeometry`) turns each piece into a WebGL2 texture and keeps the real DOM under it, so text stays selectable and buttons stay clickable while the model is turned.
-- The bar is a row of real buttons drawn as keys on a slab in front of the camera. The date and time pickers rise off the panel; the time picker turns as two lit drums.
+- The bar is a row of real buttons. On the flat map they are plain flat buttons; as the page stands up they rise into keys on a slab in front of the camera. The date and time pickers rise off the panel; the time picker turns as two lit drums.
 - The sun follows the real solar position for the date, start time, and the target time at each waypoint. The pickers preview the light while they are open.
 - GPX and PNG exports stay in the browser.
 
