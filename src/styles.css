@@ -126,6 +126,53 @@ body {
   position: absolute;
 }
 
+.map-switch {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    0 1px 3px rgba(24, 32, 43, 0.18),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.12);
+  color: var(--ink3);
+  font-size: 10px;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.map-switch > span {
+  padding: 0 5px 0 4px;
+}
+
+.map-switch-option {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink2);
+  font: 600 10px var(--sans);
+  cursor: pointer;
+}
+
+.map-switch-option[aria-pressed='true'] {
+  background: var(--ink);
+  color: #fff;
+}
+
+.map-switch-option:focus {
+  outline: none;
+}
+
+.map-switch-option:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
 .route-casing,
 .route-line {
   fill: none;
@@ -343,26 +390,6 @@ body {
 .route-name:focus {
   background: #f1f3f5;
   outline: none;
-}
-
-.map-style {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 6px;
-  color: var(--ink3);
-  font-size: 11px;
-}
-
-.map-style select {
-  min-width: 112px;
-  padding: 3px 6px;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: #f1f3f5;
-  color: var(--ink);
-  font: inherit;
 }
 
 .stats {

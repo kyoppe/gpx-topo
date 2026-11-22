@@ -1516,6 +1516,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         continue;
       }
       if (p.kind === 'content') {
+        if (p.el.hasAttribute('data-map-control')) {
+          const mx = clamp(p.x - MAPX + p.w / 2, 0, MW);
+          const my = clamp(p.y - MAPY + p.h / 2, 0, MH);
+          const z = groundZ(mx, my, lift) + 1.2 + EPS * (20 + order);
+          p.ex = [1, 0, 0];
+          p.ey = [0, 1, 0];
+          p.z = z;
+          p.O = [p.x, p.y, z];
+          continue;
+        }
         const c = p.card;
         if (!c) {
           p.O = [p.x, p.y, 0.2];
