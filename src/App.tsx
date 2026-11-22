@@ -1106,6 +1106,7 @@ export default function App() {
               <span className="well" data-well="open" />
               <span className="well" data-well="place" />
               <span className="well well-flip" data-well="flip" />
+              <span className="well" data-well="fly" />
               <span className="well" data-well="png" />
               <span className="well" data-well="gpx" />
               <span className="bar-hint">
@@ -1152,6 +1153,17 @@ export default function App() {
               onClick={() => engineRef.current?.toggle()}
             >
               寝かす
+            </button>
+            <button
+              type="button"
+              className="key key-fly"
+              data-piece="key"
+              data-key="fly"
+              drawable=""
+              aria-label="Flyoverを再生"
+              onClick={() => engineRef.current?.flyover()}
+            >
+              ▶
             </button>
             <button type="button" className="key key-png" data-piece="key" data-key="png" drawable="" onClick={() => void exportPng()}>
               PNG

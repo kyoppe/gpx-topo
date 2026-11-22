@@ -1159,6 +1159,10 @@ body {
   width: 130px;
 }
 
+.well[data-well='fly'] {
+  width: 48px;
+}
+
 .well[data-well='png'],
 .well[data-well='gpx'] {
   width: 72px;
@@ -1232,6 +1236,11 @@ body {
   --edge: inset 0 0 0 1px rgba(10, 20, 80, 0.25);
   width: 120px;
   color: #fff;
+}
+
+.key-fly {
+  width: 38px;
+  font-size: 16px;
 }
 
 .key-png,

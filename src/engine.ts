@@ -94,6 +94,14 @@ type Piece = {
   /** cards: how far they have stepped aside to stay clear of each other on screen (world px along the camera's right and up) */
   dodge: [number, number];
 };
+type FlyPose = { e: number; yaw: number; tilt: number; zoom: number; pan: Vec3 };
+type Flight = {
+  phase: 'intro' | 'run' | 'return';
+  t: number;
+  saved: FlyPose & { km: number; kmT: number; sun: number | null };
+  current: FlyPose;
+  final: FlyPose | null;
+};
 /** Where a flat piece stands: its corner, its edge directions, its normal, and its size. */
 type Frame = Pick<Piece, 'O' | 'ex' | 'ey' | 'nrm' | 'w' | 'h'>;
 type Cam = { vp: Float32Array; eye: Vec3; r: Vec3; u: Vec3; dir: Vec3; base: Vec3; yaw: number; D: number };
@@ -197,6 +205,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let pending = false;
   let drag: 'turn' | 'pan' | 'drum' | 'runner' | null = null;
   let activeWay: string | null = null;
+  let flight: Flight | null = null;
   let placing = false;
   let disposed = false;
   let cam: Cam = { vp: new Float32Array(16), eye: [0, 0, 1], r: [1, 0, 0], u: [0, -1, 0], dir: [0, 0, 1], base: [0, 0, 0], yaw: 0, D: 1 };
@@ -438,6 +447,164 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     build(D, tx + pan[0], ty + pan[1], tz + pan[2]);
     return { vp: m, eye, r, u, dir, base: [tx, ty, tz], yaw, D };
   }
+
+  const FLYOVER_INTRO = 2.5;
+  const FLYOVER_DURATION = 60;
+  const FLYOVER_RETURN = 2.5;
+
+  function routeAt(km: number) {
+    const route = model?.route ?? [];
+    if (route.length < 2) return { x: 0, y: 0, km: 0, tx: 0, ty: 1 };
+    let lo = 0;
+    let hi = route.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (route[mid].km <= km) lo = mid;
+      else hi = mid;
+    }
+    const a = route[lo];
+    const b = route[hi];
+    const f = clamp((km - a.km) / Math.max(1e-6, b.km - a.km), 0, 1);
+    const tx = b.x - a.x;
+    const ty = b.y - a.y;
+    const length = Math.hypot(tx, ty) || 1;
+    return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), km: lerp(a.km, b.km, f), tx: tx / length, ty: ty / length };
+  }
+
+  function flyPoseAt(km: number): FlyPose {
+    const point = routeAt(km);
+    const yaw = Math.atan2(-point.tx, -point.ty) - HERO.yaw;
+    const tilt = -0.28;
+    const zoom = 1.35;
+    const base = camera(1, yaw, tilt, zoom, [0, 0, 0]).base;
+    const target: Vec3 = [MAPX + point.x, MAPY + point.y, groundZ(point.x, point.y, liftOf(1))];
+    return { e: 1, yaw, tilt, zoom, pan: target.map((v, i) => v - base[i]) as Vec3 };
+  }
+
+  function setFlightRoute(km: number) {
+    const point = routeAt(km);
+    st.km = point.km;
+    st.kmT = point.km;
+    walkTo(point.km);
+    if (sunEl) {
+      sunEl.value = String(Math.round(minutesAt(point.km)));
+      st.sunT = null;
+      updateSun();
+      st.km = st.kmT = point.km;
+    }
+  }
+
+  function restoreFlight() {
+    if (!flight) return;
+    const saved = flight.saved;
+    st.e = saved.e;
+    st.eT = saved.e;
+    st.ev = 0;
+    st.yaw = saved.yaw;
+    st.yawT = saved.yaw;
+    st.tilt = saved.tilt;
+    st.tiltT = saved.tilt;
+    st.zoom = saved.zoom;
+    st.zoomT = saved.zoom;
+    st.pan = [...saved.pan];
+    st.panT = [...saved.pan];
+    st.km = saved.km;
+    st.kmT = saved.kmT;
+    st.sunT = null;
+    walkTo(saved.km);
+    if (saved.sun !== null && sunEl) {
+      sunEl.value = String(Math.round(saved.sun));
+      updateSun();
+      st.km = saved.km;
+      st.kmT = saved.kmT;
+    }
+    flight = null;
+  }
+
+  function returnFromFlight() {
+    if (!flight || flight.phase === 'return') return;
+    flight.phase = 'return';
+    flight.t = 0;
+    flight.final ??= flight.current;
+    need();
+  }
+
+  function advanceFlight(dt: number): FlyPose | null {
+    if (!flight || !model?.route.length) return null;
+    flight.t += dt;
+    if (flight.phase === 'intro') {
+      st.eT = 1;
+      if (flight.t >= FLYOVER_INTRO) {
+        flight.phase = 'run';
+        flight.t = 0;
+        setFlightRoute(model.route[0].km);
+      }
+      return null;
+    }
+    if (flight.phase === 'run') {
+      st.e = 1;
+      st.eT = 1;
+      st.ev = 0;
+      const total = model.route[model.route.length - 1].km;
+      const q = clamp(flight.t / FLYOVER_DURATION, 0, 1);
+      const pose = flyPoseAt(lerp(model.route[0].km, total, smooth(q)));
+      setFlightRoute(lerp(model.route[0].km, total, smooth(q)));
+      flight.current = pose;
+      if (q >= 1) {
+        flight.phase = 'return';
+        flight.t = 0;
+        flight.final = pose;
+      }
+      return pose;
+    }
+    const from = flight.final ?? flight.current;
+    const q = smooth(clamp(flight.t / FLYOVER_RETURN, 0, 1));
+    const saved = flight.saved;
+    const pose: FlyPose = {
+      e: lerp(from.e, saved.e, q),
+      yaw: lerp(from.yaw, saved.yaw, q),
+      tilt: lerp(from.tilt, saved.tilt, q),
+      zoom: Math.exp(lerp(Math.log(from.zoom), Math.log(saved.zoom), q)),
+      pan: from.pan.map((v, i) => lerp(v, saved.pan[i], q)) as Vec3,
+    };
+    st.e = pose.e;
+    st.eT = pose.e;
+    st.ev = 0;
+    if (q >= 1) {
+      restoreFlight();
+      return { e: saved.e, yaw: saved.yaw, tilt: saved.tilt, zoom: saved.zoom, pan: [...saved.pan] };
+    }
+    return pose;
+  }
+
+  function flyover() {
+    if (!model?.route.length || !sunEl) return;
+    if (flight) {
+      returnFromFlight();
+      return;
+    }
+    flight = {
+      phase: 'intro',
+      t: 0,
+      saved: {
+        e: st.e,
+        yaw: st.yaw,
+        tilt: st.tilt,
+        zoom: st.zoom,
+        pan: [...st.pan],
+        km: st.km,
+        kmT: st.kmT,
+        sun: Number(sunEl.value),
+      },
+      current: { e: st.e, yaw: st.yaw, tilt: st.tilt, zoom: st.zoom, pan: [...st.pan] },
+      final: null,
+    };
+    st.eT = 1;
+    st.bouncy = false;
+    setFlightRoute(model.route[0].km);
+    need();
+  }
+
   const targetCam = () => camera(st.eT, st.yawT, st.tiltT, st.zoomT, st.panT);
 
   /** The ray through a canvas point (CSS px). */
@@ -1309,9 +1476,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       moving = true;
     }
 
+    const flyPose = advanceFlight(dt);
+    if (flight || flyPose) moving = true;
     const lift = liftOf(st.e);
     const lit = 0.78 * smooth(st.e / 0.4);
-    cam = camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
+    cam = flyPose ? camera(flyPose.e, flyPose.yaw, flyPose.tilt, flyPose.zoom, flyPose.pan) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
     const camRight = cam.r;
     // pins grow on screen as the view zooms in, slower than the map so they do not cover it
     const shrink = 1 / Math.pow(st.zoom, 0.5);
@@ -1774,6 +1943,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let panFrom: { cam: Cam; P: Vec3; pan: Vec3 } | null = null;
   const onPointerDown = (ev: PointerEvent) => {
     const t = ev.target as Element;
+    if (flight && !t.closest?.('[data-key="fly"]')) returnFromFlight();
     // the right and middle buttons move the model from anywhere but a field being typed in
     const panning = ev.button === 2 || ev.button === 1;
     if (t !== canvas && t.closest && (panning ? t.closest(EDITABLE) : t.closest(INTERACTIVE) || t.closest(SELECTABLE))) return;
@@ -1924,6 +2094,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let wheelPhase: 'rise' | 'zoom' | null = null;
   const onWheel = (ev: WheelEvent) => {
     const t = ev.target as Element;
+    if (flight) returnFromFlight();
     const hit = drumAt(t);
     if (hit || t.closest?.('[data-pop-part]')) {
       ev.preventDefault();
@@ -1991,6 +2162,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   const onKey = (ev: KeyboardEvent) => {
+    if (flight) returnFromFlight();
     if (popKey(ev)) {
       ev.preventDefault();
       return;
@@ -2185,6 +2357,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     apart,
     together,
     toggle,
+    flyover,
     focusWay,
     setPlacing,
     capture,
