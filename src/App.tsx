@@ -559,7 +559,7 @@ export default function App() {
 
   // a close view: the part in view, drawn again from finer tiles as they come in. It starts from
   // the whole-map picture, and from the last close view where the two overlap.
-  const shownDetail = mapReady ? detailWanted : null;
+  const shownDetail = mapReady && baseMapStyle === 'pale' ? detailWanted : null;
   useLayoutEffect(() => {
     const el = detailRef.current;
     const base = reliefRef.current;

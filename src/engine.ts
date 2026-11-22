@@ -373,7 +373,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const top = topZ(lift);
     const yaw = (HERO.yaw + yawOff) * p;
     const stand = 1 - ZOOM_STAND * clamp(Math.log(zoom) / Math.log(ZOOM_MAX), 0, 1);
-    const tilt = clamp(HERO.tilt + tiltOff, 0.02, 1.32) * p * stand;
+    const tilt = clamp(HERO.tilt + tiltOff, 0.02, 1.48) * p * stand;
     const fit = Math.min((vw - FRAME_X) / PW, (vh - FRAME_Y) / PH, 1.3);
     const D0 = vh / 2 / Math.tan(FOV / 2) / fit;
     let tx = lerp(PW / 2, PW / 2 - 10, p);
