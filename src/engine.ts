@@ -1485,6 +1485,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let fullW = 1;
   let fullH = 1;
   let needN = 0;
+  let routeStrokeZoom = 0;
+
+  function updateRouteStrokeZoom() {
+    const zoom = Math.max(1, st.zoom);
+    if (routeStrokeZoom > 0 && Math.abs(Math.log(zoom / routeStrokeZoom)) < 0.02) return;
+    routeStrokeZoom = zoom;
+    page.style.setProperty('--route-casing-width', String(Math.max(1.2, 5.6 / zoom ** 0.75)));
+    page.style.setProperty('--route-line-width', String(Math.max(0.7, 2.6 / zoom ** 0.75)));
+    for (const p of [land, relief]) if (p) p.stale = true;
+  }
 
   function frame(now: number, fixed?: number) {
     if (disposed) return;
@@ -1523,6 +1533,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       st.zoom = st.zoomT;
       st.pan = [...st.panT];
     }
+    updateRouteStrokeZoom();
     if (st.sunT != null && sunEl) {
       // the clock is wound to a waypoint's target time
       const cur = Number(sunEl.value);

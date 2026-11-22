@@ -762,8 +762,8 @@ export default function App() {
               {shownDetail && (
                 <svg viewBox={`${shownDetail.x} ${shownDetail.y} ${shownDetail.w} ${shownDetail.h}`} aria-hidden="true">
                   {/* the line stays about as wide on screen as the view closes in */}
-                  <path className="route-casing" d={routeD} style={{ strokeWidth: 5.6 / shownDetail.zoom ** 0.75 }} />
-                  <path className="route-line" d={routeD} style={{ strokeWidth: 2.6 / shownDetail.zoom ** 0.75 }} />
+                  <path className="route-casing" d={routeD} style={{ strokeWidth: Math.max(1.2, 5.6 / shownDetail.zoom ** 0.75) }} />
+                  <path className="route-line" d={routeD} style={{ strokeWidth: Math.max(0.7, 2.6 / shownDetail.zoom ** 0.75) }} />
                 </svg>
               )}
             </div>
