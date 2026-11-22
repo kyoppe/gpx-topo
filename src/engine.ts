@@ -2963,7 +2963,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function apart(v: number, bouncy = false) {
     st.eT = clamp(v, 0, 1);
     st.bouncy = bouncy;
-    if (st.eT > 0.5) panelAlphaT = 1;
+    // raised or laid flat, the panel comes back to its place (a flyover left part way sends it aside)
+    panelAlphaT = 1;
     if (st.eT < 0.5) setHover(null);
     callbacks.onApartChange(st.eT > 0.5);
     need();
