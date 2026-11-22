@@ -448,7 +448,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return { vp: m, eye, r, u, dir, base: [tx, ty, tz], yaw, D };
   }
 
-  const FLYOVER_INTRO = 2.5;
+  const FLYOVER_INTRO = 4;
   const FLYOVER_DURATION = 60;
   const FLYOVER_RETURN = 2.5;
 
@@ -471,14 +471,36 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), km: lerp(a.km, b.km, f), tx: tx / length, ty: ty / length };
   }
 
-  function flyPoseAt(km: number): FlyPose {
+  function flyPoseAt(km: number, zoom = 1.45, tilt = -0.22): FlyPose {
     const point = routeAt(km);
-    const yaw = Math.atan2(-point.tx, -point.ty) - HERO.yaw;
-    const tilt = -0.28;
-    const zoom = 1.35;
+    const total = model?.route[model.route.length - 1]?.km ?? point.km;
+    const span = Math.min(2.2, Math.max(0.4, total * 0.018));
+    const before = routeAt(Math.max(model?.route[0]?.km ?? 0, km - span));
+    const after = routeAt(Math.min(total, km + span));
+    const tx = after.x - before.x;
+    const ty = after.y - before.y;
+    const length = Math.hypot(tx, ty) || 1;
+    const yaw = Math.atan2(-tx / length, -ty / length) - HERO.yaw;
     const base = camera(1, yaw, tilt, zoom, [0, 0, 0]).base;
     const target: Vec3 = [MAPX + point.x, MAPY + point.y, groundZ(point.x, point.y, liftOf(1))];
     return { e: 1, yaw, tilt, zoom, pan: target.map((v, i) => v - base[i]) as Vec3 };
+  }
+
+  function angleStep(from: number, to: number, amount: number) {
+    let d = to - from;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return from + d * amount;
+  }
+
+  function blendFlyPose(from: FlyPose, to: FlyPose, amount: number): FlyPose {
+    return {
+      e: lerp(from.e, to.e, amount),
+      yaw: angleStep(from.yaw, to.yaw, amount),
+      tilt: lerp(from.tilt, to.tilt, amount),
+      zoom: Math.exp(lerp(Math.log(from.zoom), Math.log(to.zoom), amount)),
+      pan: from.pan.map((v, i) => lerp(v, to.pan[i], amount)) as Vec3,
+    };
   }
 
   function setFlightRoute(km: number) {
@@ -533,13 +555,24 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (!flight || !model?.route.length) return null;
     flight.t += dt;
     if (flight.phase === 'intro') {
-      st.eT = 1;
-      if (flight.t >= FLYOVER_INTRO) {
+      const start = model.route[0].km;
+      const approach = flyPoseAt(start, 0.52, -0.06);
+      const chase = flyPoseAt(start);
+      const q = smooth(clamp(flight.t / FLYOVER_INTRO, 0, 1));
+      const pose =
+        q < 0.35
+          ? blendFlyPose(flight.saved, approach, smooth(q / 0.35))
+          : blendFlyPose(approach, chase, smooth((q - 0.35) / 0.65));
+      st.e = pose.e;
+      st.eT = pose.e;
+      st.ev = 0;
+      flight.current = pose;
+      if (q >= 1) {
         flight.phase = 'run';
         flight.t = 0;
-        setFlightRoute(model.route[0].km);
+        setFlightRoute(start);
       }
-      return null;
+      return pose;
     }
     if (flight.phase === 'run') {
       st.e = 1;
@@ -547,8 +580,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       st.ev = 0;
       const total = model.route[model.route.length - 1].km;
       const q = clamp(flight.t / FLYOVER_DURATION, 0, 1);
-      const pose = flyPoseAt(lerp(model.route[0].km, total, smooth(q)));
-      setFlightRoute(lerp(model.route[0].km, total, smooth(q)));
+      const km = lerp(model.route[0].km, total, smooth(q));
+      const target = flyPoseAt(km);
+      const pose = blendFlyPose(flight.current, target, 1 - Math.exp(-dt * 5));
+      setFlightRoute(km);
       flight.current = pose;
       if (q >= 1) {
         flight.phase = 'return';
@@ -1482,6 +1517,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const lit = 0.78 * smooth(st.e / 0.4);
     cam = flyPose ? camera(flyPose.e, flyPose.yaw, flyPose.tilt, flyPose.zoom, flyPose.pan) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
     const camRight = cam.r;
+    const fixedPanel = flight
+      ? (() => {
+          const gap = 10;
+          const totalH = cards.reduce((sum, card) => sum + card.h, 0) + gap * Math.max(0, cards.length - 1);
+          const fit = Math.min(1, Math.max(0.45, (vh - 36 - gap * Math.max(0, cards.length - 1)) / Math.max(1, totalH)));
+          const depth = Math.max(1, cam.D * 0.58);
+          const unit = (2 * depth * Math.tan(FOV / 2)) / vh;
+          const plane = cam.eye.map((v, i) => v - cam.dir[i] * depth) as Vec3;
+          return { gap, fit, unit, plane };
+        })()
+      : null;
     // pins grow on screen as the view zooms in, slower than the map so they do not cover it
     const shrink = 1 / Math.pow(st.zoom, 0.5);
 
@@ -1493,6 +1539,20 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       p.ex = [1, 0, 0];
       p.ey = [0, 1, 0];
       if (p.kind === 'card') {
+        if (fixedPanel) {
+          const top = 18 + cards.slice(0, p.order).reduce((sum, card) => sum + card.h * fixedPanel.fit, 0) + fixedPanel.gap * p.order;
+          const left = vw - 18 - p.w * fixedPanel.fit;
+          const center = fixedPanel.plane.map(
+            (v, i) => v + cam.r[i] * (left + (p.w * fixedPanel.fit) / 2 - vw / 2) * fixedPanel.unit + cam.u[i] * (vh / 2 - top - (p.h * fixedPanel.fit) / 2) * fixedPanel.unit,
+          ) as Vec3;
+          p.ex = cam.r.map((v) => v * fixedPanel.unit * fixedPanel.fit) as Vec3;
+          p.ey = cam.u.map((v) => -v * fixedPanel.unit * fixedPanel.fit) as Vec3;
+          p.nrm = cam.dir;
+          p.O = [0, 1, 2].map((i) => center[i] - (p.ex[i] * p.w) / 2 - (p.ey[i] * p.h) / 2) as Vec3;
+          p.z = 0;
+          p.topZ = 0;
+          continue;
+        }
         // cards lean back like lecterns, each row seated above the one in front; they turn with the map
         // until they lean CARD_LEAN_MAX on screen, then hold there, and step aside rather than cover each other
         const k = smooth((st.e - 0.3) / 0.55);
