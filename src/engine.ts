@@ -48,11 +48,13 @@ export type EngineCallbacks = {
   onFlightChange(phase: FlightPhase | null): void;
   /** The (i) flag was raised over the map, or taken down. */
   onInfoChange(open: boolean): void;
+  /** The photo of the view came out of the camera key, or went back into it. */
+  onPhotoChange(open: boolean): void;
 };
 export type FlightPhase = 'intro' | 'run' | 'outro' | 'return' | 'paused';
 type FlightResumePhase = Exclude<FlightPhase, 'return' | 'paused'>;
 
-type Kind = 'sheet' | 'terrain' | 'relief' | 'detail' | 'card' | 'content' | 'pin' | 'bar' | 'key' | 'pop' | 'row' | 'flag';
+type Kind = 'sheet' | 'terrain' | 'relief' | 'detail' | 'card' | 'content' | 'pin' | 'bar' | 'key' | 'pop' | 'row' | 'flag' | 'photo';
 type Drum = {
   name: string;
   /** how many values go round: 24 hours, 60 minutes */
@@ -183,6 +185,13 @@ const FLAG_BILLOW = 0.15;
 const FLAG_WAVES = 2.3;
 /** A gust lasts this long (s). */
 const FLAG_GUST = 1.4;
+/**
+ * The photo of the view: how long it takes to come out of the camera key and to go back in (s), and how much of the
+ * view's height it fills where it floats, over the map where the view looks.
+ */
+const PHOTO_IN = 0.75;
+const PHOTO_OUT = 0.45;
+const PHOTO_FILL = 0.62;
 const FLAG_FALL = 0.7;
 const FLAG_PULL = 1.1;
 /** The view it is shown in: zoomed in this far, tilted this much further, and moved this share of the way towards the flag. */
@@ -286,6 +295,20 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     side: Vec3;
   } | null = null;
   let flagPiece: Piece | null = null;
+  /**
+   * The photo: coming out, floating, or going back in; where it floats and which way it faces, fixed as it was put
+   * there, and how wide it is (world px)
+   */
+  let photo: { phase: 'in' | 'shown' | 'out'; t: number; C: Vec3; up: number; r: Vec3; u: Vec3; n: Vec3; w: number } | null = null;
+  let photoFront: Piece | null = null;
+  let photoBack: Piece | null = null;
+  let photoPlaced = false;
+  let photoSteady = false;
+  let photoCast: DrawItem[] = [];
+  // while it flies to and from the key it is drawn with the bar, over the model: else the raised land hides it at the key
+  let photoFlying = false;
+  /** the middle of the camera key's face, as the bar was last drawn (world px) */
+  let cameraKeyAt: Vec3 | null = null;
   let flagPlaced = false;
   let flagSteady = false;
   /** how wide the cloth is drawn (world px), fitted to the window */
@@ -1432,6 +1455,168 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return items;
   }
 
+  // ---------------------------------------------------------------- the photo: out of the camera key, floating over the map
+  /** Brings the photo out, floating where the view looks and facing it, and leaves it fixed there however the view turns. */
+  function showPhoto() {
+    // its size follows the picture in it, so it is measured afresh
+    measure();
+    if (!photoFront || !photoFront.w) return;
+    // over the middle of the map, clear of its highest ground, so that it stays over the map however the view turns;
+    // as big as fills the view as it is now, facing it
+    const aspect = photoFront.h / photoFront.w;
+    const top = topZ(liftOf(st.e));
+    const C: Vec3 = [MAPX + MW / 2, MAPY + MH / 2, top];
+    let w = MW * 0.5;
+    for (let i = 0; i < 4; i += 1) {
+      const h = w * aspect;
+      C[2] = top + Math.abs(cam.u[2]) * h * 0.5 + h * 0.06;
+      const depth = Math.max(1, (C[0] - cam.eye[0]) * -cam.dir[0] + (C[1] - cam.eye[1]) * -cam.dir[1] + (C[2] - cam.eye[2]) * -cam.dir[2]);
+      const perPx = (2 * depth * Math.tan(FOV / 2)) / vh;
+      w = Math.min((PHOTO_FILL * vh * perPx) / aspect, 0.8 * vw * perPx);
+    }
+    // it keeps that height over the highest ground as the land rises or lies down under it
+    photo = { phase: 'in', t: 0, C, up: C[2] - top, r: [...cam.r], u: [...cam.u], n: [...cam.dir], w };
+    photoFront.stale = true;
+    if (photoBack) photoBack.stale = true;
+    if (photoPlaced) unplace(photoFront);
+    photoPlaced = false;
+    callbacks.onPhotoChange(true);
+    need();
+  }
+  /** Sends the photo back into the camera key. */
+  function hidePhoto() {
+    if (!photo || photo.phase === 'out') return;
+    photo.phase = 'out';
+    photo.t = 0;
+    need();
+  }
+  function placePhoto() {
+    if (!photoFront) return;
+    if (photoSteady) place(photoFront);
+    else if (photoPlaced) unplace(photoFront);
+    photoPlaced = photoSteady;
+  }
+  /** Moves the photo on by `dt` and returns its faces and edges. */
+  function photoFrame(dt: number): DrawItem[] {
+    const items: DrawItem[] = [];
+    photoSteady = false;
+    photoCast = [];
+    photoFlying = false;
+    if (!photo || !photoFront || !photoFront.w) return items;
+    // flown over, the view is not the viewer's to look at it: back into the key it goes
+    if (photo.phase !== 'out' && flight) hidePhoto();
+    photo.t += dt;
+    if (photo.phase === 'in' && photo.t >= PHOTO_IN) {
+      photo.phase = 'shown';
+      photo.t = 0;
+    }
+    if (photo.phase === 'out' && photo.t >= PHOTO_OUT) {
+      photo = null;
+      if (photoPlaced) unplace(photoFront);
+      photoPlaced = false;
+      callbacks.onPhotoChange(false);
+      return items;
+    }
+    if (noHud) return items;
+    const ph = photo;
+    const time = performance.now() / 1000;
+    const rest: Vec3 = [ph.C[0], ph.C[1], topZ(liftOf(st.e)) + ph.up];
+    // the camera key, where it comes out from and goes back into (as the bar was last drawn: the bar comes later)
+    const key = keys.find((k) => k.name === 'camera');
+    const K: Vec3 = cameraKeyAt ?? rest;
+    // how far it is from the key to where it floats (1 = there), how big it is against that, and how it turns as it flies
+    let along = 1;
+    let grow = 1;
+    let spin = 0;
+    if (ph.phase === 'in') {
+      const q = clamp(ph.t / PHOTO_IN, 0, 1);
+      along = smooth(q);
+      // it shoots out a little past its size and settles
+      grow = 1 + 0.07 * Math.sin(Math.PI * smooth(q));
+      spin = (1 - smooth(q)) * -0.9;
+    } else if (ph.phase === 'out') {
+      const q = clamp(ph.t / PHOTO_OUT, 0, 1);
+      along = 1 - q * q;
+      spin = q * q * 1.2;
+    }
+    // it flies along a straight line on the screen, from the key to its place, drawing nearer the eye as it goes in
+    const depthOf = (P: Vec3) => Math.max(1e-3, (P[0] - cam.eye[0]) * -cam.dir[0] + (P[1] - cam.eye[1]) * -cam.dir[1] + (P[2] - cam.eye[2]) * -cam.dir[2]);
+    const onScreen = (P: Vec3) => {
+      const q = mul([P[0], P[1], P[2], 1]);
+      return [((q[0] / q[3]) * 0.5 + 0.5) * vw, ((-q[1] / q[3]) * 0.5 + 0.5) * vh];
+    };
+    const perPx = (d: number) => (2 * d * Math.tan(FOV / 2)) / vh;
+    const dR = depthOf(rest);
+    const dK = depthOf(K);
+    let P = rest;
+    let w = ph.w * grow;
+    if (along < 1) {
+      const sR = onScreen(rest);
+      const sK = onScreen(K);
+      const d = Math.exp(lerp(Math.log(dK), Math.log(dR), along));
+      const line = ray(cam, lerp(sK[0], sR[0], along), lerp(sK[1], sR[1], along));
+      const lv = line.d;
+      const k = d / Math.max(1e-6, -(lv[0] * cam.dir[0] + lv[1] * cam.dir[1] + lv[2] * cam.dir[2]));
+      P = [line.o[0] + lv[0] * k, line.o[1] + lv[1] * k, line.o[2] + lv[2] * k];
+      // as wide on the screen as the key at the key, as itself where it floats
+      const px = lerp(key ? key.w * 0.8 : 40, ph.w / perPx(dR), along) * grow;
+      w = px * perPx(d);
+    }
+    const bob = ph.phase === 'shown' ? Math.sin(time * 1.3) * ph.w * 0.008 : 0;
+    P = [0, 1, 2].map((i) => P[i] + ph.u[i] * bob) as Vec3;
+    // facing the view at the key, as it was put where it floats
+    const turn = smooth(along);
+    const norm = (v: Vec3) => {
+      const l = Math.hypot(v[0], v[1], v[2]) || 1;
+      return v.map((x) => x / l) as Vec3;
+    };
+    const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const r0 = norm([0, 1, 2].map((i) => lerp(cam.r[i], ph.r[i], turn)) as Vec3);
+    const u0 = norm([0, 1, 2].map((i) => lerp(cam.u[i], ph.u[i], turn)) as Vec3);
+    const n = norm(cross(u0, r0));
+    const uu = norm(cross(r0, n));
+    const cs = Math.cos(spin);
+    const sn = Math.sin(spin);
+    const r = [0, 1, 2].map((i) => r0[i] * cs + uu[i] * sn) as Vec3;
+    const u = [0, 1, 2].map((i) => uu[i] * cs - r0[i] * sn) as Vec3;
+    const h = (w * photoFront.h) / photoFront.w;
+    const k = w / photoFront.w;
+    const th = ph.w * 0.006;
+    const corner = (fr: number, fu: number, fn: number) => [0, 1, 2].map((i) => P[i] + r[i] * fr + u[i] * fu + n[i] * fn) as Vec3;
+    photoFront.O = corner(-w / 2, h / 2, th / 2);
+    photoFront.ex = r.map((v) => v * k) as Vec3;
+    photoFront.ey = u.map((v) => -v * k) as Vec3;
+    photoFront.nrm = n;
+    items.push(quad(photoFront, { nrm: n, useNormal: true }));
+    // the back of the print, with the logo on it
+    if (photoBack && photoBack.w) {
+      const kb = w / photoBack.w;
+      const back = n.map((v) => -v) as Vec3;
+      items.push({
+        tex: photoBack.tex,
+        O: corner(w / 2, h / 2, -th / 2),
+        ex: r.map((v) => -v * kb * photoBack!.w) as Vec3,
+        ey: u.map((v) => -v * kb * photoBack!.h) as Vec3,
+        nrm: back,
+        useNormal: true,
+      });
+    }
+    // its edges: a print has some thickness
+    const edge: Vec3 = [0.92, 0.91, 0.88];
+    const deep = n.map((v) => -v * th) as Vec3;
+    items.push({ solid: edge, useNormal: true, nrm: u, O: corner(-w / 2, h / 2, th / 2), ex: r.map((v) => v * w) as Vec3, ey: deep });
+    items.push({ solid: edge, useNormal: true, nrm: u.map((v) => -v) as Vec3, O: corner(-w / 2, -h / 2, th / 2), ex: r.map((v) => v * w) as Vec3, ey: deep });
+    items.push({ solid: edge, useNormal: true, nrm: r.map((v) => -v) as Vec3, O: corner(-w / 2, -h / 2, th / 2), ex: u.map((v) => v * h) as Vec3, ey: deep });
+    items.push({ solid: edge, useNormal: true, nrm: r, O: corner(w / 2, -h / 2, th / 2), ex: u.map((v) => v * h) as Vec3, ey: deep });
+    // it shades the map under it, once it is out over the map
+    if (along > 0.6) photoCast = [{ O: corner(-w / 2, -h / 2, 0), ex: r.map((v) => v * w) as Vec3, ey: u.map((v) => v * h) as Vec3 }];
+    // its buttons and picture take clicks once it floats still, and only from the side they are on
+    const facing = (cam.eye[0] - P[0]) * n[0] + (cam.eye[1] - P[1]) * n[1] + (cam.eye[2] - P[2]) * n[2] > 0;
+    photoSteady = ph.phase === 'shown' && facing;
+    photoFlying = along < 1;
+    return items;
+  }
+
   const targetCam = () => camera(st.eT, st.yawT, st.tiltT, st.zoomT, st.panT);
 
   /** The ray through a canvas point (CSS px). */
@@ -1651,6 +1836,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       return p;
     });
     flagPiece = flags[0] ?? null;
+    const photos = of('photo').map((el) => get(el, 'photo'));
+    photoFront = photos.find((p) => p.el.dataset.face !== 'back') ?? null;
+    photoBack = photos.find((p) => p.el.dataset.face === 'back') ?? null;
     const bars = of('bar').map((el) => get(el, 'bar'));
     bar = bars[0] ?? null;
     keys = of('key').map((el) => {
@@ -1665,7 +1853,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       p.name = el.dataset.drum ?? '';
       return p;
     });
-    pieces = [...sheets, ...lands, ...reliefs, ...details, ...cards, ...contents, ...pins, ...hikers, ...probes, ...flags, ...bars, ...keys, ...pops, ...rows];
+    pieces = [...sheets, ...lands, ...reliefs, ...details, ...cards, ...contents, ...pins, ...hikers, ...probes, ...flags, ...photos, ...bars, ...keys, ...pops, ...rows];
     sunEl = page.querySelector<HTMLInputElement>('input[data-sun]');
     clockEl = page.querySelector<HTMLElement>('[data-clock]');
     cursorEl = page.querySelector<SVGCircleElement>('[data-cursor]');
@@ -1924,6 +2112,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       // a flipping key rises out of its well so it never cuts into the slab
       const up = (k.h / 2) * Math.abs(Math.sin(th)) + 2 * Math.sin(th / 2) ** 2;
       const C = at(wx + ww / 2, wy + wh / 2, d / 2 + up);
+      if (k.name === 'camera') cameraKeyAt = [0, 1, 2].map((i) => C[i] + n[i] * (d / 2) * s) as Vec3;
       const a = ex;
       const b = [0, 1, 2].map((i) => ey[i] * Math.cos(th) + n[i] * Math.sin(th)) as Vec3;
       const c = [0, 1, 2].map((i) => n[i] * Math.cos(th) - ey[i] * Math.sin(th)) as Vec3;
@@ -2606,14 +2795,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     if (dodgePins(dt, 1 - smooth(st.e / 0.24))) moving = true;
     const flagItems = infoFrame(dt, lift);
-    // the flag keeps flying, but that alone is no reason to draw the rest of the picture coarser
-    const flying = !!info;
+    const photoItems = photoFrame(dt);
+    // the flag keeps flying and the photo floating, but that alone is no reason to draw the rest of the picture coarser
+    const flying = !!info || !!photo;
     for (const p of pieces) {
-      if (p.kind === 'terrain' || p.kind === 'relief' || p.kind === 'detail' || p.kind === 'bar' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.hidden) continue;
+      if (p.kind === 'terrain' || p.kind === 'relief' || p.kind === 'detail' || p.kind === 'bar' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.kind === 'photo' || p.hidden) continue;
       if (p.kind === 'pin' && pinCovered(p)) unplace(p);
       else place(p);
     }
     placeFlag();
+    placePhoto();
     const H = hudFrame(dt, smooth(st.e / 0.5));
     const PF = popFrame(dt);
     // keys rising under the pointer and pickers turning keep the frames coming, but are drawn sharp: their words are
@@ -2675,6 +2866,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const dist = (p: Piece) => (p.anchor[0] - cam.eye[0]) ** 2 + (p.anchor[1] - cam.eye[1]) ** 2;
     for (const p of [...standing].sort((a, b) => dist(b) - dist(a))) blend.push(q(p));
     opaque.push(...flagItems);
+    if (!photoFlying) opaque.push(...photoItems);
     opaque.push(...PF.opaque);
     blend.push(...PF.blend);
 
@@ -2712,9 +2904,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       },
       opaque,
       blend,
-      hud: H.items,
+      hud: photoFlying ? [...H.items, ...photoItems] : H.items,
       hudLight: lit,
-      casters: flagCasters,
+      casters:
+        flagCasters || photoCast.length ? { cloth: flagCasters?.cloth, quads: [...(flagCasters?.quads ?? []), ...photoCast] } : null,
       dpr: canvas.width / Math.max(1, vw),
     });
     frames += 1;
@@ -2875,7 +3068,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     for (const p of pieces) {
       if (!p.stale || !p.w) continue;
       try {
-        let k = p.kind === 'content' || p.kind === 'pin' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' ? TS * 2 : TS;
+        let k = p.kind === 'content' || p.kind === 'pin' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.kind === 'photo' ? TS * 2 : TS;
         if (p.kind === 'terrain' || p.kind === 'relief') k = Math.min(TS * 1.5, R.maxTexture / Math.max(p.w, p.h), 4096 / Math.max(p.w, p.h));
         if (p.kind === 'detail') k = Math.min(Number(p.el.dataset.density) || 1, detailSide() / Math.max(p.w, p.h));
         R.upload(p.tex, p.el, Math.max(1, Math.round(p.w * k)), Math.max(1, Math.round(p.h * k)));
@@ -3276,6 +3469,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const active = document.activeElement;
       if (active instanceof HTMLElement) active.blur();
       if (ev.target instanceof HTMLElement && ev.target.matches(EDITABLE)) return;
+      if (photo && photo.phase !== 'out') {
+        hidePhoto();
+        return;
+      }
       if (info) {
         toggleInfo();
         return;
@@ -3344,12 +3541,19 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.classList.toggle('placing', on);
   }
 
-  // the picture without the bar
+  // the picture without the bar, and without the strip at the bottom the bar stands in
   function capture() {
     noHud = true;
     frame(performance.now(), 0);
     noHud = false;
-    const done = new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    // copied out at once, while the drawing is still in the canvas
+    const scale = canvas.width / Math.max(1, vw);
+    const cut = Math.round((bar ? bar.h + 18 + 10 : 0) * scale);
+    const out = document.createElement('canvas');
+    out.width = canvas.width;
+    out.height = Math.max(1, canvas.height - cut);
+    out.getContext('2d')?.drawImage(canvas, 0, 0, out.width, out.height, 0, 0, out.width, out.height);
+    const done = new Promise<Blob | null>((resolve) => out.toBlob(resolve, 'image/png'));
     need();
     return done;
   }
@@ -3484,6 +3688,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     flyover,
     toggleFlyoverPause,
     toggleInfo,
+    showPhoto,
+    hidePhoto,
     focusWay,
     setPlacing,
     capture,

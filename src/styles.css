@@ -1576,3 +1576,112 @@ body {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ---------------------------------------------------------------- the photo */
+/* A print of the view, laid out here; the engine floats it over the map, back to back with its other side. */
+.photo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 720px;
+  padding: 18px 18px 0;
+  background: #fbfaf6;
+  color: #1c2129;
+  font: 500 12px var(--sans);
+  user-select: none;
+}
+
+.photo[aria-hidden='false'] {
+  pointer-events: auto;
+}
+
+.photo-frame {
+  overflow: hidden;
+  background: #d9dcdf;
+  box-shadow: inset 0 0 0 1px rgba(24, 32, 43, 0.12);
+}
+
+.photo-shot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 64px;
+}
+
+.photo-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  font: 700 15px var(--sans);
+  white-space: nowrap;
+}
+
+.photo-caption small {
+  overflow: hidden;
+  color: var(--ink2);
+  font: 500 12px var(--sans);
+  text-overflow: ellipsis;
+}
+
+.photo-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.photo-actions button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgba(24, 32, 43, 0.16);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font: 600 13px var(--sans);
+  cursor: pointer;
+}
+
+.photo-actions button:hover {
+  background: #f1f3f5;
+}
+
+.photo-actions .photo-post {
+  border-color: #18202b;
+  background: #18202b;
+  color: #fff;
+}
+
+.photo-actions .photo-post:hover {
+  background: #2c3644;
+}
+
+/* the back of the print: plain paper, the logo printed faintly in the middle */
+.photo-back .photo-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: transparent;
+  box-shadow: none;
+  color: rgba(28, 33, 41, 0.28);
+  font: 700 20px var(--sans);
+}
+
+.photo-logo {
+  width: 120px;
+  height: 120px;
+  aspect-ratio: 1;
+  opacity: 0.22;
+  filter: grayscale(1);
+}

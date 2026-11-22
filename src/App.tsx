@@ -231,6 +231,9 @@ export default function App() {
   const [demGrid, setDemGrid] = useState<{ projection: MapProjection; grid: ElevationGrid } | null>(null);
   const [apart, setApart] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  /** the photo of the view: its picture, while it is out of the camera key */
+  const [shot, setShot] = useState<{ url: string; blob: Blob; aspect: number } | null>(null);
+  const [shotOpen, setShotOpen] = useState(false);
   const flagRef = useRef<HTMLDivElement>(null);
   const flagTwinRef = useRef<HTMLDivElement>(null);
   const flagBrushes = useFlagBrushes(flagRef, flagTwinRef);
@@ -671,6 +674,15 @@ export default function App() {
           addAction('info_flag_toggled', { open });
           setInfoOpen(open);
         },
+        onPhotoChange: (open) => {
+          setShotOpen(open);
+          // back in the key, the picture is let go
+          if (!open)
+            setShot((current) => {
+              if (current) URL.revokeObjectURL(current.url);
+              return null;
+            });
+        },
         onTimeCommit: (target, minutes) => {
           addAction('elapsed_time_committed', { target, minutes });
           if (target === 'start') setStartTime(clockInput(minutes));
@@ -880,16 +892,51 @@ export default function App() {
     }
   };
 
+  // the camera key takes a photo of the view; it comes out as a print floating over the map (see the engine's photo),
+  // with buttons to save, copy, or post it
   const exportPng = async () => {
     addAction('png_export_requested', { route_name: route?.name || 'gpx-topo' });
     try {
-      const blob = await engineRef.current?.capture();
-      if (blob) downloadBlob(blob, `${route?.name || 'gpx-topo'}.png`);
-      else setToast('PNG を書き出せませんでした。');
+      const engine = engineRef.current;
+      // one photo at a time: while one is out, the key takes no other
+      if (!engine || shotOpen || shot) return;
+      const blob = await engine.capture();
+      if (!blob) {
+        setToast('PNG を書き出せませんでした。');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const picture = await createImageBitmap(blob);
+      const aspect = picture.width / Math.max(1, picture.height);
+      picture.close();
+      setShot((current) => {
+        if (current) URL.revokeObjectURL(current.url);
+        return { url, blob, aspect };
+      });
     } catch (error) {
       reportError('export_png', error, { route_name: route?.name || 'gpx-topo' });
       setToast('PNG を書き出せませんでした。');
     }
+  };
+  const shotName = () => `${route?.name || 'gpx-topo'}.png`;
+  const copyShot = async () => {
+    if (!shot) return false;
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': shot.blob })]);
+      return true;
+    } catch (error) {
+      reportWarning('copy_png', { message: error instanceof Error ? error.message : String(error) });
+      setToast('画像をコピーできませんでした。');
+      return false;
+    }
+  };
+  const SHARE_TEXT = 'GPX箱庭なんちゃらで作りました。\nhttps://gpx-topo.pages.dev/\n#GPX箱庭なんちゃら';
+  const postShot = async () => {
+    addAction('png_post_requested', { route_name: route?.name || 'gpx-topo' });
+    // X takes no picture from here: it goes on the clipboard, to paste into the post
+    const copied = await copyShot();
+    window.open(`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}`, '_blank', 'noopener');
+    if (copied) setToast('画像をコピーしました。投稿画面で ⌘V（Ctrl+V）で貼り付けてください。');
   };
 
   if (!native) return <Fallback />;
@@ -1348,6 +1395,56 @@ export default function App() {
                 )}
               </div>
             )}
+            {/* the photo of the view, as a print the engine floats over the map, front and back; its buttons stay real buttons */}
+            <div
+              className="photo"
+              data-piece="photo"
+              data-face="front"
+              drawable=""
+              role="dialog"
+              aria-label="この画面の画像"
+              aria-hidden={!shotOpen}
+            >
+              <div className="photo-frame" style={{ aspectRatio: String(shot?.aspect ?? 16 / 10) }}>
+                {shot && (
+                  <img
+                    className="photo-shot"
+                    src={shot.url}
+                    alt="この画面の画像"
+                    onLoad={() => engineRef.current?.showPhoto()}
+                  />
+                )}
+              </div>
+              <div className="photo-foot">
+                <span className="photo-caption">
+                  GPX箱庭なんちゃら<small>{route?.name}</small>
+                </span>
+                <span className="photo-actions">
+                  <button type="button" onClick={() => shot && downloadBlob(shot.blob, shotName())}>
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void copyShot().then((ok) => ok && setToast('画像をコピーしました。'))}
+                  >
+                    画像をコピー
+                  </button>
+                  <button type="button" className="photo-post" onClick={() => void postShot()}>
+                    X に投稿
+                  </button>
+                  <button type="button" onClick={() => engineRef.current?.hidePhoto()}>
+                    閉じる
+                  </button>
+                </span>
+              </div>
+            </div>
+            <div className="photo photo-back" data-piece="photo" data-face="back" drawable="" aria-hidden="true">
+              <div className="photo-frame" style={{ aspectRatio: String(shot?.aspect ?? 16 / 10) }}>
+                <img className="photo-logo" src="/gpx-topo-logo.png" alt="" />
+                <span>GPX箱庭なんちゃら</span>
+              </div>
+              <div className="photo-foot" />
+            </div>
             {/* the (i) flag: a pirate flag the engine drops onto the map and flies in the wind; its links stay real links */}
             <div ref={flagRef} className="flag" data-piece="flag" drawable="" role="dialog" aria-label="GPX箱庭なんちゃら について" aria-hidden={!infoOpen}>
               <FlagContent brushes={flagBrushes} />
@@ -1464,7 +1561,7 @@ export default function App() {
                 ■
               </button>
             )}
-            <button type="button" className="key key-camera" data-piece="key" data-key="camera" drawable="" aria-label="PNGを保存" onClick={() => void exportPng()}>
+            <button type="button" className="key key-camera" data-piece="key" data-key="camera" drawable="" aria-label="画像にする" onClick={() => void exportPng()}>
               <svg className="camera-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M7.5 6.5 9 4h6l1.5 2.5H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3.5Z" />
                 <circle cx="12" cy="12.5" r="3.5" />
