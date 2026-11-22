@@ -684,25 +684,6 @@ export default function App() {
                   <path className="route-casing" d={routeD} />
                   <path className="route-line" d={routeD} />
                 </svg>
-                <div className="map-switch" data-piece="content" data-map-control="" drawable="" role="group" aria-label="地図の種類">
-                  <span>地図</span>
-                  <button
-                    type="button"
-                    className="map-switch-option"
-                    aria-pressed={baseMapStyle === 'pale'}
-                    onClick={() => setBaseMapStyle('pale')}
-                  >
-                    淡色地図
-                  </button>
-                  <button
-                    type="button"
-                    className="map-switch-option"
-                    aria-pressed={baseMapStyle === 'photo'}
-                    onClick={() => setBaseMapStyle('photo')}
-                  >
-                    航空写真
-                  </button>
-                </div>
                 {!terrain && <span className="terrain-status">{route ? '地形を読み込み中' : 'GPX を読み込み中'}</span>}
               </div>
             ))}
@@ -738,6 +719,25 @@ export default function App() {
             </div>
 
             <div className="map" data-map="" style={mapStyle}>
+              <div className="map-switch" data-piece="content" data-map-control="" drawable="" role="group" aria-label="地図の種類">
+                <span>地図</span>
+                <button
+                  type="button"
+                  className="map-switch-option"
+                  aria-pressed={baseMapStyle === 'pale'}
+                  onClick={() => setBaseMapStyle('pale')}
+                >
+                  淡色地図
+                </button>
+                <button
+                  type="button"
+                  className="map-switch-option"
+                  aria-pressed={baseMapStyle === 'photo'}
+                  onClick={() => setBaseMapStyle('photo')}
+                >
+                  航空写真
+                </button>
+              </div>
               {ways.map((way, index) => (
                 <button
                   key={way.id}
