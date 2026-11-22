@@ -3058,6 +3058,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     px = ev.clientX;
     py = ev.clientY;
     downOnMap = onTerrain(t);
+    // laid flat, the page stays where it is: only the model is moved about
+    if ((panning || ev.shiftKey) && st.eT < 0.5) return;
     drag = panning || ev.shiftKey ? 'pan' : 'turn';
     panFrom = null;
     if (drag === 'pan') {
