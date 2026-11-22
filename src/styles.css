@@ -354,14 +354,12 @@ body {
   letter-spacing: 0.02em;
 }
 
-.brand svg {
-  width: 18px;
-  height: 18px;
+.brand-mark {
+  display: block;
+  width: 20px;
+  height: 20px;
   flex: none;
-  fill: none;
-  stroke: var(--accent);
-  stroke-linecap: round;
-  stroke-width: 1.6;
+  object-fit: contain;
 }
 
 .brand small {

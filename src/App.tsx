@@ -806,11 +806,7 @@ export default function App() {
                 <div className="card" data-piece="card" drawable="" />
                 <div className="in in-title" data-piece="content" drawable="">
                   <div className="brand">
-                    <svg viewBox="0 0 20 20" aria-hidden="true">
-                      <path d="M2 16c3-1 4-5 8-5s5 4 8 5" />
-                      <path d="M5 12c2-1 3-4 5-4s3 3 5 4" />
-                      <path d="M8 8c1-1 1-3 2-3s1 2 2 3" />
-                    </svg>
+                    <img className="brand-mark" src="/gpx-topo-logo.png" alt="" aria-hidden="true" />
                     <span>gpx-topo</span>
                     <small data-selectable="">{fileName}</small>
                   </div>
