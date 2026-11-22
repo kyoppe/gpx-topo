@@ -120,11 +120,10 @@ const CARD_LEAN_MAX = (20 * Math.PI) / 180;
 /** Within this much (rad) of the map's half turn, cards swing level and over to the other side rather than jump across. */
 const CARD_FLIP = (40 * Math.PI) / 180;
 /**
- * Cards step aside to keep this many screen px between them (less than they have at rest) and, where they can,
- * this far inside the sides and top of the view; they glide to where they step at this rate (1/s).
+ * Cards step aside to keep this many screen px between them (less than they have at rest); they glide to where
+ * they step at this rate (1/s).
  */
 const CARD_GAP = 4;
-const CARD_EDGE = 8;
 const CARD_GLIDE = 10;
 /** The part of the map in view is drawn again from finer tiles once it wants this much more than the whole map has. */
 const DETAIL_GAIN = 1.25;
@@ -280,8 +279,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     ].map(([fx, fy]) => [0, 1, 2].map((i) => p.O[i] + p.ex[i] * fx + p.ey[i] * fy) as Vec3);
   /**
    * Cards that would cover each other on screen step apart the shortest way from their seats, across the view
-   * at their own depth and never down into the page. Keeping clear of each other wins over keeping inside the view.
-   * Sets how far each has stepped (`dodge`) and returns whether any of them is still on its way.
+   * at their own depth and never down into the page. They are never drawn into the view: past its edge they are cut off
+   * rather than brought over the map. Sets how far each has stepped (`dodge`) and returns whether any of them is still on its way.
    */
   function dodgeCards(dt: number, rise: number, sa: number, ca: number) {
     const shown = cards.filter((c) => c.w > 0 && c.h > 0);
@@ -319,27 +318,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
       return clear;
     };
-    const inside = () => {
-      let clear = true;
-      want.forEach((d, k) => {
-        const q = at(k);
-        const lo = Math.min(...q.map((v) => v[0]));
-        const hi = Math.max(...q.map((v) => v[0]));
-        const top = Math.min(...q.map((v) => v[1]));
-        const x = lo < CARD_EDGE ? CARD_EDGE - lo : hi > vw - CARD_EDGE ? vw - CARD_EDGE - hi : 0;
-        const y = top < CARD_EDGE && d[1] > 0 ? Math.min(d[1], (CARD_EDGE - top) / px[k]) : 0;
-        if (!x && !y) return;
-        d[0] += x / px[k];
-        d[1] -= y;
-        clear = false;
-      });
-      return clear;
-    };
     // zoomed in, the cards keep their seats: drawn into a close view they would stand in front of the ground looked at
-    if (st.zoom < 1.02) {
-      for (let it = 0; it < 24; it += 1) if (apart() && inside()) break;
-      for (let it = 0; it < 32; it += 1) if (apart()) break;
-    }
+    if (st.zoom < 1.02) for (let it = 0; it < 32; it += 1) if (apart()) break;
     const glide = 1 - Math.exp(-dt * CARD_GLIDE);
     let gliding = false;
     shown.forEach((c, k) => {
