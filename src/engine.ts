@@ -113,6 +113,8 @@ const FOV = 0.5;
 const PLINTH = 6;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
+/** Closing in, the camera stands up by this share of its tilt at ZOOM_MAX, so it looks down on the ground rather than across the model's sides. */
+const ZOOM_STAND = 0.45;
 /** Cards turn with the map until their lower edge leans this far on screen (rad), then hold. */
 const CARD_LEAN_MAX = (20 * Math.PI) / 180;
 /** Within this much (rad) of the map's half turn, cards swing level and over to the other side rather than jump across. */
@@ -333,8 +335,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       });
       return clear;
     };
-    for (let it = 0; it < 24; it += 1) if (apart() && inside()) break;
-    for (let it = 0; it < 32; it += 1) if (apart()) break;
+    // zoomed in, the cards keep their seats: drawn into a close view they would stand in front of the ground looked at
+    if (st.zoom < 1.02) {
+      for (let it = 0; it < 24; it += 1) if (apart() && inside()) break;
+      for (let it = 0; it < 32; it += 1) if (apart()) break;
+    }
     const glide = 1 - Math.exp(-dt * CARD_GLIDE);
     let gliding = false;
     shown.forEach((c, k) => {
@@ -378,7 +383,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const lift = liftOf(e);
     const top = topZ(lift);
     const yaw = (HERO.yaw + yawOff) * p;
-    const tilt = clamp(HERO.tilt + tiltOff, 0.02, 1.32) * p;
+    const stand = 1 - ZOOM_STAND * clamp(Math.log(zoom) / Math.log(ZOOM_MAX), 0, 1);
+    const tilt = clamp(HERO.tilt + tiltOff, 0.02, 1.32) * p * stand;
     const fit = Math.min((vw - FRAME_X) / PW, (vh - FRAME_Y) / PH, 1.3);
     const D0 = vh / 2 / Math.tan(FOV / 2) / fit;
     let tx = lerp(PW / 2, PW / 2 - 10, p);
@@ -1989,6 +1995,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       st.panT = [0, 1, 2].map((i) => st.panT[i] + (P[i] - T[i]) * f) as Vec3;
     }
     st.zoomT = z1;
+    if (P) {
+      // the camera stands up as it closes in, which moves the point off the pointer: put it back
+      for (let it = 0; it < 3; it += 1) {
+        const { o, d } = ray(targetCam(), sx, sy);
+        if (Math.abs(d[2]) < 1e-6) break;
+        const t = (P[2] - o[2]) / d[2];
+        st.panT[0] += P[0] - (o[0] + d[0] * t);
+        st.panT[1] += P[1] - (o[1] + d[1] * t);
+      }
+    }
     if (z1 <= ZOOM_MIN + 1e-6) st.panT = [0, 0, 0];
     clampPan();
     setHover(null);
