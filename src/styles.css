@@ -508,6 +508,17 @@ body {
   font-size: 11px;
 }
 
+main[lang='en'] .in-ways > .row {
+  align-items: flex-start;
+}
+
+main[lang='en'] .in-ways > .row small {
+  max-width: 68%;
+  line-height: 1.35;
+  text-align: right;
+  white-space: normal;
+}
+
 .clock {
   font: 600 15px var(--mono);
 }
@@ -1138,6 +1149,17 @@ body {
   background: #2846d8;
 }
 
+/* English labels are longer in the time picker; keep the hint above the buttons instead of letting it overflow. */
+main[lang='en'] .pop-foot {
+  flex-wrap: wrap;
+}
+
+main[lang='en'] .pop-foot small {
+  flex: 1 0 100%;
+  line-height: 1.35;
+  white-space: normal;
+}
+
 /* ---------------------------------------------------------------- the bar inside the canvas */
 /* Laid out once here; the engine stands the slab and its keys up in front of the camera. */
 /* --rise (set by the engine) is 0 on the flat map, where the bar is plain flat buttons, and 1 once the page stands. */
@@ -1213,6 +1235,11 @@ body {
   font-size: 11px;
   line-height: 1.5;
   white-space: nowrap;
+}
+
+main[lang='en'] .bar-hint {
+  width: 240px;
+  white-space: normal;
 }
 
 /* risen, a key's face shades from --top to --bottom; flat, it is one colour and --tint darkens it on hover and press */

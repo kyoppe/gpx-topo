@@ -1,6 +1,7 @@
 import { useEffect, useState, type RefObject } from 'react';
 
 import { addAction } from './observability';
+import type { Copy } from './i18n';
 
 // What is on the (i) flag. The engine draws the flag's element as silk and keeps it the real, clickable element, so
 // the text is selected right on it. The selection is shown as strokes of a dry brush behind the text (the brush of the
@@ -25,7 +26,7 @@ function nodeAt(root: Node, path: number[]): Node | null {
   return node;
 }
 
-export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?: boolean }) {
+export function FlagContent({ brushes, copy, twin = false }: { brushes: Brush[]; copy: Copy; twin?: boolean }) {
   return (
     <>
       <img className="flag-art" src="/flag-skull.jpg" alt="" aria-hidden="true" />
@@ -46,38 +47,35 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
             <span key={i} className="flag-brush" style={{ left: b.x - 6, top: b.y - 1, width: b.w + 12, height: b.h + 2 }} />
           ))}
         </div>
-        <h2>GPX箱庭なんちゃら</h2>
-        <p className="flag-lead">GPX のルートを、国土地理院の地図と標高から作った立体模型の上で見るアプリです。</p>
+        <h2>{copy.appName}</h2>
+        <p className="flag-lead">{copy.flag.lead}</p>
         <div className="flag-cols">
           <section>
-            <h3>ルートを読み込む</h3>
+            <h3>{copy.flag.loadRoute}</h3>
             <ul>
-              <li>「GPX を開く」で手元の GPX ファイルを読み込む（最初はサンプルのコース）</li>
-              <li>カメラのボタンで、今の画面を PNG で保存</li>
+              {copy.flag.loadRouteItems.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
             </ul>
-            <h3>地図を見る</h3>
+            <h3>{copy.flag.viewMap}</h3>
             <ul>
-              <li>「起こす」で立体に、「寝かす」で平面に。Esc でも平面に戻る</li>
-              <li>ドラッグで回転、右ドラッグか Shift + ドラッグで移動</li>
-              <li>ホイールで立ち上げてズーム。地図の右下で航空写真に切り替え</li>
-              <li>▶ でコースを後ろから追いかける Flyover</li>
+              {copy.flag.viewMapItems.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
             </ul>
           </section>
           <section>
-            <h3>ウェイポイントと時刻</h3>
+            <h3>{copy.flag.waypointsAndTimes}</h3>
             <ul>
-              <li>「ウェイポイント追加」を押してルートをクリック、またはパネルに km を入れて「追加」</li>
-              <li>パネルで名前と km を書き換え、× で削除</li>
-              <li>スタート時刻、日付、各地点の目標時刻を押して変更</li>
-              <li>「日照」のスライダーで時刻を動かし、日の当たり方を見る</li>
-              <li>番号を押すと、その地点の時刻の日照になる</li>
-              <li>標高グラフの赤い点を動かすと、その位置と時刻に</li>
+              {copy.flag.waypointsAndTimesItems.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
             </ul>
           </section>
         </div>
         <div className="flag-foot">
           <p className="flag-author">
-            作った人：キョウヘイ
+            {copy.flag.madeBy}
             <a
               className="flag-icon"
               href="https://x.com/kyouhei"
@@ -110,7 +108,7 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
             </a>
           </p>
           <div>
-            <h3>その他のアプリ</h3>
+            <h3>{copy.flag.otherApps}</h3>
             <ul className="flag-links">
               <li>
                 <a
@@ -121,7 +119,7 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
                     if (!twin) addAction('info_link_clicked', { destination: 'gpx_wallpaper' });
                   }}
                 >
-                  GPX壁紙なんちゃら
+                  {copy.flag.gpxWallpaper}
                 </a>
               </li>
               <li>
@@ -133,7 +131,7 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
                     if (!twin) addAction('info_link_clicked', { destination: 'zessoku_help' });
                   }}
                 >
-                  レース中に開くなんちゃら
+                  {copy.flag.raceTime}
                 </a>
               </li>
             </ul>

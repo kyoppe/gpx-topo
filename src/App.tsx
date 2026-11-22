@@ -9,6 +9,7 @@ import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
+import { detectLanguage, getCopy, type Copy } from './i18n';
 import { addAction, reportError, reportInfo, reportWarning } from './observability';
 import { loadGpx, loadPlan, loadStart, saveGpx, savePlan, saveStart, startNow } from './session';
 import { buildTerrain } from './terrain';
@@ -49,7 +50,6 @@ function layoutFor(width: number, height: number): Layout {
   };
 }
 
-const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 function isoOf(d: Date) {
@@ -58,11 +58,6 @@ function isoOf(d: Date) {
 
 function todayIso() {
   return isoOf(new Date());
-}
-
-function dateLabel(iso: string) {
-  const [y, m, d] = iso.split('-').map(Number);
-  return `${y}/${m}/${d} (${WEEK[new Date(y, m - 1, d).getDay()]})`;
 }
 
 function shiftMonth(month: string, by: number) {
@@ -82,12 +77,6 @@ function elapsedFrom(startMinutes: number, targetMinutes: number) {
 function elapsedInput(startMinutes: number, targetMinutes: number) {
   const minutes = elapsedFrom(startMinutes, targetMinutes);
   return `+${Math.floor(minutes / 60)}:${pad2(minutes % 60)}`;
-}
-
-function dayLength(rise: number | null, set: number | null) {
-  if (rise === null || set === null) return '-';
-  const m = Math.round(set - rise);
-  return `${Math.floor(m / 60)}時間${m % 60}分`;
 }
 
 type Pop =
@@ -202,15 +191,13 @@ function WayNameField({ name, label, onCommit }: { name: string; label: string; 
   );
 }
 
-function Fallback() {
+function Fallback({ copy }: { copy: Copy }) {
   return (
-    <main className="unsupported">
+    <main lang={copy.language} className="unsupported">
       <div className="unsupported-card">
         <p className="unsupported-mark">gpx-topo</p>
-        <h1>対応ブラウザで開いてください</h1>
-        <p>
-          このアプリは HTML-in-Canvas を使っています。PC 版の Chrome または Edge (157 以降) で開いてください。
-        </p>
+        <h1>{copy.fallbackTitle}</h1>
+        <p>{copy.fallbackBody}</p>
       </div>
     </main>
   );
@@ -218,6 +205,12 @@ function Fallback() {
 
 export default function App() {
   const [native] = useState(supportsHtmlInCanvas);
+  const [language] = useState(detectLanguage);
+  const copy = useMemo(() => getCopy(language), [language]);
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.title = copy.appName;
+  }, [copy.appName, language]);
   const [route, setRoute] = useState<GpxRoute | null>(null);
   const [fileName, setFileName] = useState('SFMT2026-110km.gpx');
   // the start set last time carries over; a GPX opened afresh starts now (see onFile)
@@ -428,7 +421,7 @@ export default function App() {
         .catch((error) => {
           if (isCurrent()) {
             reportError('load_default_gpx', error, { file_name: DEFAULT_GPX_URL });
-            setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。');
+            setToast(copy.toast.defaultGpxFailed);
           }
         });
     void (async () => {
@@ -516,7 +509,7 @@ export default function App() {
       .catch((error) => {
         if (!controller.signal.aborted) {
           reportError('load_basemap', error, { map_style: baseMapStyle });
-          setToast('地理院タイルを読み込めませんでした。');
+          setToast(copy.toast.mapTilesFailed);
         }
       });
     return () => {
@@ -542,7 +535,7 @@ export default function App() {
       } catch (error) {
         if (signal.aborted) return;
         reportWarning('load_dem_coarse', error);
-        setToast('GSI DEM を読み込めなかったため、GPX の標高から地形を作っています。');
+        setToast(copy.toast.demFallback);
         setDemGrid({ projection, grid: gpxElevationGrid(projectTrack(points, projection, 4), cx, cy, projection.width, projection.height) });
         return;
       }
@@ -585,7 +578,7 @@ export default function App() {
       setRoute((current) => {
         if (!current) return current;
         const waypoint = { id: `user-${Date.now().toString(36)}`, name: nextWaypointName(current.waypoints), ...spot };
-        setToast(`${waypoint.name} を ${spot.km.toFixed(1)} km に追加しました。`);
+        setToast(copy.toast.waypointAdded(waypoint.name, spot.km));
         return { ...current, waypoints: [...current.waypoints, waypoint] };
       });
     },
@@ -623,7 +616,7 @@ export default function App() {
     const value = parseKm(addKm);
     if (value === null) {
       addAction('waypoint_add_rejected', { input: addKm });
-      setToast('追加する位置を km で入力してください。');
+      setToast(copy.toast.addKmRequired);
       return;
     }
     addAction('waypoint_add_requested', { distance_km: Number(value.toFixed(2)), source: 'form' });
@@ -634,7 +627,7 @@ export default function App() {
     (km: number | null) => {
       if (km === null) {
         addAction('waypoint_add_rejected', { source: 'map' });
-        setToast('ルートの上をクリックしてください。');
+        setToast(copy.toast.clickRoute);
         return;
       }
       addAction('waypoint_add_requested', { distance_km: Number(km.toFixed(2)), source: 'map' });
@@ -647,7 +640,7 @@ export default function App() {
   routeClickRef.current = onRouteClick;
   const toggleHigh = () => {
     if (!showHigh && !high) {
-      setToast('標高が分からないため、最高点を出せません。');
+      setToast(copy.toast.highestUnavailable);
       return;
     }
     addAction('highest_point_toggled', { enabled: !showHigh });
@@ -697,7 +690,7 @@ export default function App() {
       });
     } catch (error) {
       reportError('create_html_in_canvas_engine', error);
-      setToast(error instanceof Error ? error.message : '3D を開始できませんでした。');
+      setToast(error instanceof Error ? error.message : copy.toast.threeDStartFailed);
       return;
     }
     addAction('html_in_canvas_ready');
@@ -890,11 +883,11 @@ export default function App() {
         route_distance_km: routeStats.distanceKm,
       });
       addAction('gpx_loaded', { source: 'file', file_name: file.name, file_size: file.size, waypoint_count: next.waypoints.length });
-      setToast(`${file.name} を読み込みました (${next.points.length.toLocaleString('ja-JP')} 点)。`);
+      setToast(copy.toast.gpxLoaded(file.name, next.points.length));
     } catch (error) {
       if (requestId !== fileRequestRef.current) return;
       reportError('load_gpx_file', error, { file_name: file.name, file_size: file.size, gpx_content: xml });
-      setToast(error instanceof Error ? error.message : 'GPX を読み込めませんでした。');
+      setToast(error instanceof Error ? error.message : copy.toast.gpxLoadFailed);
     }
   };
 
@@ -909,7 +902,7 @@ export default function App() {
       const blob = await engine.capture();
       if (!blob) {
         reportError('export_png', new Error('PNG capture returned no blob'), { route_name: route?.name || 'gpx-topo' });
-        setToast('PNG を書き出せませんでした。');
+        setToast(copy.toast.pngExportFailed);
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -922,7 +915,7 @@ export default function App() {
       });
     } catch (error) {
       reportError('export_png', error, { route_name: route?.name || 'gpx-topo' });
-      setToast('PNG を書き出せませんでした。');
+      setToast(copy.toast.pngExportFailed);
     }
   };
   const shotName = () => `${route?.name || 'gpx-topo'}.png`;
@@ -933,7 +926,7 @@ export default function App() {
       addAction('photo_saved', { route_name: route?.name || 'gpx-topo' });
     } catch (error) {
       reportError('save_png', error, { route_name: route?.name || 'gpx-topo' });
-      setToast('画像を保存できませんでした。');
+      setToast(copy.toast.imageSavedFailed);
     }
   };
   const copyShot = async () => {
@@ -944,20 +937,20 @@ export default function App() {
       return true;
     } catch (error) {
       reportWarning('copy_png', error);
-      setToast('画像をコピーできませんでした。');
+      setToast(copy.toast.imageCopiedFailed);
       return false;
     }
   };
-  const SHARE_TEXT = 'GPX箱庭なんちゃらで作りました。\nhttps://gpx-topo.pages.dev/\n#GPX箱庭なんちゃら';
+  const SHARE_TEXT = copy.shareText;
   const postShot = async () => {
     // X takes no picture from here: it goes on the clipboard, to paste into the post
     const copied = await copyShot();
     const postWindow = window.open(`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}`, '_blank', 'noopener');
     if (postWindow) addAction('photo_post_opened', { route_name: route?.name || 'gpx-topo' });
-    if (copied) setToast('画像をコピーしました。投稿画面で ⌘V（Ctrl+V）で貼り付けてください。');
+    if (copied) setToast(copy.toast.imageCopiedWithPaste);
   };
 
-  if (!native) return <Fallback />;
+  if (!native) return <Fallback copy={copy} />;
 
   const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, 630));
   const flyoverPlaying =
@@ -969,7 +962,7 @@ export default function App() {
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
 
   return (
-    <main className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}`}>
+    <main lang={language} className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}`}>
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <div className="stage">
           <div ref={pageRef} className="page" style={{ width: layout.pageWidth, height: layout.pageHeight }}>
@@ -983,7 +976,7 @@ export default function App() {
                   <path className="route-casing" d={routeD} />
                   <path className="route-line" d={routeD} />
                 </svg>
-                {!terrain && <span className="terrain-status">{route ? '地形を読み込み中' : 'GPX を読み込み中'}</span>}
+                {!terrain && <span className="terrain-status">{route ? copy.ui.loadingTerrain : copy.ui.loadingGpx}</span>}
               </div>
             ))}
 
@@ -1018,8 +1011,8 @@ export default function App() {
             </div>
 
             <div className="map" data-map="" style={mapStyle}>
-              <div className="map-switch" data-piece="content" data-map-control="" drawable="" role="group" aria-label="地図の種類">
-                <span>地図</span>
+              <div className="map-switch" data-piece="content" data-map-control="" drawable="" role="group" aria-label={copy.ui.mapType}>
+                <span>{copy.ui.map}</span>
                 <button
                   type="button"
                   className="map-switch-option"
@@ -1029,7 +1022,7 @@ export default function App() {
                     setBaseMapStyle('pale');
                   }}
                 >
-                  淡色地図
+                  {copy.ui.paleMap}
                 </button>
                 <button
                   type="button"
@@ -1040,7 +1033,7 @@ export default function App() {
                     setBaseMapStyle('photo');
                   }}
                 >
-                  航空写真
+                  {copy.ui.aerial}
                 </button>
               </div>
               {ways.map((way, index) => (
@@ -1061,14 +1054,14 @@ export default function App() {
                 </button>
               ))}
               {showHigh && high && (
-                <div className="pin pin-high" data-piece="pin" data-mark="high" drawable="" role="img" aria-label={`最高点 ${Math.round(high.ele)} m`}>
+                <div className="pin pin-high" data-piece="pin" data-mark="high" drawable="" role="img" aria-label={copy.ui.highestPoint(high.ele)}>
                   <span className="pin-label">
                     <b>▲</b>
-                    <strong>{Math.round(high.ele).toLocaleString('ja-JP')} m</strong>
+                    <strong>{Math.round(high.ele).toLocaleString(copy.locale)} m</strong>
                   </span>
                 </div>
               )}
-              <div className="hiker" data-piece="hiker" drawable="" role="img" aria-label="この時刻の位置" />
+              <div className="hiker" data-piece="hiker" drawable="" role="img" aria-label={copy.ui.positionAtTime} />
               <div className="probe" data-piece="probe" drawable="" aria-hidden="true">
                 <b data-probe-text="">-</b>
               </div>
@@ -1080,13 +1073,13 @@ export default function App() {
                 <div className="in in-title" data-piece="content" drawable="">
                   <div className="brand">
                     <img className="brand-mark" src="/gpx-topo-logo.png" alt="" aria-hidden="true" />
-                    <span>GPX箱庭なんちゃら</span>
+                    <span>{copy.appName}</span>
                   </div>
                   <input
                     className="route-name"
                     value={route?.name ?? ''}
                     spellCheck={false}
-                    aria-label="ルート名"
+                    aria-label={copy.ui.routeName}
                     onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
                   />
                   <small className="file-name" data-selectable="">
@@ -1100,22 +1093,22 @@ export default function App() {
                 <div className="in in-stats" data-piece="content" drawable="">
                   <dl className="stats" data-selectable="">
                     <div>
-                      <dt>距離</dt>
+                      <dt>{copy.ui.distance}</dt>
                       <dd>
                         {stats ? stats.distanceKm.toFixed(1) : '-'}
                         <span>km</span>
                       </dd>
                     </div>
                     <div>
-                      <dt>累積標高</dt>
+                      <dt>{copy.ui.elevationGain}</dt>
                       <dd>
-                        {stats ? stats.ascentM.toLocaleString('ja-JP') : '-'}
+                        {stats ? stats.ascentM.toLocaleString(copy.locale) : '-'}
                         <span>m</span>
                       </dd>
                     </div>
                   </dl>
                   <div className="profile-box" data-profile="">
-                    <svg className="profile" viewBox={`0 0 ${PROFILE_WIDTH} ${PROFILE_HEIGHT}`} role="img" aria-label="標高プロファイル">
+                    <svg className="profile" viewBox={`0 0 ${PROFILE_WIDTH} ${PROFILE_HEIGHT}`} role="img" aria-label={copy.ui.elevationProfile}>
                       {profile && (
                         <>
                           <path className="profile-area" d={profile.area} />
@@ -1151,7 +1144,7 @@ export default function App() {
                 <div className="card" data-piece="card" drawable="" />
                 <div className="in in-sun" data-piece="content" drawable="">
                   <div className="row">
-                    <span className="label">日照</span>
+                    <span className="label">{copy.ui.sunlight}</span>
                     <output className="clock" data-clock="" data-selectable="">
                       {formatClock(initialSun)}
                     </output>
@@ -1164,18 +1157,18 @@ export default function App() {
                     max={sunRange.max}
                     step={1}
                     defaultValue={initialSun}
-                    aria-label="時刻"
+                    aria-label={copy.ui.time}
                     style={{ ['--track' as string]: sunTrack }}
                   />
                   <div className="row row-inputs">
                     <label>
-                      スタート
+                      {copy.ui.start}
                       <button
                         id="pop-start"
                         type="button"
                         className="field"
                         data-open={isOpen('pop-start')}
-                        onClick={() => openTime('start', startMinutes, 'pop-start', 'スタート時刻')}
+                        onClick={() => openTime('start', startMinutes, 'pop-start', copy.ui.startTime)}
                       >
                         <svg viewBox="0 0 16 16" aria-hidden="true">
                           <circle cx="8" cy="8" r="6.2" />
@@ -1185,18 +1178,18 @@ export default function App() {
                       </button>
                     </label>
                     <label>
-                      日付
+                      {copy.ui.date}
                       <button id="pop-date" type="button" className="field" data-open={isOpen('pop-date')} onClick={openDate}>
                         <svg viewBox="0 0 16 16" aria-hidden="true">
                           <rect x="2" y="3.2" width="12" height="10.6" rx="2" />
                           <path d="M2 6.6h12M5.2 1.8v2.6M10.8 1.8v2.6" />
                         </svg>
-                        {dateLabel(date)}
+                        {copy.dateLabel(date)}
                       </button>
                     </label>
                   </div>
                   <p className="daylight" data-selectable="">
-                    日の出 {daylight?.rise != null ? formatClock(daylight.rise) : '-'} · 日の入{' '}
+                    {copy.ui.sunrise} {daylight?.rise != null ? formatClock(daylight.rise) : '-'} · {copy.ui.sunset}{' '}
                     {daylight?.set != null ? formatClock(daylight.set) : '-'}
                   </p>
                 </div>
@@ -1206,8 +1199,8 @@ export default function App() {
                 <div className="card" data-piece="card" drawable="" />
                 <div className="in in-ways" data-piece="content" drawable="">
                   <div className="row">
-                    <span className="label">ウェイポイント</span>
-                    {apart && <small data-selectable="">番号を押すとそのウェイポイントの光になります</small>}
+                    <span className="label">{copy.ui.waypoints}</span>
+                    {apart && <small data-selectable="">{copy.ui.sunlightHint}</small>}
                   </div>
                   <form
                     className="way-add"
@@ -1221,16 +1214,16 @@ export default function App() {
                       inputMode="decimal"
                       spellCheck={false}
                       placeholder="km"
-                      aria-label="追加する位置 (km)"
+                      aria-label={copy.ui.addPositionAria}
                       value={addKm}
                       onChange={(event) => setAddKm(event.target.value)}
                     />
-                    <span>km に</span>
+                    <span>{copy.ui.kmAt}</span>
                     <button type="submit" className="field">
-                      追加
+                      {copy.ui.add}
                     </button>
                     <button type="button" className="high-toggle" role="switch" aria-checked={showHigh} onClick={toggleHigh}>
-                      ▲ 最高点
+                      ▲ {copy.ui.highestPointLabel}
                       <i aria-hidden="true" />
                     </button>
                   </form>
@@ -1240,7 +1233,7 @@ export default function App() {
                         <button
                           type="button"
                           className="way-go"
-                          aria-label={`${way.name} の地点の光にする`}
+                          aria-label={copy.ui.waypointLightAria(way.name)}
                           onClick={() => focusWaypoint(way.id, 'side_panel')}
                         >
                           <b>{index + 1}</b>
@@ -1248,20 +1241,20 @@ export default function App() {
                         <span className="way-body">
                           <WayNameField
                             name={way.name}
-                            label={`${index + 1} 番の名前`}
+                            label={copy.ui.waypointNameAria(index + 1)}
                             onCommit={(name) => renameWay(way.id, name)}
                           />
                           <small>
-                            <KmField km={way.km} label={`${way.name} の km`} onCommit={(km) => moveWay(way.id, km)} />
-                            km · {way.ele != null ? `${Math.round(way.ele).toLocaleString('ja-JP')} m` : '-'}
-                            {way.estimated ? ' · 推定' : ''}
+                            <KmField km={way.km} label={copy.ui.waypointKmAria(way.name)} onCommit={(km) => moveWay(way.id, km)} />
+                            km · {way.ele != null ? `${Math.round(way.ele).toLocaleString(copy.locale)} m` : '-'}
+                            {way.estimated ? ` · ${copy.ui.estimated}` : ''}
                           </small>
                         </span>
                         <button
                           id={`pop-${way.id}`}
                           type="button"
                           className="field field-way"
-                          aria-label={`${way.name} の経過時間`}
+                          aria-label={copy.ui.waypointElapsedAria(way.name)}
                           data-open={isOpen(`pop-${way.id}`)}
                           onClick={() => openTime(way.id, way.minutes, `pop-${way.id}`, `${index + 1}. ${way.name}`)}
                         >
@@ -1270,7 +1263,7 @@ export default function App() {
                         {way.fixed ? (
                           <span className="way-fixed" aria-hidden="true" />
                         ) : (
-                          <button type="button" className="way-del" aria-label={`${way.name} を削除`} onClick={() => removeWay(way.id)}>
+                            <button type="button" className="way-del" aria-label={copy.ui.deleteWaypointAria(way.name)} onClick={() => removeWay(way.id)}>
                             ×
                           </button>
                         )}
@@ -1278,7 +1271,7 @@ export default function App() {
                     ))}
                   </ol>
                   <p className="credit" data-selectable="">
-                    地理院タイル (淡色地図・陰影起伏図・標高タイル) 国土地理院
+                    {copy.ui.gsiCredit}
                   </p>
                 </div>
               </section>
@@ -1298,22 +1291,22 @@ export default function App() {
                     drawable=""
                   >
                     <div className="cal-head">
-                      <button type="button" className="cal-nav" aria-label="前の月" onClick={() => setMonth((m) => shiftMonth(m, -1))}>
+                        <button type="button" className="cal-nav" aria-label={copy.ui.previousMonth} onClick={() => setMonth((m) => shiftMonth(m, -1))}>
                         <svg viewBox="0 0 16 16" aria-hidden="true">
                           <path d="M10 3.5 5.5 8l4.5 4.5" />
                         </svg>
                       </button>
                       <strong>
-                        {calendar.y}年 {calendar.m}月
+                        {copy.monthLabel(calendar.y, calendar.m)}
                       </strong>
-                      <button type="button" className="cal-nav" aria-label="次の月" onClick={() => setMonth((m) => shiftMonth(m, 1))}>
+                      <button type="button" className="cal-nav" aria-label={copy.ui.nextMonth} onClick={() => setMonth((m) => shiftMonth(m, 1))}>
                         <svg viewBox="0 0 16 16" aria-hidden="true">
                           <path d="M6 3.5 10.5 8 6 12.5" />
                         </svg>
                       </button>
                     </div>
                     <div className="cal-week">
-                      {WEEK.map((w, i) => (
+                      {copy.week.map((w, i) => (
                         <span key={w} data-dow={i}>
                           {w}
                         </span>
@@ -1329,7 +1322,7 @@ export default function App() {
                           data-out={c.out ? '' : undefined}
                           data-picked={c.iso === date ? '' : undefined}
                           data-today={c.iso === todayIso() ? '' : undefined}
-                          aria-label={dateLabel(c.iso)}
+                          aria-label={copy.dateLabel(c.iso)}
                           onPointerEnter={() => peekDate(c.iso)}
                           onClick={() => {
                             addAction('date_changed', { date: c.iso });
@@ -1355,11 +1348,11 @@ export default function App() {
                       const sun = calendar.cells.find((c) => c.iso === iso) ?? (iso === date ? daylight : null);
                       return (
                         <p className="cal-foot">
-                          <strong>{dateLabel(iso)}</strong>
+                          <strong>{copy.dateLabel(iso)}</strong>
                           {sun && (
                             <span>
-                              日の出 {sun.rise !== null ? formatClock(sun.rise) : '-'} · 日の入 {sun.set !== null ? formatClock(sun.set) : '-'} · 昼{' '}
-                              {dayLength(sun.rise, sun.set)}
+                              {copy.ui.sunrise} {sun.rise !== null ? formatClock(sun.rise) : '-'} · {copy.ui.sunset}{' '}
+                              {sun.set !== null ? formatClock(sun.set) : '-'} · {copy.ui.daylight} {copy.dayLength(sun.rise, sun.set)}
                             </span>
                           )}
                         </p>
@@ -1383,9 +1376,9 @@ export default function App() {
                     >
                       <div className="pop-head">
                         <strong>{pop.label}</strong>
-                        <small>{pop.target === 'start' ? '開始時刻' : 'スタートからの経過時間'}</small>
+                        <small>{pop.target === 'start' ? copy.ui.startTime : copy.ui.elapsedTime}</small>
                         <small>
-                          日の出 {daylight?.rise != null ? formatClock(daylight.rise) : '-'} · 日の入{' '}
+                          {copy.ui.sunrise} {daylight?.rise != null ? formatClock(daylight.rise) : '-'} · {copy.ui.sunset}{' '}
                           {daylight?.set != null ? formatClock(daylight.set) : '-'}
                         </small>
                       </div>
@@ -1395,12 +1388,12 @@ export default function App() {
                         <span className="drum-slot" data-drum-slot="m" />
                       </div>
                       <div className="pop-foot">
-                        <small>{pop.target === 'start' ? 'ドラッグ・ホイール・数字キー (HHMM)' : 'ドラッグ・ホイール・数字キー (HHHMM)'}</small>
+                        <small>{pop.target === 'start' ? copy.ui.startClockHint : copy.ui.elapsedClockHint}</small>
                         <button type="button" className="pop-btn" onClick={() => engineRef.current?.closePop(false)}>
-                          取消
+                          {copy.ui.cancel}
                         </button>
                         <button type="button" className="pop-btn pop-ok" onClick={() => engineRef.current?.closePop(true)}>
-                          決定
+                          {copy.ui.confirm}
                         </button>
                       </div>
                     </div>
@@ -1420,7 +1413,7 @@ export default function App() {
               data-face="front"
               drawable=""
               role="dialog"
-              aria-label="この画面の画像"
+              aria-label={copy.ui.imageOfView}
               aria-hidden={!shotOpen}
             >
               <div className="photo-frame" style={{ aspectRatio: String(shot?.aspect ?? 16 / 10) }}>
@@ -1428,30 +1421,30 @@ export default function App() {
                   <img
                     className="photo-shot"
                     src={shot.url}
-                    alt="この画面の画像"
+                    alt={copy.ui.imageOfView}
                     onLoad={() => engineRef.current?.showPhoto()}
                   />
                 )}
               </div>
               <div className="photo-foot">
                 <span className="photo-caption">
-                  GPX箱庭なんちゃら<small>{route?.name}</small>
+                  {copy.photoAppName}<small>{route?.name}</small>
                 </span>
                 <span className="photo-actions">
                   <button type="button" onClick={saveShot}>
-                    保存
+                    {copy.ui.save}
                   </button>
                   <button
                     type="button"
-                    onClick={() => void copyShot().then((ok) => ok && setToast('画像をコピーしました。'))}
+                    onClick={() => void copyShot().then((ok) => ok && setToast(copy.toast.imageCopied))}
                   >
-                    画像をコピー
+                    {copy.ui.copyImage}
                   </button>
                   <button type="button" className="photo-post" onClick={() => void postShot()}>
-                    X に投稿
+                    {copy.ui.postToX}
                   </button>
                   <button type="button" onClick={() => engineRef.current?.hidePhoto('button')}>
-                    閉じる
+                    {copy.ui.close}
                   </button>
                 </span>
               </div>
@@ -1459,18 +1452,18 @@ export default function App() {
             <div className="photo photo-back" data-piece="photo" data-face="back" drawable="" aria-hidden="true">
               <div className="photo-frame" style={{ aspectRatio: String(shot?.aspect ?? 16 / 10) }}>
                 <img className="photo-logo" src="/gpx-topo-logo.png" alt="" />
-                <span>GPX箱庭なんちゃら</span>
+                <span>{copy.photoAppName}</span>
               </div>
               <div className="photo-foot" />
             </div>
             {/* the (i) flag: a pirate flag the engine drops onto the map and flies in the wind; its links stay real links */}
-            <div ref={flagRef} className="flag" data-piece="flag" drawable="" role="dialog" aria-label="GPX箱庭なんちゃら について" aria-hidden={!infoOpen}>
-              <FlagContent brushes={flagBrushes} />
+            <div ref={flagRef} className="flag" data-piece="flag" drawable="" role="dialog" aria-label={`${copy.appName} ${copy.about}`} aria-hidden={!infoOpen}>
+              <FlagContent brushes={flagBrushes} copy={copy} />
             </div>
           </div>
 
           {/* the bar: each button is drawn as a key on a slab in front of the camera, and still is the button */}
-          <nav className="hud" data-hud="" aria-label="操作">
+          <nav className="hud" data-hud="" aria-label={copy.ui.controls}>
             <div className="bar" data-piece="bar" drawable="">
               <span className="well" data-well="open" />
               <span className="well" data-well="place" />
@@ -1481,9 +1474,9 @@ export default function App() {
               )}
               <span className="well" data-well="camera" />
               <span className="bar-hint">
-                ドラッグで回転 · 右ドラッグで移動
+                {copy.ui.dragHint}
                 <br />
-                ホイールで立体・ズーム · Esc で平面
+                {copy.ui.scrollHint}
               </span>
             </div>
             <button
@@ -1497,7 +1490,7 @@ export default function App() {
                 fileRef.current?.click();
               }}
             >
-              GPX を開く
+              {copy.ui.openGpx}
             </button>
             <button
               type="button"
@@ -1512,7 +1505,7 @@ export default function App() {
                 setPlacing((on) => !on);
               }}
             >
-              {placing ? 'ルートをクリック' : 'ウェイポイント追加'}
+              {placing ? copy.ui.clickRouteMode : copy.ui.addWaypoint}
             </button>
             <button
               type="button"
@@ -1527,7 +1520,7 @@ export default function App() {
                 engineRef.current?.toggle();
               }}
             >
-              起こす
+              {copy.ui.raise}
             </button>
             <button
               type="button"
@@ -1542,7 +1535,7 @@ export default function App() {
                 engineRef.current?.toggle();
               }}
             >
-              寝かす
+              {copy.ui.layFlat}
             </button>
             <button
               type="button"
@@ -1551,7 +1544,7 @@ export default function App() {
               data-key="fly"
               data-playing={flyoverRunning ? '' : undefined}
               drawable=""
-              aria-label={flyoverPlaying ? (flyoverPaused ? 'Flyoverを再開' : 'Flyoverを一時停止') : 'Flyoverを再生'}
+              aria-label={flyoverPlaying ? (flyoverPaused ? copy.ui.flyoverResume : copy.ui.flyoverPause) : copy.ui.flyoverPlay}
               aria-pressed={flyoverPlaying}
               disabled={flyoverReturning}
               onClick={() => {
@@ -1570,7 +1563,7 @@ export default function App() {
                 data-key="stop"
                 data-appear=""
                 drawable=""
-                aria-label="Flyoverを停止"
+                aria-label={copy.ui.flyoverStop}
                 onClick={() => {
                   addAction('flyover_control', { action: 'stop' });
                   engineRef.current?.flyover();
@@ -1579,7 +1572,7 @@ export default function App() {
                 ■
               </button>
             )}
-            <button type="button" className="key key-camera" data-piece="key" data-key="camera" drawable="" aria-label="画像にする" onClick={() => void exportPng()}>
+            <button type="button" className="key key-camera" data-piece="key" data-key="camera" drawable="" aria-label={copy.ui.captureImage} onClick={() => void exportPng()}>
               <svg className="camera-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M7.5 6.5 9 4h6l1.5 2.5H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3.5Z" />
                 <circle cx="12" cy="12.5" r="3.5" />
@@ -1590,13 +1583,13 @@ export default function App() {
       </canvas>
 
       <div ref={flagTwinRef} className="flag flag-twin" aria-hidden="true">
-        <FlagContent brushes={[]} twin />
+        <FlagContent brushes={[]} copy={copy} twin />
       </div>
       <button
         type="button"
         className="info-button"
-        aria-label="使い方とリンク"
-        title="使い方とリンク"
+        aria-label={copy.ui.helpLinks}
+        title={copy.ui.helpLinks}
         aria-pressed={infoOpen}
         disabled={flyoverPlaying || flyoverReturning}
         onClick={() => engineRef.current?.toggleInfo()}
