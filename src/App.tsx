@@ -604,11 +604,11 @@ export default function App() {
 
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !progress || !profile) return null;
-    const ribbon = track.filter((_, i) => i % 2 === 0 || i === track.length - 1);
     return {
       ...layout,
       terrain,
-      route: ribbon.map((p) => ({ x: p.x, y: p.y, km: progress.km[p.index] })),
+      // every point of the track, as the drawn line has them, so the runner keeps to the line round every bend
+      route: track.map((p) => ({ x: p.x, y: p.y, km: progress.km[p.index] })),
       ways: ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })),
       marks: showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
       date,

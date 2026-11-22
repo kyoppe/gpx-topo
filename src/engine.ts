@@ -2571,6 +2571,22 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         const ax = MAPX + p.at.x;
         const ay = MAPY + p.at.y;
         const gz = groundZ(p.at.x, p.at.y, lift);
+        if (p === hiker && flight) {
+          // flown over, the runner lies on the ground centred on its place, so it runs on the route itself rather
+          // than standing up above it, which the camera behind and above would see off the line
+          let fx = camRight[0];
+          let fy = camRight[1];
+          const fl = Math.hypot(fx, fy) || 1;
+          fx /= fl;
+          fy /= fl;
+          const k = shrink;
+          const lz = gz + 1.5 * k;
+          p.ex = [fx * k, fy * k, 0];
+          p.ey = [-fy * k, fx * k, 0];
+          p.O = [ax - (p.ex[0] * p.w) / 2 - (p.ey[0] * p.h) / 2, ay - (p.ex[1] * p.w) / 2 - (p.ey[1] * p.h) / 2, lz];
+          p.anchor = [ax, ay, lz, lz];
+          continue;
+        }
         const az = gz + p.stand * s * shrink + 0.12 + EPS * (40 + order);
         const ang = (s * Math.PI) / 2;
         let rx = lerp(1, camRight[0], s);
