@@ -1310,7 +1310,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
 
     const lift = liftOf(st.e);
-    const lit = smooth(st.e / 0.4);
+    const lit = 0.78 * smooth(st.e / 0.4);
     cam = camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
     const camRight = cam.r;
     // pins grow on screen as the view zooms in, slower than the map so they do not cover it
@@ -2051,9 +2051,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (!way) return;
     activeWay = id;
     hotWay(id);
-    st.sunSlow = false;
-    st.sunT = way.minutes;
-    if (st.eT < 0.5) apart(1);
+    if (st.eT >= 0.5) {
+      st.sunSlow = false;
+      st.sunT = way.minutes;
+    }
     need();
   }
 

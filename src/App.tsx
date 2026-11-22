@@ -1096,7 +1096,7 @@ export default function App() {
               tabIndex={apart ? -1 : 0}
               onClick={() => engineRef.current?.toggle()}
             >
-              立体にする
+              起こす
             </button>
             <button
               type="button"
@@ -1108,7 +1108,7 @@ export default function App() {
               tabIndex={apart ? 0 : -1}
               onClick={() => engineRef.current?.toggle()}
             >
-              平面に戻す
+              寝かす
             </button>
             <button type="button" className="key key-png" data-piece="key" data-key="png" drawable="" onClick={() => void exportPng()}>
               PNG

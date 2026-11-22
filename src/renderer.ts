@@ -260,6 +260,7 @@ out vec4 o;
 void main(){
   vec3 P=vW; vec3 alb; vec3 n; float ao=1.0;
   bool wall=dot(vS.yz,vS.yz)>0.25;
+  bool sea=false;
   float ha;
   if(!wall){
     vec4 t=texture(uTex,vUV,-0.5);
@@ -279,28 +280,35 @@ void main(){
     vec2 tc=hUV(vUV);
     float hm=texture(uH,tc).r;
     ha=uBaseEle+hm;
-    float s=uLift*uPerM;
-    // light falls on the slope of a few lattice steps around, not on every ripple: the contours carry the fine shape
-    vec2 o=uHT*2.5;
-    float h00=texture(uH,tc-o).r, h10=texture(uH,tc+vec2(0.0,-o.y)).r, h20=texture(uH,tc+vec2(o.x,-o.y)).r;
-    float h01=texture(uH,tc+vec2(-o.x,0.0)).r, h21=texture(uH,tc+vec2(o.x,0.0)).r;
-    float h02=texture(uH,tc+vec2(-o.x,o.y)).r, h12=texture(uH,tc+vec2(0.0,o.y)).r, h22=texture(uH,tc+o).r;
-    float gx=((h20+2.0*h21+h22)-(h00+2.0*h01+h02))*s/(8.0*o.x*uMapPx.x);
-    float gy=((h02+2.0*h12+h22)-(h00+2.0*h10+h20))*s/(8.0*o.y*uMapPx.y);
-    n=normalize(vec3(-gx,-gy,1.0));
-    // valleys a little darker, ridges a little lighter (in metres, so it does not depend on the scale)
-    float cav=texture(uHB,vUV).r-hm;
-    ao=1.0-(0.30*smoothstep(0.0,140.0,cav)-0.05*smoothstep(0.0,140.0,-cav))*uLift;
-    // contours: every 10 m, every 50 m heavier; each set fades out before its lines run together
-    float fw=max(fwidth(ha),1e-5);
-    float sMin=10.0/fw, sMaj=50.0/fw;
-    float dMin=abs(fract(ha/10.0+0.5)-0.5)*sMin;
-    float dMaj=abs(fract(ha/50.0+0.5)-0.5)*sMaj;
-    float wMin=0.32*uDpr, wMaj=0.62*uDpr;
-    float cmin=(1.0-smoothstep(wMin-0.5,wMin+0.7,dMin))*smoothstep(3.5,7.0,sMin/uDpr);
-    float cmaj=(1.0-smoothstep(wMaj-0.5,wMaj+0.7,dMaj))*smoothstep(2.2,4.5,sMaj/uDpr);
-    float ink=max(cmin*0.34,cmaj*0.62)*uContour;
-    alb=mix(alb,vec3(0.47,0.33,0.20),ink);
+    if(uBaseEle<0.0&&ha<=0.5){
+      // DEM sea is zero: keep the source map colour and do not make the water read as terrain
+      sea=true;
+      alb=flatAlb;
+      n=vec3(0.0,0.0,1.0);
+    } else {
+      float s=uLift*uPerM;
+      // light falls on the slope of a few lattice steps around, not on every ripple: the contours carry the fine shape
+      vec2 o=uHT*2.5;
+      float h00=texture(uH,tc-o).r, h10=texture(uH,tc+vec2(0.0,-o.y)).r, h20=texture(uH,tc+vec2(o.x,-o.y)).r;
+      float h01=texture(uH,tc+vec2(-o.x,0.0)).r, h21=texture(uH,tc+vec2(o.x,0.0)).r;
+      float h02=texture(uH,tc+vec2(-o.x,o.y)).r, h12=texture(uH,tc+vec2(0.0,o.y)).r, h22=texture(uH,tc+o).r;
+      float gx=((h20+2.0*h21+h22)-(h00+2.0*h01+h02))*s/(8.0*o.x*uMapPx.x);
+      float gy=((h02+2.0*h12+h22)-(h00+2.0*h10+h20))*s/(8.0*o.y*uMapPx.y);
+      n=normalize(vec3(-gx,-gy,1.0));
+      // valleys a little darker, ridges a little lighter (in metres, so it does not depend on the scale)
+      float cav=texture(uHB,vUV).r-hm;
+      ao=1.0-(0.30*smoothstep(0.0,140.0,cav)-0.05*smoothstep(0.0,140.0,-cav))*uLift;
+      // contours: every 10 m, every 50 m heavier; each set fades out before its lines run together
+      float fw=max(fwidth(ha),1e-5);
+      float sMin=10.0/fw, sMaj=50.0/fw;
+      float dMin=abs(fract(ha/10.0+0.5)-0.5)*sMin;
+      float dMaj=abs(fract(ha/50.0+0.5)-0.5)*sMaj;
+      float wMin=0.32*uDpr, wMaj=0.62*uDpr;
+      float cmin=(1.0-smoothstep(wMin-0.5,wMin+0.7,dMin))*smoothstep(3.5,7.0,sMin/uDpr);
+      float cmaj=(1.0-smoothstep(wMaj-0.5,wMaj+0.7,dMaj))*smoothstep(2.2,4.5,sMaj/uDpr);
+      float ink=max(cmin*0.34,cmaj*0.62)*uContour;
+      alb=mix(alb,vec3(0.47,0.33,0.20),ink);
+    }
   } else {
     n=normalize(vec3(vS.yz,0.0));
     float hz=(P.z/max(uLift,1e-3)-uBaseZ)/uPerM;
@@ -312,6 +320,10 @@ void main(){
     alb*=1.0-0.16*(1.0-smoothstep(0.4*uDpr-0.4,0.4*uDpr+0.7,d))*smoothstep(2.0,4.0,sp/uDpr);
     if(hz<0.0) alb*=0.92;
     alb*=1.0+(vn(vec2(dot(P.xy,vec2(0.31,0.23)),P.z*1.9))-0.5)*0.05;
+  }
+  if(sea){
+    o=vec4(alb,1.0);
+    return;
   }
   float ndl=max(dot(n,uSun),0.0);
   float sun=terrainShadow(P+n*0.6)*cardShadow(P).x;
