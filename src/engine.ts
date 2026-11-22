@@ -2134,6 +2134,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const facing = Math.cos(th) >= 0 ? !back : back;
       if (facing) place(k);
       else unplace(k);
+      // Do not rely on depth testing to hide the turned-away HTML texture. Both
+      // faces share the HUD depth buffer, so drawing both can expose the stale
+      // face during the first upload or while the key is settling.
+      if (!facing) continue;
       const neg = (v: Vec3) => v.map((x) => -x) as Vec3;
       const side = k.side;
       const faceEy = back ? neg(b) : b;
