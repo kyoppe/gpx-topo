@@ -3165,11 +3165,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   // the right button moves the model, so the browser's menu stays shut except over a field being typed in
-  const onContextMenu = (ev: Event) => {
-    const t = ev.target as Element;
-    if (t !== canvas && t.closest?.(EDITABLE)) return;
-    ev.preventDefault();
-  };
   // The wheel raises the flat page into the model as far as it is turned, and a page left part way up
   // stays there; risen, it zooms toward the point under the pointer; zoomed all the way out, it lowers
   // the model back to the page.
@@ -3240,12 +3235,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         if (Math.abs(d[2]) < 1e-6) break;
         const t = (P[2] - o[2]) / d[2];
         st.panT[0] += P[0] - (o[0] + d[0] * t);
-    keepAboveGround();
         st.panT[1] += P[1] - (o[1] + d[1] * t);
       }
     }
     if (z1 <= ZOOM_MIN + 1e-6) st.panT = [0, 0, 0];
     clampPan();
+    keepAboveGround();
     setHover(null);
     need();
   };
@@ -3270,7 +3265,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
-  window.addEventListener('contextmenu', onContextMenu, true);
   canvas.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('keydown', onKey);
 
@@ -3435,7 +3429,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.removeEventListener('pointermove', onPointerMove);
     canvas.removeEventListener('pointerup', onPointerUp);
     canvas.removeEventListener('pointercancel', onPointerUp);
-    window.removeEventListener('contextmenu', onContextMenu, true);
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('pointerleave', onLeave);
     window.removeEventListener('keydown', onKey);

@@ -6,6 +6,19 @@
     <meta name="theme-color" content="#18202b" />
     <link rel="icon" type="image/png" href="/gpx-topo-logo.png" />
     <title>gpx-topo</title>
+    <script>
+      // From the first moment, before the app is up, the right button moves the model rather than opening the
+      // browser's menu; only fields being typed in keep their menu.
+      window.addEventListener(
+        'contextmenu',
+        (event) => {
+          const target = event.target;
+          if (target instanceof Element && target.closest('input:not([type=range]):not([type=button]):not([type=submit]),textarea,[contenteditable]')) return;
+          event.preventDefault();
+        },
+        true,
+      );
+    </script>
   </head>
   <body>
     <div id="root"></div>
