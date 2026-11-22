@@ -33,11 +33,11 @@ export type DrawItem = {
   /** a shine on a solid: strength and sharpness */
   spec?: [number, number];
   /**
-   * silk flying from a pole at its right edge (uv x = 1), drawn on a fine grid: how far it billows (world px), how far
-   * its waves have run, how many run across it, its size in CSS px (for the weave), and the share of its width that is
-   * the heading tape it hangs by
+   * silk hanging from a pole at its right edge (uv x = 1): the simulated cloth (position, normal, uv for each of its
+   * nx x ny particles), its size in CSS px (for the weave), and the share of its width that is the heading tape it
+   * hangs by. O, ex and ey give the flat frame it would lie in, which its folds are measured from.
    */
-  cloth?: { amp: number; phase: number; waves: number; px: [number, number]; hoist: number };
+  cloth?: { mesh: Float32Array; nx: number; ny: number; px: [number, number]; hoist: number; shadow?: boolean };
 };
 
 export type TerrainPass = {
@@ -76,6 +76,8 @@ export type Scene = {
   hud: DrawItem[];
   hudLight: number;
   dpr: number;
+  /** what casts a shadow from the sun onto everything under it (the flag): a cloth mesh and some quads */
+  casters?: { cloth?: { mesh: Float32Array; nx: number; ny: number }; quads: DrawItem[] } | null;
 };
 
 const COMMON = `
@@ -101,6 +103,17 @@ vec3 shoulder(vec3 c){ vec3 x=max(c-0.70,0.0); return min(c,0.70)+0.275*(1.0-exp
 
 float tzAt(vec2 uv){ return uLift*(uBaseZ+texture(uH,hUV(uv)).r*uPerM); }
 // march toward the sun over the height field; the model shades itself, the page and the table
+uniform highp sampler2DShadow uFS; uniform mat4 uFVP; uniform float uFOn;
+// The flag's shadow, from one depth map drawn from the sun, so it has one tone however its folds overlap and falls on
+// the ground as it is: 1 = lit, 0 = in its shadow, a little soft at the edge.
+float flagLit(vec3 P){
+  if(uFOn<0.5) return 1.0;
+  vec4 c=uFVP*vec4(P,1.0); vec3 s=c.xyz/c.w*0.5+0.5;
+  if(s.x<0.0||s.y<0.0||s.x>1.0||s.y>1.0||s.z>1.0) return 1.0;
+  float sum=0.0; vec2 tx=vec2(1.4/2048.0);
+  for(int i=-1;i<=1;i++) for(int j=-1;j<=1;j++) sum+=texture(uFS,vec3(s.xy+vec2(float(i),float(j))*tx,s.z-0.0015));
+  return sum/9.0;
+}
 float terrainShadow(vec3 P){
   if(uHasH<0.5||uLift<0.02||uHud>0.5) return 1.0;
   float top=uLift*(uBaseZ+uTopM*uPerM)+0.5;
@@ -228,11 +241,11 @@ void main(){
   float sun=1.0, ao=1.0;
   if(uRecv>0.5){
     vec2 cs=cardShadow(P);
-    sun=terrainShadow(P+vec3(0.0,0.0,0.3))*cs.x;
+    sun=terrainShadow(P+vec3(0.0,0.0,0.3))*cs.x*flagLit(P);
     ao=cs.y;
     if(uTable<0.5) alb*=1.0+((vn(P.xy*1.15)-0.5)*fine+(vn(P.xy*vec2(0.11,1.2))-0.5)*0.5*fine)*0.016*uLight;
   } else {
-    sun=terrainShadow(P+n*0.5);
+    sun=terrainShadow(P+n*0.5)*flagLit(P+n*0.5);
     if(uUnlit<0.5&&uSolid.a<0.5) alb*=1.0+(vn(P.xy*1.15)-0.5)*fine*0.014*uLight;
   }
   vec3 aoC=pow(vec3(ao),vec3(1.03,1.0,0.955));
@@ -353,7 +366,7 @@ void main(){
     return;
   }
   float ndl=max(dot(n,uSun),0.0);
-  float sun=terrainShadow(P+n*0.6)*cardShadow(P).x;
+  float sun=terrainShadow(P+n*0.6)*cardShadow(P).x*flagLit(P+n*0.3);
   vec3 aoC=pow(vec3(ao),vec3(1.03,1.0,0.955));
   vec3 light=uAmb*aoC*(0.82+0.18*n.z)+uSunCol*ndl*sun*mix(1.0,ao,0.35)+uSunCol*0.04*(1.0-sun)*(0.4+0.6*ao);
   if(uNight>0.01) light+=lampLight(P,n)*uNight*mix(1.0,ao,0.7)*1.9;
@@ -371,37 +384,18 @@ void main(){
 
 type Program = { p: WebGLProgram; u: Record<string, WebGLUniformLocation | null> };
 
-// Silk on a fine grid, hemmed all round. It hangs still at the pole (uv x = 1) and billows more towards the fly end: travelling waves that
-// lean as they run, smaller ripples riding on them, and the weight of the cloth dragging the far corner down. The
-// normals come from the surface itself, so the folds catch the light: a soft wrapped diffuse, a sharp sheen along the
-// threads, and darker hollows.
+// Silk, hemmed all round: the cloth simulation's own surface, lit as silk is. A soft wrapped diffuse, a sharp sheen
+// along the threads, what it mirrors of the sky, and darker hollows where it folds away.
 const CVS = `#version 300 es
-layout(location=0) in vec2 aPos;
+layout(location=0) in vec3 aP;
+layout(location=1) in vec3 aN;
+layout(location=2) in vec2 aUV;
 uniform mat4 uVP; uniform vec3 uO, uEx, uEy;
-uniform vec4 uCloth;          // amplitude (world px), phase, waves across, hoist share
 out vec2 vUV; out vec3 vW; out vec3 vN; out float vD;
-float lift(vec2 p){
-  float f=1.0-p.x, t=uCloth.y, k=uCloth.z*6.2831853;
-  float hold=smoothstep(0.0,0.3,f-uCloth.w);
-  float s=f*k-t+p.y*1.1;
-  float w=0.60*sin(s)+0.24*sin(s*1.83+p.y*2.9-t*0.37)+0.10*sin(f*k*3.4-t*1.9+p.y*6.3)+0.05*sin(f*k*7.1-t*2.6-p.y*9.0);
-  return uCloth.x*hold*(0.3+0.7*f)*w;
-}
-vec3 at(vec2 p){
-  vec3 n=normalize(cross(uEx,uEy)), ey=normalize(uEy), ex=normalize(uEx);
-  float f=1.0-p.x, hold=smoothstep(0.0,0.3,f-uCloth.w);
-  vec3 w=uO+p.x*uEx+p.y*uEy+n*lift(p);
-  // the far corner drops under the cloth's weight, and the billows draw the fly end in a little
-  w+=ey*uCloth.x*0.55*f*f*(0.25+0.75*p.y)*hold;
-  w+=ex*uCloth.x*0.25*f*hold;
-  return w;
-}
 void main(){
-  vec3 P=at(aPos);
-  const float e=1.0/160.0;
-  vN=normalize(cross(at(aPos+vec2(e,0.0))-P, at(aPos+vec2(0.0,e))-P));
-  vD=lift(aPos)/max(uCloth.x,1e-3);
-  vW=P; vUV=aPos; gl_Position=uVP*vec4(P,1.0);
+  // how far this bit of cloth stands off the flat it would lie in, for the hollows between the folds
+  vD=dot(aP-uO,normalize(cross(uEx,uEy)))/max(length(uEy)*0.08,1e-3);
+  vN=normalize(aN); vW=aP; vUV=aUV; gl_Position=uVP*vec4(aP,1.0);
 }`;
 
 const CFS = `#version 300 es
@@ -410,17 +404,26 @@ in vec2 vUV; in vec3 vW; in vec3 vN; in float vD;
 uniform sampler2D uTex;
 ${COMMON}
 uniform vec4 uCloth; uniform vec2 uPx; uniform vec3 uEx, uEy; uniform float uA2C, uAlpha;
+uniform float uSide;          // which way the printed face looks: 1 along the cloth's normal, -1 against it
+uniform float uShadow;        // 1: the mesh is the cloth's shadow laid on the ground, drawn as a plain darkening
 out vec4 o;
 void main(){
+  if(uShadow>0.5){ o=vec4(0.0,0.0,0.0,uAlpha); return; }
   vec2 px=vUV*uPx;
   float a=1.0;
   float hoist=1.0-uCloth.w;
   vec3 alb; float shine=1.0, rough=0.0;
-  vec4 t=texture(uTex,vUV,-0.6);
-  alb=t.rgb/max(t.a,1e-4);
   vec3 n=normalize(vN);
   vec3 V=normalize(uEye-vW);
+  // the print is on the front; from behind there is the bare black silk, with only a faint, blurred bleed of the ink
+  bool back=dot(n,V)*uSide<0.0;
   if(dot(n,V)<0.0) n=-n;
+  vec4 t=texture(uTex,vUV,-0.6);
+  alb=t.rgb/max(t.a,1e-4);
+  if(back){
+    vec4 b=texture(uTex,vUV,4.0);
+    alb=mix(vec3(0.071,0.078,0.09),b.rgb/max(b.a,1e-4),0.07);
+  }
   vec3 ex=normalize(uEx), ey=normalize(uEy);
   // the weave: fine threads either way, faded out before they would shimmer
   float fx=fwidth(px.x), fy=fwidth(px.y);
@@ -480,6 +483,20 @@ void main(){
   if(uA2C>0.5) o=vec4(col,a); else o=vec4(col*a,a);
 }`;
 
+// The flag drawn from the sun, depth only, for its shadow.
+const SVS_QUAD = `#version 300 es
+layout(location=0) in vec2 aPos;
+uniform mat4 uVP; uniform vec3 uO, uEx, uEy;
+void main(){ gl_Position=uVP*vec4(uO+aPos.x*uEx+aPos.y*uEy,1.0); }`;
+const SVS_MESH = `#version 300 es
+layout(location=0) in vec3 aP;
+uniform mat4 uVP;
+void main(){ gl_Position=uVP*vec4(aP,1.0); }`;
+const SFS = `#version 300 es
+precision mediump float;
+out vec4 o;
+void main(){ o=vec4(1.0); }`;
+
 export type Renderer = ReturnType<typeof createRenderer>;
 
 export function createRenderer(canvas: HtmlInCanvasElement) {
@@ -518,6 +535,25 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
   const main = program(VS, FS);
   const land = program(TVS, TFS);
   const silk = program(CVS, CFS);
+  const castQuad = program(SVS_QUAD, SFS);
+  const castMesh = program(SVS_MESH, SFS);
+  // the sun's depth map of the flag
+  const SHADOW = 2048;
+  const shadowTex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT24, SHADOW, SHADOW);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+  const shadowFbo = gl.createFramebuffer()!;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  const shadowVP = new Float32Array(16);
+  let shadowOn = false;
   const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
   const maxAniso = aniso ? Math.min(16, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT) as number) : 0;
   const floatLinear = !!gl.getExtension('OES_texture_float_linear');
@@ -531,33 +567,40 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-  // a fine grid for cloth, which bends where a quad cannot
-  const CLOTH_X = 120;
-  const CLOTH_Y = 60;
+  // the simulated cloth: its particles as they are this frame (position, normal, uv), joined up as a grid
   const clothVao = gl.createVertexArray()!;
   gl.bindVertexArray(clothVao);
   const clothBuffer = gl.createBuffer();
   const clothIndex = gl.createBuffer();
-  {
-    const v = new Float32Array((CLOTH_X + 1) * (CLOTH_Y + 1) * 2);
-    for (let j = 0; j <= CLOTH_Y; j += 1) for (let i = 0; i <= CLOTH_X; i += 1) v.set([i / CLOTH_X, j / CLOTH_Y], (j * (CLOTH_X + 1) + i) * 2);
-    const idx = new Uint16Array(CLOTH_X * CLOTH_Y * 6);
+  gl.bindBuffer(gl.ARRAY_BUFFER, clothBuffer);
+  for (const [loc, n, at] of [
+    [0, 3, 0],
+    [1, 3, 12],
+    [2, 2, 24],
+  ]) {
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, n, gl.FLOAT, false, 32, at);
+  }
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, clothIndex);
+  let clothCount = 0;
+  let clothKey = '';
+  const clothGrid = (nx: number, ny: number) => {
+    const key = `${nx}x${ny}`;
+    if (key === clothKey) return;
+    clothKey = key;
+    const idx = new Uint16Array((nx - 1) * (ny - 1) * 6);
     let k = 0;
-    for (let j = 0; j < CLOTH_Y; j += 1) {
-      for (let i = 0; i < CLOTH_X; i += 1) {
-        const a = j * (CLOTH_X + 1) + i;
-        idx.set([a, a + 1, a + CLOTH_X + 1, a + 1, a + CLOTH_X + 2, a + CLOTH_X + 1], k);
+    for (let j = 0; j < ny - 1; j += 1) {
+      for (let i = 0; i < nx - 1; i += 1) {
+        const a = j * nx + i;
+        idx.set([a, a + 1, a + nx, a + 1, a + nx + 1, a + nx], k);
         k += 6;
       }
     }
-    gl.bindBuffer(gl.ARRAY_BUFFER, clothBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, clothIndex);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
-  }
-  const clothCount = CLOTH_X * CLOTH_Y * 6;
+    clothCount = idx.length;
+  };
 
   const meshVao = gl.createVertexArray()!;
   gl.bindVertexArray(meshVao);
@@ -752,6 +795,11 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
     gl.uniform2f(u.uHO, 0.5 / height.cols, 0.5 / height.rows);
     gl.uniform1i(u.uH, 1);
     gl.uniform1i(u.uHB, 3);
+    gl.uniform1i(u.uFS, 5);
+    gl.uniformMatrix4fv(u.uFVP, false, shadowVP);
+    gl.uniform1f(u.uFOn, shadowOn ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, shadowTex);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, hmap);
     gl.activeTexture(gl.TEXTURE3);
@@ -759,7 +807,75 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
     gl.activeTexture(gl.TEXTURE0);
   }
 
+  /** Draws what casts the flag's shadow into the sun's depth map, framed close round it. */
+  function castShadows(S: Scene) {
+    const C = S.casters;
+    shadowOn = false;
+    if (!C || S.sun[2] < 0.02) return;
+    const pts: number[][] = [];
+    if (C.cloth) for (let q = 0; q < C.cloth.nx * C.cloth.ny; q += 1) pts.push([C.cloth.mesh[q * 8], C.cloth.mesh[q * 8 + 1], C.cloth.mesh[q * 8 + 2]]);
+    for (const it of C.quads) for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) pts.push([0, 1, 2].map((i) => it.O[i] + it.ex[i] * a + it.ey[i] * b));
+    if (!pts.length) return;
+    // the light's frame: z towards the sun, x and y across its beams
+    const z = S.sun.map((v) => v / Math.hypot(S.sun[0], S.sun[1], S.sun[2])) as Vec3;
+    const ref: Vec3 = Math.abs(z[2]) < 0.99 ? [0, 0, 1] : [1, 0, 0];
+    let x: Vec3 = [ref[1] * z[2] - ref[2] * z[1], ref[2] * z[0] - ref[0] * z[2], ref[0] * z[1] - ref[1] * z[0]];
+    const xl = Math.hypot(x[0], x[1], x[2]);
+    x = x.map((v) => v / xl) as Vec3;
+    const y: Vec3 = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const p of pts) {
+      const px = p[0] * x[0] + p[1] * x[1] + p[2] * x[2];
+      const py = p[0] * y[0] + p[1] * y[1] + p[2] * y[2];
+      const pz = p[0] * z[0] + p[1] * z[1] + p[2] * z[2];
+      x0 = Math.min(x0, px); x1 = Math.max(x1, px);
+      y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+      z0 = Math.min(z0, pz); z1 = Math.max(z1, pz);
+    }
+    const pad = Math.max(x1 - x0, y1 - y0) * 0.04 + 2;
+    x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+    // deep enough to reach whatever the shadow falls on, however far below
+    z0 -= 20000;
+    z1 += pad;
+    const sx = 2 / (x1 - x0), sy = 2 / (y1 - y0), sz = -2 / (z1 - z0);
+    const cx = -(x1 + x0) / (x1 - x0), cy = -(y1 + y0) / (y1 - y0), cz = -(z1 + z0) / (z1 - z0);
+    // looking down the beams: depth grows away from the sun
+    const m = shadowVP;
+    m.set([x[0] * sx, y[0] * sy, z[0] * sz, 0, x[1] * sx, y[1] * sy, z[1] * sz, 0, x[2] * sx, y[2] * sy, z[2] * sz, 0, cx, cy, -cz, 1]);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+    gl.viewport(0, 0, SHADOW, SHADOW);
+    gl.clearDepth(1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.BLEND);
+    gl.colorMask(false, false, false, false);
+    gl.useProgram(castQuad.p);
+    gl.uniformMatrix4fv(castQuad.u.uVP, false, m);
+    gl.bindVertexArray(quad);
+    for (const it of C.quads) {
+      gl.uniform3fv(castQuad.u.uO, it.O);
+      gl.uniform3fv(castQuad.u.uEx, it.ex);
+      gl.uniform3fv(castQuad.u.uEy, it.ey);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    if (C.cloth) {
+      gl.useProgram(castMesh.p);
+      gl.uniformMatrix4fv(castMesh.u.uVP, false, m);
+      gl.bindVertexArray(clothVao);
+      clothGrid(C.cloth.nx, C.cloth.ny);
+      gl.bindBuffer(gl.ARRAY_BUFFER, clothBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, C.cloth.mesh, gl.DYNAMIC_DRAW);
+      gl.drawElements(gl.TRIANGLES, clothCount, gl.UNSIGNED_SHORT, 0);
+    }
+    gl.bindVertexArray(null);
+    gl.colorMask(true, true, true, true);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    shadowOn = true;
+  }
+
   function draw(S: Scene) {
+    castShadows(S);
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0.79, 0.8, 0.81, 1);
     gl.clearDepth(1);
@@ -808,11 +924,16 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
         gl.uniform3fv(su.uO, it.O);
         gl.uniform3fv(su.uEx, it.ex);
         gl.uniform3fv(su.uEy, it.ey);
-        gl.uniform4f(su.uCloth, c.amp, c.phase, c.waves, c.hoist);
+        gl.uniform4f(su.uCloth, 0, 0, 0, c.hoist);
         gl.uniform2f(su.uPx, c.px[0], c.px[1]);
+        gl.uniform1f(su.uSide, 1);
+        gl.uniform1f(su.uShadow, c.shadow ? 1 : 0);
         gl.uniform1f(su.uAlpha, it.alpha ?? 1);
         gl.uniform1f(su.uA2C, a2c ? 1 : 0);
         gl.bindVertexArray(clothVao);
+        clothGrid(c.nx, c.ny);
+        gl.bindBuffer(gl.ARRAY_BUFFER, clothBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, c.mesh, gl.DYNAMIC_DRAW);
         gl.drawElements(gl.TRIANGLES, clothCount, gl.UNSIGNED_SHORT, 0);
         gl.bindVertexArray(quad);
         gl.useProgram(main.p);
@@ -889,6 +1010,10 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
     gl.deleteProgram(main.p);
     gl.deleteProgram(land.p);
     gl.deleteProgram(silk.p);
+    gl.deleteProgram(castQuad.p);
+    gl.deleteProgram(castMesh.p);
+    gl.deleteTexture(shadowTex);
+    gl.deleteFramebuffer(shadowFbo);
   }
 
   return { gl, setTerrain, clearTerrain, setMesh, layer, deleteLayer, upload, draw, dispose, maxTexture };

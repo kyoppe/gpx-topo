@@ -1460,6 +1460,33 @@ body {
   border-top: 1px solid rgba(242, 239, 230, 0.22);
 }
 
+.flag-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flag a.flag-icon {
+  /* a bigger target than the icon, for a cloth that is never quite still */
+  display: inline-flex;
+  box-sizing: content-box;
+  width: 18px;
+  height: 18px;
+  margin: -5px -3px;
+  padding: 5px;
+  color: #f2efe6;
+}
+
+.flag a.flag-icon:hover {
+  color: #ffd27a;
+}
+
+.flag-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
 .flag-foot h3 {
   margin-top: 0;
 }

@@ -1,4 +1,5 @@
 import { nearestTurn } from './angle';
+import { clothVertices, createCloth, layCloth, stepCloth, type Cloth } from './cloth';
 import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
 import { holdLean } from './lean';
@@ -154,16 +155,27 @@ const CARD_GLIDE = 10;
 /**
  * The (i) flag: where it is planted (shares of the map across and down), how wide its cloth is at most and at least and
  * how much pole shows under it (shares of the map's height), and how long it falls in and is pulled out again (s).
- * The cloth is a flag's 3:2 (its element's size); it is made smaller, down to FLAG_NARROWEST, rather than let the top of
- * its pole leave the window by FLAG_MARGIN (CSS px).
+ * The cloth is a flag's 3:2 (its element's size); it is made smaller, down to FLAG_NARROWEST, rather than let any of it
+ * come within FLAG_MARGIN (CSS px) of the window's edge, and the view is moved to stand it in the middle (fitFlag).
  */
 const FLAG_AT: [number, number] = [0.9, 0.86];
 const FLAG_WIDTH = 1.35;
-const FLAG_NARROWEST = 0.4;
+const FLAG_NARROWEST = 0.2;
 const FLAG_UNDER = 0.26;
 const FLAG_MARGIN = 14;
+/** The window's bottom this far up (CSS px) is the bar's, and the flag is kept above it. */
+const FLAG_BAR_ROOM = 96;
+/** At most this share of the room's width and height is the flag's. */
+const FLAG_ROOM: [number, number] = [0.6, 0.9];
+/** It goes in a little askew: it leans this far (rad) away from its cloth, and falls in along that line. */
+const FLAG_LEAN = 0.2;
+/** Flying, its cloth billows this far either side of flat (a share of its height), in this many waves along it. */
+const FLAG_BILLOW = 0.15;
+const FLAG_WAVES = 2.3;
+/** A gust lasts this long (s). */
+const FLAG_GUST = 1.4;
 const FLAG_FALL = 0.7;
-const FLAG_PULL = 0.45;
+const FLAG_PULL = 1.1;
 /** The view it is shown in: zoomed in this far, tilted this much further, and moved this share of the way towards the flag. */
 const FLAG_VIEW_ZOOM = 1;
 const FLAG_VIEW_TILT = 0.12;
@@ -257,6 +269,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     off: number;
     from: number;
     saved: { eT: number; yawT: number; tiltT: number; zoomT: number; panT: Vec3 };
+    /** pulled out because the view was taken elsewhere: then it is not put back when the flag has gone */
+    keepView: boolean;
+    /** the map was asked to lie flat: it waits for the flag to be pulled out first */
+    flatten: boolean;
     /** the level way the cloth runs from its far end to the pole */
     side: Vec3;
   } | null = null;
@@ -265,6 +281,22 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let flagSteady = false;
   /** how wide the cloth is drawn (world px), fitted to the window */
   let flagFw = 0;
+  /** the cloth itself, simulated, and the flat it is taken to lie in for clicks on its links (smoothed) */
+  let flagCloth: Cloth | null = null;
+  let flagClothFw = 0;
+  let flagMesh: Float32Array | undefined;
+  /** what of the flag casts its shadow this frame */
+  let flagCasters: { cloth: { mesh: Float32Array; nx: number; ny: number }; quads: DrawItem[] } | null = null;
+  /** what of the flag is laid over the scene rather than drawn solid: its shadows */
+  const flagBlend: DrawItem[] = [];
+  /** the pointer is on the flag, and how far it has calmed for it (0 to 1): calm, it lies on the flat its links are on */
+  let flagHover = false;
+  let flagCalm = 0;
+  /** a gust under way (how far into it, and which way across the flag it blows), and when the next is due (wind s) */
+  let flagGust: { t: number; way: number } | null = null;
+  let flagGustAt = 0;
+  /** how far the cloth stands off its flat where the links are, smoothed (world px) */
+  const flagDrift: Vec3 = [0, 0, 0];
   let wind = 0;
   let panelAlpha = 1;
   let panelAlphaT = 1;
@@ -949,7 +981,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function flyover() {
     if (!model?.route.length || !sunEl) return;
-    dropInfo();
+    pullInfo(true);
     if (flight) {
       returnFromFlight();
       return;
@@ -990,13 +1022,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function toggleInfo() {
     if (flight) return;
     if (info) {
-      if (info.phase === 'wait') finishInfo();
-      else if (info.phase !== 'pull') {
-        info.phase = 'pull';
-        info.t = 0;
-        info.from = info.off;
-      }
-      need();
+      pullInfo(false);
       return;
     }
     info = {
@@ -1005,6 +1031,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       off: 0,
       from: 0,
       saved: { eT: st.eT, yawT: st.yawT, tiltT: st.tiltT, zoomT: st.zoomT, panT: [...st.panT] },
+      keepView: false,
+      flatten: false,
       side: [Math.cos(HERO.yaw), -Math.sin(HERO.yaw), 0],
     };
     home();
@@ -1020,10 +1048,27 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onInfoChange(true);
     need();
   }
+  /** Pulls the flag out of the ground and away up; `keepView` when the view has been taken elsewhere meanwhile. */
+  function pullInfo(keepView: boolean) {
+    if (!info) return;
+    info.keepView ||= keepView;
+    if (info.phase === 'wait') finishInfo();
+    else if (info.phase !== 'pull') {
+      info.phase = 'pull';
+      info.t = 0;
+      info.from = info.off;
+    }
+    need();
+  }
   /** Takes the flag away at once and leaves the view as it is. */
   function dropInfo() {
     if (!info) return;
     info = null;
+    flagCloth = null;
+    flagHover = false;
+    flagCalm = 0;
+    flagGust = null;
+    flagGustAt = 0;
     if (flagPiece && flagPlaced) unplace(flagPiece);
     flagPlaced = false;
     callbacks.onInfoChange(false);
@@ -1032,7 +1077,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function finishInfo() {
     if (!info) return;
     const s = info.saved;
+    const keep = info.keepView;
+    const flatten = info.flatten;
     dropInfo();
+    if (flatten) together();
+    if (keep) return;
     if (s.eT < 0.5) together();
     else {
       st.yawT = s.yawT;
@@ -1046,39 +1095,68 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function poleFor(fh: number) {
     return fh + MH * FLAG_UNDER + fh * 0.04;
   }
-  /** Sizes the cloth to the window: as wide as FLAG_WIDTH, or as much narrower as keeps its pole's top and its far end in view. */
+  /**
+   * Sizes the flag to the window and turns the view on it: it is as wide as FLAG_WIDTH, or as much smaller (its words
+   * with it) as keeps the whole of it, pole and cloth and a little room for the cloth to fly, inside the window above the
+   * bar; and the view is moved so that it stands in the middle of that.
+   */
   function fitFlag() {
     if (!flagPiece || !flagPiece.w) return;
-    const c = camera(1, st.yawT, st.tiltT, st.zoomT, st.panT);
     const gx = MW * FLAG_AT[0];
     const gy = MH * FLAG_AT[1];
     const G: Vec3 = [MAPX + gx, MAPY + gy, groundZ(gx, gy, 1)];
     const side: Vec3 = [Math.cos(HERO.yaw), -Math.sin(HERO.yaw), 0];
+    const up: Vec3 = [side[0] * Math.sin(FLAG_LEAN), side[1] * Math.sin(FLAG_LEAN), Math.cos(FLAG_LEAN)];
     const aspect = flagPiece.h / flagPiece.w;
-    const screen = (P: Vec3): [number, number] => {
-      const q = mulBy(c.vp, [P[0], P[1], P[2], 1]);
-      return q[3] > 0 ? [((q[0] / q[3]) * 0.5 + 0.5) * vw, ((-q[1] / q[3]) * 0.5 + 0.5) * vh] : [-Infinity, -Infinity];
-    };
-    // how far inside the window the pole's top and the cloth's far corners stay, for a cloth `fw` wide
-    const top = (fw: number) => {
-      const z = G[2] + poleFor(fw * aspect);
-      const far: Vec3 = [G[0] - side[0] * fw, G[1] - side[1] * fw, z];
-      const [, py] = screen([G[0], G[1], z]);
-      const [fx, fy] = screen(far);
-      const [bx] = screen([far[0], far[1], z - fw * aspect]);
-      return Math.min(py, fy, fx, bx);
-    };
+    const margin = Math.max(FLAG_MARGIN, vw * 0.03);
+    const box = { x0: margin, y0: margin, x1: vw - margin, y1: vh - FLAG_BAR_ROOM };
+    let pan: Vec3 = [...st.panT];
     let fw = MH * FLAG_WIDTH;
-    if (top(fw) < FLAG_MARGIN) {
-      let lo = MH * FLAG_NARROWEST;
-      let hi = fw;
-      for (let i = 0; i < 18; i += 1) {
-        const mid = (lo + hi) / 2;
-        if (top(mid) >= FLAG_MARGIN) lo = mid;
-        else hi = mid;
+    for (let pass = 0; pass < 4; pass += 1) {
+      const c = camera(1, st.yawT, st.tiltT, st.zoomT, pan);
+      const screen = (P: Vec3): [number, number] => {
+        const q = mulBy(c.vp, [P[0], P[1], P[2], 1]);
+        return q[3] > 0 ? [((q[0] / q[3]) * 0.5 + 0.5) * vw, ((-q[1] / q[3]) * 0.5 + 0.5) * vh] : [NaN, NaN];
+      };
+      // where the flag reaches on the screen, for a cloth `w` wide: the pole's foot and top, and the cloth's far corners
+      // given room to fly out a little further and droop
+      const reach = (w: number) => {
+        const h = w * aspect;
+        const pole = poleFor(h);
+        const top: Vec3 = [G[0] + up[0] * pole, G[1] + up[1] * pole, G[2] + up[2] * pole];
+        const far = (down: number): Vec3 => [top[0] - side[0] * w * 1.06 - up[0] * down, top[1] - side[1] * w * 1.06 - up[1] * down, top[2] - up[2] * down];
+        const pts = [G, top, far(-h * 0.06), far(h * 1.12)].map(screen);
+        const xs = pts.map((q) => q[0]);
+        const ys = pts.map((q) => q[1]);
+        return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+      };
+      const fits = (w: number) => {
+        const r = reach(w);
+        // it may be moved to the middle, so only its size has to fit: in part of the width, so the map still shows
+        return r.x1 - r.x0 <= (box.x1 - box.x0) * FLAG_ROOM[0] && r.y1 - r.y0 <= (box.y1 - box.y0) * FLAG_ROOM[1];
+      };
+      fw = MH * FLAG_WIDTH;
+      if (!fits(fw)) {
+        let lo = MH * FLAG_NARROWEST;
+        let hi = fw;
+        for (let i = 0; i < 18; i += 1) {
+          const mid = (lo + hi) / 2;
+          if (fits(mid)) lo = mid;
+          else hi = mid;
+        }
+        fw = lo;
       }
-      fw = lo;
+      // then the view is moved, at the flag's depth, so that the flag stands in the middle of the room it has
+      const r = reach(fw);
+      const dx = (r.x0 + r.x1) / 2 - (box.x0 + box.x1) / 2;
+      const dy = (r.y0 + r.y1) / 2 - (box.y0 + box.y1) / 2;
+      if (!Number.isFinite(dx) || !Number.isFinite(dy) || (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5)) break;
+      const mid: Vec3 = [G[0] - side[0] * fw * 0.5, G[1] - side[1] * fw * 0.5, G[2] + poleFor(fw * aspect) * 0.6];
+      const depth = Math.max(1, (mid[0] - c.eye[0]) * -c.dir[0] + (mid[1] - c.eye[1]) * -c.dir[1] + (mid[2] - c.eye[2]) * -c.dir[2]);
+      const perPx = (2 * depth * Math.tan(FOV / 2)) / vh;
+      pan = [0, 1, 2].map((i) => pan[i] + c.r[i] * dx * perPx - c.u[i] * dy * perPx) as Vec3;
     }
+    st.panT = pan;
     flagFw = fw;
     need();
   }
@@ -1093,11 +1171,18 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   /** Moves the flag on by `dt` and returns its pole, knob, cloth, and the mark it leaves on the ground. */
   function infoFrame(dt: number, lift: number): DrawItem[] {
     const items: DrawItem[] = [];
+    flagBlend.length = 0;
+    flagCasters = null;
     if (!info) return items;
-    // laid flat, the map takes the flag down with it
-    if (st.eT < 0.5 && info.phase !== 'pull') {
-      dropInfo();
-      return items;
+    // asked to lie flat, the map waits while the flag is pulled out, then lies down; flown over, the flag is pulled out
+    if (st.eT < 0.5 && !info.flatten) {
+      info.flatten = true;
+      pullInfo(true);
+    }
+    if (flight && info.phase !== 'pull') pullInfo(true);
+    if (info.flatten) {
+      if (info.phase === 'pull' && info.t < FLAG_PULL * 0.55) st.eT = 1;
+      else if (st.eT > 0.5) together();
     }
     if (!flagPiece || !flagPiece.w) return items;
     flagSteady = false;
@@ -1110,6 +1195,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (info.phase === 'drop' && info.t >= FLAG_FALL) {
       info.phase = 'stand';
       info.t = 0;
+      flagGustAt = wind + 5 + Math.random() * 4;
     }
     if (info.phase === 'pull' && info.t >= FLAG_PULL) {
       finishInfo();
@@ -1130,7 +1216,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const high = pole * 2.5 + vh;
     let off = 0;
     let tilt = 0;
-    let settle = 0;
     if (info.phase === 'drop') {
       const q = info.t / FLAG_FALL;
       off = high * (1 - q * q);
@@ -1139,17 +1224,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const s = info.t;
       off = -sink * smooth(s / 0.06);
       tilt = 0.1 * Math.exp(-5 * s) * Math.sin(16 * s);
-      settle = smooth(s / 1.2);
     } else {
-      const q = smooth(info.t / FLAG_PULL);
-      off = lerp(info.from, high, q * q);
-      settle = 1 - q;
+      // drawn out slowly at first, then away, so the cloth has time to fold in and trail below
+      const q = clamp(info.t / FLAG_PULL, 0, 1);
+      off = lerp(info.from, high, q ** 2.6);
     }
     info.off = off;
 
     const side = info.side;
-    const up: Vec3 = [side[0] * Math.sin(tilt), side[1] * Math.sin(tilt), Math.cos(tilt)];
-    const base: Vec3 = [G[0], G[1], G[2] + off];
+    const lean = FLAG_LEAN + tilt;
+    const up: Vec3 = [side[0] * Math.sin(lean), side[1] * Math.sin(lean), Math.cos(lean)];
+    const base: Vec3 = [G[0] + up[0] * off, G[1] + up[1] * off, G[2] + up[2] * off];
     const at = (k: number): Vec3 => [base[0] + up[0] * k, base[1] + up[1] * k, base[2] + up[2] * k];
     const top = at(pole);
     let toward: Vec3 = [cam.eye[0] - base[0], cam.eye[1] - base[1], 0];
@@ -1157,21 +1242,29 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     toward = [toward[0] / tl, toward[1] / tl, 0];
     const across: Vec3 = [-toward[1], toward[0], 0];
 
-    // the pole: lacquered wood, drawn as narrow strips turned round towards the camera so it reads as round and shines
-    // down one side; the part driven into the ground is hidden by the ground
+    // the pole: a cylinder of lacquered wood, round from every side, that shines down one side; the part driven into
+    // the ground is hidden by the ground, which it meets in a round
     const pr = pole * 0.011;
-    const STRIPS = 14;
-    for (let j = 0; j < STRIPS; j += 1) {
-      const a0 = -Math.PI / 2 + (Math.PI * j) / STRIPS;
-      const a1 = a0 + Math.PI / STRIPS;
-      const am = (a0 + a1) / 2;
+    const ra = (() => {
+      const c: Vec3 = [up[1] * side[2] - up[2] * side[1], up[2] * side[0] - up[0] * side[2], up[0] * side[1] - up[1] * side[0]];
+      const l = Math.hypot(c[0], c[1], c[2]) || 1;
+      return c.map((v) => v / l) as Vec3;
+    })();
+    const rb: Vec3 = [ra[1] * up[2] - ra[2] * up[1], ra[2] * up[0] - ra[0] * up[2], ra[0] * up[1] - ra[1] * up[0]];
+    const SIDES = 18;
+    const round = (a: number): Vec3 => [0, 1, 2].map((i) => ra[i] * Math.cos(a) + rb[i] * Math.sin(a)) as Vec3;
+    for (let j = 0; j < SIDES; j += 1) {
+      const a0 = (Math.PI * 2 * j) / SIDES;
+      const a1 = (Math.PI * 2 * (j + 1)) / SIDES;
+      const d0 = round(a0);
+      const d1 = round(a1);
       items.push({
         solid: [0.2, 0.13, 0.085],
         useNormal: true,
         spec: [0.7, 46],
-        nrm: [0, 1, 2].map((i) => toward[i] * Math.cos(am) + across[i] * Math.sin(am)) as Vec3,
-        O: [0, 1, 2].map((i) => base[i] + across[i] * pr * Math.sin(a0)) as Vec3,
-        ex: across.map((v) => v * pr * (Math.sin(a1) - Math.sin(a0))) as Vec3,
+        nrm: round((a0 + a1) / 2),
+        O: [0, 1, 2].map((i) => base[i] + d0[i] * pr) as Vec3,
+        ex: [0, 1, 2].map((i) => (d1[i] - d0[i]) * pr) as Vec3,
         ey: up.map((v) => v * pole) as Vec3,
       });
     }
@@ -1197,9 +1290,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const reach = off0 + fw * HOIST * 0.5;
     const hang = at(pole - kr * 0.5);
     const edge: Vec3 = [hang[0] - side[0] * off0, hang[1] - side[1] * off0, hang[2] - side[2] * off0];
-    flagPiece.O = [0, 1, 2].map((i) => edge[i] - side[i] * fw) as Vec3;
-    flagPiece.ex = side.map((v) => v * k) as Vec3;
-    flagPiece.ey = up.map((v) => -v * k) as Vec3;
     const perp: Vec3 = [up[1] * side[2] - up[2] * side[1], up[2] * side[0] - up[0] * side[2], up[0] * side[1] - up[1] * side[0]];
     const ringR = (reach + pr) / 2 + gr * k * 0.15;
     const tube = gr * k * 0.32;
@@ -1217,18 +1307,95 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         ey: perp.map((v) => v * 2 * ringR) as Vec3,
       });
     }
-    // it streams hard while it falls, then settles to flying in a breeze that comes and goes
-    const amp = fh * lerp(0.16, 0.095, settle) * (0.8 + 0.2 * Math.sin(wind * 0.7));
-    items.push(
-      quad(flagPiece, {
-        cloth: { amp, phase: wind * 3.4, waves: 2.8, px: [flagPiece.w, flagPiece.h], hoist: HOIST },
-      }),
-    );
+    // the cloth: simulated, hung from the pole by its hoist, in a breeze that comes and goes. Falling, the air streams it
+    // up along the pole; planted, it drops open and fills; pulled out, it trails below. None of that is scripted.
+    const NX = 40;
+    const NY = 27;
+    const restAt = (i: number, j: number): Vec3 =>
+      [0, 1, 2].map((a) => edge[a] - side[a] * (1 - i / (NX - 1)) * fw - up[a] * (j / (NY - 1)) * fh) as Vec3;
+    if (!flagCloth || Math.abs(flagClothFw - fw) > fw * 0.02) {
+      flagCloth = createCloth(NX, NY, fw, fh);
+      flagClothFw = fw;
+      layCloth(flagCloth, restAt);
+    }
+    flagCalm += ((flagHover && info.phase === 'stand' ? 1 : 0) - flagCalm) * (1 - Math.exp(-dt * 6));
+    const scale = fw / 1.5;
+    // the breeze is light high up, where it falls from, fills it once it is planted, and drops as it is drawn out, so the
+    // air of its own going is what shapes it then
+    const calm =
+      info.phase === 'drop' ? 0.25 : info.phase === 'stand' ? lerp(0.25, 1, smooth(info.t / 0.6)) : 1 - smooth(info.t / (FLAG_PULL * 0.5));
+    // now and then a gust catches it and flings it about, far enough to show its back; never with the pointer on it
+    if (info.phase === 'stand' && info.t > 2.5 && !flagHover && !flagGust && wind >= flagGustAt) {
+      flagGust = { t: 0, way: Math.random() < 0.5 ? -1 : 1 };
+    }
+    let blow = 0;
+    if (flagGust) {
+      flagGust.t += dt;
+      blow = Math.sin(Math.PI * clamp(flagGust.t / FLAG_GUST, 0, 1));
+      if (flagGust.t >= FLAG_GUST || flagHover) {
+        flagGust = null;
+        flagGustAt = wind + 7 + Math.random() * 8;
+      }
+    }
+    const breeze = 6 * scale * calm * (0.85 + 0.2 * Math.sin(wind * 0.6) + 0.08 * Math.sin(wind * 1.7)) * (1 + 0.7 * blow);
+    const cross = breeze * 1.1 * blow * (flagGust?.way ?? 1);
+    stepCloth(flagCloth, Math.min(dt, 1 / 30), {
+      pins: Array.from({ length: NY }, (_, j) => restAt(NX - 1, j)),
+      wind: [-side[0] * breeze + perp[0] * cross, -side[1] * breeze + perp[1] * cross, breeze * 0.25 * blow],
+      scale,
+      floor: (x, y) => groundAt(x, y, lift),
+      time: wind,
+      // once it has opened out it flies steadily enough to read: calmer gusts, and drawn gently towards flying open, its
+      // waves running out from the pole to the fly end
+      gust: info.phase === 'stand' ? lerp(1, 0.5, smooth((info.t - 0.5) / 1.2)) * (1 - 0.9 * flagCalm) + 1.6 * blow : 1,
+      shape: (i, j) => {
+        const f = 1 - i / (NX - 1);
+        const v = j / (NY - 1);
+        const s = f * FLAG_WAVES * Math.PI * 2 - wind * 3.4 + v * 1.1;
+        const w =
+          fh * FLAG_BILLOW * lerp(1, 0.07, flagCalm) * smooth(f / 0.3) * (0.3 + 0.7 * f) *
+          (0.6 * Math.sin(s) + 0.25 * Math.sin(s * 1.83 + v * 2.9 - wind * 0.37) + 0.1 * Math.sin(f * 21 - wind * 6.1 + v * 6.3));
+        const r = restAt(i, j);
+        return [r[0] + perp[0] * w, r[1] + perp[1] * w, r[2] + perp[2] * w];
+      },
+      hold: info.phase === 'stand' ? smooth((info.t - 0.7) / 1.3) * (1 + 1.5 * flagCalm) * (1 - 0.92 * blow) : 0,
+    });
+    flagMesh = clothVertices(flagCloth, flagMesh);
+    const restO = restAt(0, 0);
+    items.push({
+      tex: flagPiece.tex,
+      O: restO,
+      ex: side.map((v) => v * fw) as Vec3,
+      ey: up.map((v) => -v * fh) as Vec3,
+      cloth: { mesh: flagMesh, nx: NX, ny: NY, px: [flagPiece.w, flagPiece.h], hoist: HOIST },
+    });
+    // its links are taken to lie on the flat it is drawn back to; with the pointer on it, it calms down onto that flat
+    const fp = flagPiece;
+    // ...moved by however far the cloth actually stands off it across its lower part, where the links are
+    const P = flagCloth.pos;
+    const drift: Vec3 = [0, 0, 0];
+    let cells = 0;
+    for (let j = Math.floor(NY * 0.55); j < NY; j += 1) {
+      for (let i = 0; i < NX - 1; i += 1) {
+        const r = restAt(i, j);
+        const k = (j * NX + i) * 3;
+        for (let q = 0; q < 3; q += 1) drift[q] += P[k + q] - r[q];
+        cells += 1;
+      }
+    }
+    const glide = 1 - Math.exp(-dt * 8);
+    for (let q = 0; q < 3; q += 1) flagDrift[q] += (drift[q] / cells - flagDrift[q]) * glide;
+    fp.O = [0, 1, 2].map((q) => restO[q] + flagDrift[q]) as Vec3;
+    fp.ex = side.map((v) => (v * fw) / fp.w) as Vec3;
+    fp.ey = up.map((v) => (-v * fh) / fp.h) as Vec3;
 
-    // the mark it leaves where it went in
+    // its shadow: the cloth and the pole are drawn from the sun, and the ground under them looks itself up there
+    flagCasters = { cloth: { mesh: flagMesh, nx: NX, ny: NY }, quads: items.filter((it) => it.spec && !it.disc) };
+
+    // the mark it leaves where it went in: a soft darkening round the foot of the pole
     if (info.phase === 'stand') {
-      const R = pole * 0.09;
-      items.push({
+      const R = pole * 0.06;
+      flagBlend.push({
         O: [G[0] - toward[0] * R - across[0] * R, G[1] - toward[1] * R - across[1] * R, G[2] + 0.2],
         ex: across.map((v) => v * 2 * R) as Vec3,
         ey: toward.map((v) => v * 2 * R) as Vec3,
@@ -1237,7 +1404,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
 
     // its links take clicks once it flies steadily (placed after everything else, see placeFlag)
-    flagSteady = info.phase === 'stand' && settle > 0.5;
+    flagSteady = info.phase === 'stand' && info.t > 1.6;
     return items;
   }
 
@@ -2399,7 +2566,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     if (dodgePins(dt, 1 - smooth(st.e / 0.24))) moving = true;
     const flagItems = infoFrame(dt, lift);
-    if (info) moving = true;
+    // the flag keeps flying, but that alone is no reason to draw the rest of the picture coarser
+    const flying = !!info;
     for (const p of pieces) {
       if (p.kind === 'terrain' || p.kind === 'relief' || p.kind === 'detail' || p.kind === 'bar' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.hidden) continue;
       if (p.kind === 'pin' && pinCovered(p)) unplace(p);
@@ -2461,6 +2629,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     }
     const blend = contents.map((c) => q(c));
+    // the flag's shadows are laid over the ground
+    blend.push(...flagBlend);
     const dist = (p: Piece) => (p.anchor[0] - cam.eye[0]) ** 2 + (p.anchor[1] - cam.eye[1]) ** 2;
     for (const p of [...standing].sort((a, b) => dist(b) - dist(a))) blend.push(q(p));
     opaque.push(...flagItems);
@@ -2503,6 +2673,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       blend,
       hud: H.items,
       hudLight: lit,
+      casters: flagCasters,
       dpr: canvas.width / Math.max(1, vw),
     });
     frames += 1;
@@ -2514,7 +2685,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         slow = 0;
       }
     }
-    if (busy || wasBusy) need();
+    if (busy || wasBusy || flying) need();
     wasBusy = busy;
     // finer tiles belong to the model only; the flat page keeps the whole-map picture
     if (st.eT < 1) dropDetail();
@@ -2864,6 +3035,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.classList.add('turning');
   };
   const onPointerMove = (ev: PointerEvent) => {
+    flagHover = !!(ev.target as Element).closest?.('[data-piece="flag"]');
     if (!drag) {
       // in 3D the ground under the pointer reads out its height, and that contour lights up
       const t = ev.target as Element;
@@ -3094,6 +3266,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   page.addEventListener('pointerover', onOver);
   page.addEventListener('pointerout', onOut);
   const onLeave = () => {
+    flagHover = false;
     if (hover) setHover(null);
   };
   canvas.addEventListener('pointerleave', onLeave);
@@ -3167,6 +3340,21 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       },
       preview: { minutes: previewMinutes, day: previewDay, sunElevation: +light.elevation.toFixed(2) },
     }),
+    /** where the flag's cloth, at a point of its own (0 to 1 across from the fly end, and down), shows on the canvas */
+    flagToScreen(u: number, v: number) {
+      const c = flagCloth;
+      if (!c) return null;
+      const x = clamp(u, 0, 1) * (c.nx - 1);
+      const y = clamp(v, 0, 1) * (c.ny - 1);
+      const i = Math.min(c.nx - 2, Math.floor(x));
+      const j = Math.min(c.ny - 2, Math.floor(y));
+      const fx = x - i;
+      const fy = y - j;
+      const at = (a: number, b: number, q: number) => c.pos[(b * c.nx + a) * 3 + q];
+      const P = [0, 1, 2].map((q) => lerp(lerp(at(i, j, q), at(i + 1, j, q), fx), lerp(at(i, j + 1, q), at(i + 1, j + 1, q), fx), fy));
+      const q = mul([P[0], P[1], P[2], 1]);
+      return [((q[0] / q[3]) * 0.5 + 0.5) * vw, ((-q[1] / q[3]) * 0.5 + 0.5) * vh];
+    },
     /** where a map point (map px, on the ground) shows on the canvas */
     mapToScreen(mx: number, my: number) {
       const c = mul([MAPX + mx, MAPY + my, groundZ(mx, my, liftOf(st.e)), 1]);

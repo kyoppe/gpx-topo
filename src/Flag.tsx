@@ -51,7 +51,7 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
             <h3>ルートを読み込む</h3>
             <ul>
               <li>「GPX を開く」で手元の GPX ファイルを読み込む（最初はサンプルのコース）</li>
-              <li>GPX と PNG の保存は、バーのボタンから</li>
+              <li>カメラのボタンで、今の画面を PNG で保存</li>
             </ul>
             <h3>地図を見る</h3>
             <ul>
@@ -67,6 +67,7 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
               <li>「ウェイポイント追加」を押してルートをクリック、またはパネルに km を入れて「追加」</li>
               <li>パネルで名前と km を書き換え、× で削除</li>
               <li>スタート時刻、日付、各地点の目標時刻を押して変更</li>
+              <li>「日照」のスライダーで時刻を動かし、日の当たり方を見る</li>
               <li>番号を押すと、その地点の時刻の日照になる</li>
               <li>標高グラフの赤い点を動かすと、その位置と時刻に</li>
             </ul>
@@ -74,9 +75,23 @@ export function FlagContent({ brushes, twin = false }: { brushes: Brush[]; twin?
         </div>
         <div className="flag-foot">
           <p className="flag-author">
-            Author{' '}
-            <a href="https://x.com/kyouhei" target="_blank" rel="noreferrer">
-              @kyouhei
+            作った人：キョウヘイ
+            <a className="flag-icon" href="https://x.com/kyouhei" target="_blank" rel="noreferrer" aria-label="X" title="X">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M17.8 3h3.1l-6.8 7.7 8 10.3h-6.2l-4.9-6.3L5.4 21H2.3l7.3-8.3L2 3h6.4l4.4 5.8L17.8 3Zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5Z" />
+              </svg>
+            </a>
+            <a
+              className="flag-icon"
+              href="https://open.spotify.com/show/6rRIlgRDC7EasQW0qDI4DE?si=fe5bb5298dde4e27"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Podcast (Spotify)"
+              title="Podcast (Spotify)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.4-1.8-9-1a.6.6 0 1 1-.3-1.2c3.9-.9 7.2-.5 9.9 1.1.3.2.4.6.3.9Zm1.2-2.7a.8.8 0 0 1-1.1.3c-2.7-1.7-6.9-2.2-10.1-1.2a.8.8 0 1 1-.5-1.5c3.7-1.1 8.3-.6 11.4 1.3.4.2.5.7.3 1.1Zm.1-2.8C14.7 9 9.4 8.8 6.3 9.7a.9.9 0 1 1-.5-1.8c3.5-1.1 9.4-.9 13.1 1.3a.9.9 0 1 1-.9 1.6Z" />
+              </svg>
             </a>
           </p>
           <div>
