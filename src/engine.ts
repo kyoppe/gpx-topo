@@ -44,8 +44,9 @@ export type EngineCallbacks = {
   onTimeCommit(target: string, minutes: number): void;
   /** The picker marked `data-seq` finished folding away. */
   onPopClosed(seq: string): void;
-  onFlightChange(phase: 'intro' | 'run' | 'return' | null): void;
+  onFlightChange(phase: FlightPhase | null): void;
 };
+export type FlightPhase = 'intro' | 'run' | 'outro' | 'return';
 
 type Kind = 'sheet' | 'terrain' | 'relief' | 'detail' | 'card' | 'content' | 'pin' | 'bar' | 'key' | 'pop' | 'row';
 type Drum = {
@@ -96,13 +97,22 @@ type Piece = {
   /** cards: how far they have stepped aside to stay clear of each other on screen (world px along the camera's right and up) */
   dodge: [number, number];
 };
-type FlyPose = { e: number; yaw: number; tilt: number; zoom: number; pan: Vec3 };
+/** A camera about the point it looks at: which way it stands off (yaw, as `camera` turns), how high (rad above level), and how far (world px). */
+type Rig = { look: Vec3; yaw: number; pitch: number; dist: number };
 type Flight = {
-  phase: 'intro' | 'run' | 'return';
+  phase: FlightPhase;
   t: number;
-  saved: FlyPose & { km: number; kmT: number; sun: number | null };
-  current: FlyPose;
-  final: FlyPose | null;
+  saved: { e: number; yaw: number; tilt: number; zoom: number; pan: Vec3; km: number; kmT: number; sun: number | null };
+  /** the saved view as a rig, to fly from and back to */
+  home: Rig;
+  current: Rig;
+  /** where the phase under way set out from, and how far the page was raised then */
+  from: Rig;
+  fromE: number;
+  /** the way the chase camera faces, turned no faster than CHASE_TURN_MAX */
+  heading: number;
+  /** how far off the whole raised model is seen, against which the view counts as zoomed for pins and route lines */
+  fitD: number;
 };
 /** Where a flat piece stands: its corner, its edge directions, its normal, and its size. */
 type Frame = Pick<Piece, 'O' | 'ex' | 'ey' | 'nrm' | 'w' | 'h'>;
@@ -368,6 +378,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return [...cornersOf(p), mid].some(behindCard);
   }
 
+  /** Fill `m` with the view and projection for an eye with axes `r`, `u`, and `dir` (pointing back from the view to the eye). */
+  function viewProjection(m: Float32Array, eye: Vec3, r: Vec3, u: Vec3, dir: Vec3, near: number, far: number) {
+    const f = 1 / Math.tan(FOV / 2);
+    const asp = vw / vh;
+    const a = (far + near) / (near - far);
+    const b = (2 * far * near) / (near - far);
+    const V = [r, u, dir].map((ax) => [ax[0], ax[1], ax[2], -(ax[0] * eye[0] + ax[1] * eye[1] + ax[2] * eye[2])]);
+    const rows = [V[0].map((v) => (v * f) / asp), V[1].map((v) => v * f), V[2].map((v, i) => v * a + (i === 3 ? b : 0)), V[2].map((v) => -v)];
+    for (let c = 0; c < 4; c += 1) for (let ri = 0; ri < 4; ri += 1) m[c * 4 + ri] = rows[ri][c];
+  }
+
   // The camera for a pose: straight down when flat, the hero view when up; pulled back until the model fits.
   function camera(e: number, yawOff: number, tiltOff: number, zoom: number, pan: Vec3): Cam {
     const p = smooth(e / 0.5);
@@ -384,19 +405,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const dir: Vec3 = [Math.sin(tilt) * Math.sin(yaw), Math.sin(tilt) * Math.cos(yaw), Math.cos(tilt)];
     const r: Vec3 = [Math.cos(yaw), -Math.sin(yaw), 0];
     const u: Vec3 = [-Math.cos(tilt) * Math.sin(yaw), -Math.cos(tilt) * Math.cos(yaw), Math.sin(tilt)];
-    const f = 1 / Math.tan(FOV / 2);
-    const asp = vw / vh;
     const m = new Float32Array(16);
     let eye: Vec3 = [0, 0, 1];
     const build = (D: number, x: number, y: number, z: number) => {
       eye = [x + dir[0] * D, y + dir[1] * D, z + dir[2] * D];
-      const near = D * 0.1;
-      const far = D * 14;
-      const a = (far + near) / (near - far);
-      const b = (2 * far * near) / (near - far);
-      const V = [r, u, dir].map((ax) => [ax[0], ax[1], ax[2], -(ax[0] * eye[0] + ax[1] * eye[1] + ax[2] * eye[2])]);
-      const rows = [V[0].map((v) => (v * f) / asp), V[1].map((v) => v * f), V[2].map((v, i) => v * a + (i === 3 ? b : 0)), V[2].map((v) => -v)];
-      for (let c = 0; c < 4; c += 1) for (let ri = 0; ri < 4; ri += 1) m[c * 4 + ri] = rows[ri][c];
+      viewProjection(m, eye, r, u, dir, D * 0.1, D * 14);
     };
     let D = D0;
     if (p > 0.001) {
@@ -450,9 +463,23 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return { vp: m, eye, r, u, dir, base: [tx, ty, tz], yaw, D };
   }
 
-  const FLYOVER_INTRO = 4;
+  const FLYOVER_INTRO = 5;
   const FLYOVER_DURATION = 60;
+  const FLYOVER_OUTRO = 5;
   const FLYOVER_RETURN = 2.5;
+  /** The chase camera stays this far (m) from the point it looks at, and less on short routes (CHASE_SHARE of the route). */
+  const CHASE_DIST_M = 6000;
+  const CHASE_SHARE = 0.06;
+  const CHASE_PITCH = 0.26;
+  /** It looks this share of its distance ahead of the runner, so the runner sits low in the view with the way on above. */
+  const CHASE_LEAD = 0.2;
+  /** It keeps this high (m) over the ground, and over the line to the runner. */
+  const CHASE_CLEAR_M = 150;
+  /** It turns after the route at this rate (1/s), and never faster than CHASE_TURN_MAX (rad/s). */
+  const CHASE_TURN = 1.5;
+  const CHASE_TURN_MAX = 0.5;
+  /** Route lines are drawn as if zoomed this far while flying. */
+  const FLYOVER_STROKE_ZOOM = 3;
 
   function routeAt(km: number) {
     const route = model?.route ?? [];
@@ -473,36 +500,128 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), km: lerp(a.km, b.km, f), tx: tx / length, ty: ty / length };
   }
 
-  function flyPoseAt(km: number, zoom = 1.45, tilt = -0.22): FlyPose {
-    const point = routeAt(km);
-    const total = model?.route[model.route.length - 1]?.km ?? point.km;
-    const span = Math.min(2.2, Math.max(0.4, total * 0.018));
-    const before = routeAt(Math.max(model?.route[0]?.km ?? 0, km - span));
-    const after = routeAt(Math.min(total, km + span));
-    const tx = after.x - before.x;
-    const ty = after.y - before.y;
-    const length = Math.hypot(tx, ty) || 1;
-    const yaw = Math.atan2(-tx / length, -ty / length) - HERO.yaw;
-    const base = camera(1, yaw, tilt, zoom, [0, 0, 0]).base;
-    const target: Vec3 = [MAPX + point.x, MAPY + point.y, groundZ(point.x, point.y, liftOf(1))];
-    return { e: 1, yaw, tilt, zoom, pan: target.map((v, i) => v - base[i]) as Vec3 };
-  }
+  const wrapAngle = (d: number) => d - Math.PI * 2 * Math.round(d / (Math.PI * 2));
 
   function angleStep(from: number, to: number, amount: number) {
-    let d = to - from;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    return from + d * amount;
+    return from + wrapAngle(to - from) * amount;
   }
 
-  function blendFlyPose(from: FlyPose, to: FlyPose, amount: number): FlyPose {
+  function mixRig(a: Rig, b: Rig, s: number): Rig {
     return {
-      e: lerp(from.e, to.e, amount),
-      yaw: angleStep(from.yaw, to.yaw, amount),
-      tilt: lerp(from.tilt, to.tilt, amount),
-      zoom: Math.exp(lerp(Math.log(from.zoom), Math.log(to.zoom), amount)),
-      pan: from.pan.map((v, i) => lerp(v, to.pan[i], amount)) as Vec3,
+      look: a.look.map((v, i) => lerp(v, b.look[i], s)) as Vec3,
+      yaw: angleStep(a.yaw, b.yaw, s),
+      pitch: lerp(a.pitch, b.pitch, s),
+      dist: Math.exp(lerp(Math.log(a.dist), Math.log(b.dist), s)),
     };
+  }
+
+  const eyeOf = (g: Rig): Vec3 => {
+    const c = Math.cos(g.pitch);
+    return [g.look[0] + c * Math.sin(g.yaw) * g.dist, g.look[1] + c * Math.cos(g.yaw) * g.dist, g.look[2] + Math.sin(g.pitch) * g.dist];
+  };
+
+  function rigCam(g: Rig): Cam {
+    const c = Math.cos(g.pitch);
+    const dir: Vec3 = [c * Math.sin(g.yaw), c * Math.cos(g.yaw), Math.sin(g.pitch)];
+    const r: Vec3 = [Math.cos(g.yaw), -Math.sin(g.yaw), 0];
+    const u: Vec3 = [r[1] * dir[2] - r[2] * dir[1], r[2] * dir[0] - r[0] * dir[2], r[0] * dir[1] - r[1] * dir[0]];
+    const eye = eyeOf(g);
+    const m = new Float32Array(16);
+    // far enough for the whole model from wherever the eye is
+    viewProjection(m, eye, r, u, dir, g.dist * 0.1, Math.max(g.dist * 14, g.dist + Math.hypot(PW, PH) * 1.5));
+    return { vp: m, eye, r, u, dir, base: g.look, yaw: g.yaw, D: g.dist };
+  }
+
+  function rigOf(c: Cam): Rig {
+    return {
+      look: c.eye.map((v, i) => v - c.dir[i] * c.D) as Vec3,
+      yaw: c.yaw,
+      pitch: Math.asin(clamp(c.dir[2], -1, 1)),
+      dist: c.D,
+    };
+  }
+
+  /** World px per metre on the ground: from the terrain, or from the route's own length before it is in. */
+  function pxPerM() {
+    const k = perM();
+    if (k) return k;
+    const route = model?.route ?? [];
+    let px = 0;
+    for (let i = 1; i < route.length; i += 1) px += Math.hypot(route[i].x - route[i - 1].x, route[i].y - route[i - 1].y);
+    const m = ((route[route.length - 1]?.km ?? 0) - (route[0]?.km ?? 0)) * 1000;
+    return m > 0 ? px / m : 1;
+  }
+
+  function routeSpan() {
+    const route = model?.route ?? [];
+    return { start: route[0]?.km ?? 0, end: route[route.length - 1]?.km ?? 0 };
+  }
+
+  function chaseDist() {
+    const { start, end } = routeSpan();
+    return clamp((end - start) * 1000 * CHASE_SHARE, 600, CHASE_DIST_M) * pxPerM();
+  }
+
+  function groundAt(X: number, Y: number, lift: number): number {
+    return groundZ(clamp(X - MAPX, 0, MW), clamp(Y - MAPY, 0, MH), lift);
+  }
+
+  function runnerAt(km: number, lift: number): Vec3 {
+    const point = routeAt(km);
+    return [MAPX + point.x, MAPY + point.y, groundZ(point.x, point.y, lift)];
+  }
+
+  /** The yaw that stands the camera behind the runner, along the route's general way over a few km either side. */
+  function behindAt(km: number) {
+    const { start, end } = routeSpan();
+    const span = clamp((end - start) * 0.025, 0.2, 2.5);
+    const before = routeAt(Math.max(start, km - span));
+    const after = routeAt(Math.min(end, km + span));
+    const tx = after.x - before.x;
+    const ty = after.y - before.y;
+    if (Math.hypot(tx, ty) < 1e-6) return Math.atan2(-routeAt(km).tx, -routeAt(km).ty);
+    return Math.atan2(-tx, -ty);
+  }
+
+  /** The chase camera behind the runner `km` along, raised where the ground or a ridge would come between them. */
+  function chaseRig(km: number, yaw: number, lift: number, pull = 1, pitch = CHASE_PITCH): Rig {
+    const P = runnerAt(km, lift);
+    const dist = chaseDist() * pull;
+    const lead = dist * CHASE_LEAD;
+    const look: Vec3 = [P[0] - Math.sin(yaw) * lead, P[1] - Math.cos(yaw) * lead, P[2]];
+    const eye = eyeOf({ look, yaw, pitch, dist });
+    const clear = CHASE_CLEAR_M * pxPerM() * lift;
+    let raise = 0;
+    for (let k = 0; k < 10; k += 1) {
+      const s = k / 10;
+      const Q = [0, 1, 2].map((i) => lerp(eye[i], P[i], s));
+      raise = Math.max(raise, (groundAt(Q[0], Q[1], lift) + clear - Q[2]) / (1 - s));
+    }
+    if (raise <= 0) return { look, yaw, pitch, dist };
+    const flat = Math.hypot(eye[0] - look[0], eye[1] - look[1]);
+    const up = eye[2] + raise - look[2];
+    return { look, yaw, pitch: Math.atan2(up, flat), dist: Math.hypot(flat, up) };
+  }
+
+  /** A high view of the whole route, looking at its middle from `yaw`. */
+  function routeRig(yaw: number, pitch: number): Rig {
+    const route = model?.route ?? [];
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of route) {
+      x0 = Math.min(x0, p.x);
+      y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x);
+      y1 = Math.max(y1, p.y);
+    }
+    if (!route.length) x0 = y0 = x1 = y1 = 0;
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const half = Math.min(FOV / 2, Math.atan(Math.tan(FOV / 2) * (vw / vh)));
+    const dist = Math.max(chaseDist(), (Math.hypot(x1 - x0, y1 - y0) / 2 / Math.tan(half)) * 1.1);
+    return { look: [MAPX + cx, MAPY + cy, groundZ(cx, cy, liftOf(1))], yaw, pitch, dist };
   }
 
   function setFlightRoute(km: number) {
@@ -546,76 +665,79 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onFlightChange(null);
   }
 
+  function enterPhase(phase: FlightPhase) {
+    if (!flight) return;
+    flight.phase = phase;
+    flight.t = 0;
+    flight.from = flight.current;
+    flight.fromE = st.e;
+    callbacks.onFlightChange(phase);
+  }
+
   function returnFromFlight() {
     if (!flight || flight.phase === 'return') return;
-    flight.phase = 'return';
-    flight.t = 0;
-    flight.final ??= flight.current;
-    callbacks.onFlightChange('return');
+    enterPhase('return');
     need();
   }
 
-  function advanceFlight(dt: number): FlyPose | null {
+  function holdRaised(e: number) {
+    st.e = e;
+    st.eT = e;
+    st.ev = 0;
+  }
+
+  // Intro: from the view as it was, out high behind the start, then down in on the runner.
+  // Run: chase the runner from behind and above. Outro: swing round the runner at the finish, then rise over the whole route.
+  function advanceFlight(dt: number): Rig | null {
     if (!flight || !model?.route.length) return null;
     flight.t += dt;
+    const { start, end } = routeSpan();
     if (flight.phase === 'intro') {
-      const start = model.route[0].km;
-      const approach = flyPoseAt(start, 0.52, -0.06);
-      const chase = flyPoseAt(start);
-      const q = smooth(clamp(flight.t / FLYOVER_INTRO, 0, 1));
-      const pose =
-        q < 0.35
-          ? blendFlyPose(flight.saved, approach, smooth(q / 0.35))
-          : blendFlyPose(approach, chase, smooth((q - 0.35) / 0.65));
-      st.e = pose.e;
-      st.eT = pose.e;
-      st.ev = 0;
-      flight.current = pose;
-      if (q >= 1) {
-        flight.phase = 'run';
-        flight.t = 0;
-        callbacks.onFlightChange('run');
-        setFlightRoute(start);
-      }
-      return pose;
+      const q = clamp(flight.t / FLYOVER_INTRO, 0, 1);
+      holdRaised(lerp(flight.fromE, 1, smooth(q / 0.4)));
+      const lift = liftOf(st.e);
+      const yaw = flight.heading;
+      const chase = chaseRig(start, yaw, lift);
+      const wide: Rig = { look: runnerAt(start, lift), yaw, pitch: 0.75, dist: chase.dist * 5 };
+      flight.current = q < 0.4 ? mixRig(flight.from, wide, smooth(q / 0.4)) : mixRig(wide, chase, smooth((q - 0.4) / 0.6));
+      if (q >= 1) enterPhase('run');
+      return flight.current;
     }
     if (flight.phase === 'run') {
-      st.e = 1;
-      st.eT = 1;
-      st.ev = 0;
-      const total = model.route[model.route.length - 1].km;
+      holdRaised(1);
       const q = clamp(flight.t / FLYOVER_DURATION, 0, 1);
-      const km = lerp(model.route[0].km, total, smooth(q));
-      const target = flyPoseAt(km);
-      const pose = blendFlyPose(flight.current, target, 1 - Math.exp(-dt * 5));
+      const km = lerp(start, end, smooth(q));
+      const want = wrapAngle(behindAt(km) - flight.heading);
+      flight.heading += clamp(want * (1 - Math.exp(-dt * CHASE_TURN)), -CHASE_TURN_MAX * dt, CHASE_TURN_MAX * dt);
+      // closing on the finish, the camera comes in lower
+      const close = smooth((q - 0.88) / 0.12);
+      const target = chaseRig(km, flight.heading, liftOf(1), lerp(1, 0.65, close), lerp(CHASE_PITCH, CHASE_PITCH * 0.8, close));
+      // a ridge lifts the camera at once and lets it down slowly
+      const cur = flight.current;
+      const rate = 1 - Math.exp(-dt * (target.pitch > cur.pitch ? 8 : 1.5));
+      flight.current = { ...target, pitch: lerp(cur.pitch, target.pitch, rate), dist: Math.exp(lerp(Math.log(cur.dist), Math.log(target.dist), rate)) };
       setFlightRoute(km);
-      flight.current = pose;
-      if (q >= 1) {
-        flight.phase = 'return';
-        flight.t = 0;
-        flight.final = pose;
-        callbacks.onFlightChange('return');
-      }
-      return pose;
+      if (q >= 1) enterPhase('outro');
+      return flight.current;
     }
-    const from = flight.final ?? flight.current;
+    if (flight.phase === 'outro') {
+      holdRaised(1);
+      const q = clamp(flight.t / FLYOVER_OUTRO, 0, 1);
+      const from = flight.from;
+      const round: Rig = { look: runnerAt(end, liftOf(1)), yaw: from.yaw + 1.9, pitch: 0.32, dist: from.dist * 0.8 };
+      const high = routeRig(round.yaw + 0.35, 0.8);
+      flight.current = q < 0.4 ? mixRig(from, round, smooth(q / 0.4)) : mixRig(round, high, smooth((q - 0.4) / 0.4));
+      if (q >= 1) enterPhase('return');
+      return flight.current;
+    }
     const q = smooth(clamp(flight.t / FLYOVER_RETURN, 0, 1));
-    const saved = flight.saved;
-    const pose: FlyPose = {
-      e: lerp(from.e, saved.e, q),
-      yaw: lerp(from.yaw, saved.yaw, q),
-      tilt: lerp(from.tilt, saved.tilt, q),
-      zoom: Math.exp(lerp(Math.log(from.zoom), Math.log(saved.zoom), q)),
-      pan: from.pan.map((v, i) => lerp(v, saved.pan[i], q)) as Vec3,
-    };
-    st.e = pose.e;
-    st.eT = pose.e;
-    st.ev = 0;
+    holdRaised(lerp(flight.fromE, flight.saved.e, q));
     if (q >= 1) {
       restoreFlight();
-      return { e: saved.e, yaw: saved.yaw, tilt: saved.tilt, zoom: saved.zoom, pan: [...saved.pan] };
+      return null;
     }
-    return pose;
+    flight.current = mixRig(flight.from, flight.home, q);
+    return flight.current;
   }
 
   function flyover() {
@@ -624,6 +746,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       returnFromFlight();
       return;
     }
+    const home = rigOf(camera(st.e, st.yaw, st.tilt, st.zoom, st.pan));
     flight = {
       phase: 'intro',
       t: 0,
@@ -637,12 +760,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         kmT: st.kmT,
         sun: Number(sunEl.value),
       },
-      current: { e: st.e, yaw: st.yaw, tilt: st.tilt, zoom: st.zoom, pan: [...st.pan] },
-      final: null,
+      home,
+      current: home,
+      from: home,
+      fromE: st.e,
+      heading: behindAt(routeSpan().start),
+      fitD: camera(1, 0, 0, 1, [0, 0, 0]).D,
     };
     st.eT = 1;
     st.bouncy = false;
-    setFlightRoute(model.route[0].km);
+    setFlightRoute(routeSpan().start);
     callbacks.onFlightChange('intro');
     need();
   }
@@ -1487,8 +1614,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let needN = 0;
   let routeStrokeZoom = 0;
 
-  function updateRouteStrokeZoom() {
-    const zoom = Math.max(1, st.zoom);
+  function updateRouteStrokeZoom(viewZoom: number) {
+    const zoom = Math.max(1, viewZoom);
     if (routeStrokeZoom > 0 && Math.abs(Math.log(zoom / routeStrokeZoom)) < 0.02) return;
     routeStrokeZoom = zoom;
     page.style.setProperty('--route-casing-width', String(Math.max(1.2, 5.6 / zoom ** 0.75)));
@@ -1533,7 +1660,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       st.zoom = st.zoomT;
       st.pan = [...st.panT];
     }
-    updateRouteStrokeZoom();
+    // flying, the lines are drawn once rather than again as the camera closes in: thin enough for the chase, still seen from high
+    updateRouteStrokeZoom(flight ? Math.min(FLYOVER_STROKE_ZOOM, flight.fitD / chaseDist()) : st.zoom);
     if (st.sunT != null && sunEl) {
       // the clock is wound to a waypoint's target time
       const cur = Number(sunEl.value);
@@ -1562,7 +1690,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (flight || flyPose) moving = true;
     const lift = liftOf(st.e);
     const lit = 0.78 * smooth(st.e / 0.4);
-    cam = flyPose ? camera(flyPose.e, flyPose.yaw, flyPose.tilt, flyPose.zoom, flyPose.pan) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
+    cam = flyPose ? rigCam(flyPose) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
     const camRight = cam.r;
     const fixedPanel = flight
       ? (() => {
@@ -1576,7 +1704,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         })()
       : null;
     // pins grow on screen as the view zooms in, slower than the map so they do not cover it
-    const shrink = 1 / Math.pow(st.zoom, 0.5);
+    const shrink = 1 / Math.pow(flight ? Math.max(1, flight.fitD / cam.D) : st.zoom, 0.5);
 
     // where everything is
     const EPS = 0.03;

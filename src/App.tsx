@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { renderBasemaps, streamRelief, type MapStyle } from './basemap';
 import { gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
-import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel } from './engine';
+import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
 import { calculateStats, parseGpx, serializeGpx, type GpxRoute } from './gpx';
 import { createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
@@ -218,7 +218,7 @@ export default function App() {
   const [addKm, setAddKm] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [detailWanted, setDetailWanted] = useState<DetailRequest | null>(null);
-  const [flyoverPhase, setFlyoverPhase] = useState<'intro' | 'run' | 'return' | null>(null);
+  const [flyoverPhase, setFlyoverPhase] = useState<FlightPhase | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
   const [month, setMonth] = useState(() => todayIso().slice(0, 7));
   const [peek, setPeek] = useState<string | null>(null);
@@ -722,7 +722,7 @@ export default function App() {
   if (!native) return <Fallback />;
 
   const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, 630));
-  const flyoverPlaying = flyoverPhase === 'intro' || flyoverPhase === 'run';
+  const flyoverPlaying = flyoverPhase === 'intro' || flyoverPhase === 'run' || flyoverPhase === 'outro';
   const flyoverReturning = flyoverPhase === 'return';
   const photoRouteOverlay = baseMapStyle === 'photo' && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
