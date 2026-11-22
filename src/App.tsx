@@ -888,7 +888,7 @@ export default function App() {
                 <div className="in in-ways" data-piece="content" drawable="">
                   <div className="row">
                     <span className="label">ウェイポイント</span>
-                    <small data-selectable="">番号を押すとその時刻の光になります</small>
+                    {apart && <small data-selectable="">番号を押すとその時刻の日照になります</small>}
                   </div>
                   <form
                     className="way-add"
