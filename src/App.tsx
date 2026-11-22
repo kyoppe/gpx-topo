@@ -477,7 +477,11 @@ export default function App() {
     if (spot) editWay(id, spot);
   };
   const removeWay = (id: string) => {
-    setRoute((current) => current && { ...current, waypoints: current.waypoints.filter((w) => w.id !== id || w.fixed) });
+    setRoute((current) => {
+      if (!current) return current;
+      const waypoints = current.waypoints.filter((waypoint) => waypoint.id !== id || waypoint.fixed);
+      return ensureWaypoints({ ...current, waypoints });
+    });
     setOverrides((current) => {
       const next = { ...current };
       delete next[id];
@@ -993,9 +997,7 @@ export default function App() {
                           {elapsedInput(startMinutes, way.minutes)}
                         </button>
                         {way.fixed ? (
-                          <span className="way-fixed" aria-label={`${way.name} は削除できません`}>
-                            固定
-                          </span>
+                          <span className="way-fixed" aria-hidden="true" />
                         ) : (
                           <button type="button" className="way-del" aria-label={`${way.name} を削除`} onClick={() => removeWay(way.id)}>
                             ×
@@ -1109,6 +1111,7 @@ export default function App() {
                     >
                       <div className="pop-head">
                         <strong>{pop.label}</strong>
+                        <small>{pop.target === 'start' ? '開始時刻' : 'スタートからの経過時間'}</small>
                         <small>
                           日の出 {daylight?.rise != null ? formatClock(daylight.rise) : '-'} · 日の入{' '}
                           {daylight?.set != null ? formatClock(daylight.set) : '-'}
@@ -1120,7 +1123,7 @@ export default function App() {
                         <span className="drum-slot" data-drum-slot="m" />
                       </div>
                       <div className="pop-foot">
-                        <small>ドラッグ・ホイール・数字キー</small>
+                        <small>{pop.target === 'start' ? 'ドラッグ・ホイール・数字キー (HHMM)' : 'ドラッグ・ホイール・数字キー (HHHMM)'}</small>
                         <button type="button" className="pop-btn" onClick={() => engineRef.current?.closePop(false)}>
                           取消
                         </button>

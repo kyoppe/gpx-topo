@@ -1177,11 +1177,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let popGone = 0;
   let popGoneFor = '';
   const mod = (a: number, n: number) => ((a % n) + n) % n;
+  const boundedDrumValue = (p: Pop, d: Drum, value: number) =>
+    p.target !== 'start' && d.name === 'h' ? clamp(value, 0, d.n - 1) : value;
   const popValueMinutes = (p: Pop, live = false) => {
     const [h, m] = p.drums;
     if (!h || !m) return 0;
     const duration = p.target !== 'start';
-    const hours = live ? h.v : h.vT;
+    const hours = boundedDrumValue(p, h, live ? h.v : h.vT);
     const minutes = live ? m.v : m.vT;
     return (duration ? Math.max(0, hours) : mod(hours, 24)) * 60 + mod(minutes, 60);
   };
@@ -1218,7 +1220,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const duration = el.dataset.target !== 'start';
       const minutes = duration ? Math.max(0, Math.round(Number(el.dataset.value) || 0)) : mod(Math.round(Number(el.dataset.value) || 0), 1440);
       const spec: [string, number, number][] = [
-        ['h', duration ? 100 : 24, Math.floor(minutes / 60)],
+        ['h', duration ? 1000 : 24, Math.floor(minutes / 60)],
         ['m', 60, minutes % 60],
       ];
       for (const [name, n, v] of spec) {
@@ -1437,20 +1439,23 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (pop.kind !== 'time') return false;
     const d = pop.drums[pop.focus];
     if (ev.key === 'Enter') closePop(true);
-    else if (ev.key === 'ArrowUp') d.vT = Math.round(d.vT) - 1;
-    else if (ev.key === 'ArrowDown') d.vT = Math.round(d.vT) + 1;
+    else if (ev.key === 'ArrowUp') d.vT = boundedDrumValue(pop, d, Math.round(d.vT) - 1);
+    else if (ev.key === 'ArrowDown') d.vT = boundedDrumValue(pop, d, Math.round(d.vT) + 1);
     else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'Tab') setFocus(pop.focus ? 0 : 1);
     else if (/^\d$/.test(ev.key)) {
-      // type the time: two digits for the hour, two for the minute
-      pop.typed = (pop.typed + ev.key).slice(-4);
+      // Type a clock time as HHMM, or an elapsed duration as HHHMM.
+      const duration = pop.target !== 'start';
+      pop.typed = (pop.typed + ev.key).slice(-(duration ? 5 : 4));
       const [h, m] = pop.drums;
-      const nearest = (dr: Drum, value: number) => Math.round(dr.vT) + ((((value - Math.round(dr.vT)) % dr.n) + dr.n + dr.n / 2) % dr.n) - dr.n / 2;
-      if (pop.typed.length >= 2 && pop.typed.length < 4) {
-        h.vT = nearest(h, Math.min(h.n - 1, Number(pop.typed.slice(0, 2))));
-        setFocus(1);
-      }
-      if (pop.typed.length === 4) {
-        m.vT = nearest(m, Math.min(59, Number(pop.typed.slice(2))));
+      const nearest = (dr: Drum, value: number) =>
+        duration && dr.name === 'h'
+          ? value
+          : Math.round(dr.vT) + ((((value - Math.round(dr.vT)) % dr.n) + dr.n + dr.n / 2) % dr.n) - dr.n / 2;
+      const complete = duration ? pop.typed.length === 5 : pop.typed.length === 4;
+      if (complete) {
+        const split = duration ? 3 : 2;
+        h.vT = boundedDrumValue(pop, h, nearest(h, Math.min(h.n - 1, Number(pop.typed.slice(0, split)))));
+        m.vT = nearest(m, Math.min(59, Number(pop.typed.slice(split))));
         pop.typed = '';
       }
     } else return false;
@@ -2119,7 +2124,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const dy = ev.clientY - drumDrag.y0;
       drumDrag.moved = Math.max(drumDrag.moved, Math.abs(dy));
       d.v = drumDrag.v0 - dy / d.rowPx;
-      d.vT = d.v;
+      d.vT = boundedDrumValue(pop!, d, d.v);
       const now = performance.now();
       const dts = (now - drumDrag.lastT) / 1000;
       if (dts > 0) drumDrag.vel = drumDrag.vel * 0.6 + (0.4 * -(ev.clientY - drumDrag.lastY)) / d.rowPx / dts;
@@ -2163,8 +2168,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (was === 'drum' && drumDrag) {
       const d = drumDrag.drum;
       // a click picks the row; a flick keeps it turning a little
-      if (drumDrag.moved < 4 && drumDrag.row) d.vT = drumDrag.row.order;
-      else d.vT = Math.round(d.v + clamp(drumDrag.vel, -40, 40) * 0.12);
+      if (drumDrag.moved < 4 && drumDrag.row) d.vT = boundedDrumValue(pop!, d, drumDrag.row.order);
+      else d.vT = boundedDrumValue(pop!, d, Math.round(d.v + clamp(drumDrag.vel, -40, 40) * 0.12));
       if (pop) setFocus(pop.drums.indexOf(d));
       drumDrag = null;
       need();
@@ -2210,7 +2215,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const steps = Math.trunc(wheelAcc / 40);
       if (steps) {
         wheelAcc -= steps * 40;
-        drum.vT = Math.round(drum.vT) + steps;
+        drum.vT = boundedDrumValue(pop, drum, Math.round(drum.vT) + steps);
         setFocus(pop.drums.indexOf(drum));
         need();
       }

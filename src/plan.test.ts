@@ -76,7 +76,24 @@ describe('default waypoints', () => {
       ],
     });
     expect(route.waypoints.map((w) => w.name)).toEqual(['出発', '到着']);
-    expect(route.waypoints.every((w) => w.fixed)).toBe(true);
+    expect(route.waypoints.every((w) => !w.fixed)).toBe(true);
+  });
+
+  it('restores an automatic endpoint after an existing endpoint waypoint is removed', () => {
+    const route = ensureWaypoints({
+      ...bare,
+      waypoints: [
+        { id: 'start', name: '出発', ...points[0] },
+        { id: 'finish', name: '到着', ...points.at(-1)! },
+      ],
+    });
+    const afterDelete = ensureWaypoints({
+      ...route,
+      waypoints: route.waypoints.filter((waypoint) => waypoint.id !== 'start'),
+    });
+    expect(afterDelete.waypoints.map((w) => w.name)).toEqual(['到着', 'Start']);
+    expect(afterDelete.waypoints.find((w) => w.name === 'Start')?.fixed).toBe(true);
+    expect(afterDelete.waypoints.find((w) => w.name === '到着')?.fixed).toBe(false);
   });
 });
 

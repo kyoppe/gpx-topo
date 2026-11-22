@@ -15,7 +15,7 @@ export type Waypoint = {
   targetTime?: string;
   /** Distance along the route (km) of a waypoint placed on it; changing it moves the waypoint along the route. */
   km?: number;
-  /** Start and finish waypoints are required and cannot be deleted. */
+  /** Automatically added endpoint waypoints cannot be deleted; imported endpoints can be removed. */
   fixed?: boolean;
 };
 

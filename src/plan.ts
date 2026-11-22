@@ -90,7 +90,7 @@ function waypointKm(waypoint: Waypoint, points: readonly TrackPoint[], km: Array
   return km[nearestTrackIndex(points, waypoint.lat, waypoint.lon)];
 }
 
-/** Keep user waypoints, add only missing endpoints, and mark both endpoints as non-deletable. */
+/** Keep user waypoints, add only missing endpoints, and make only automatic endpoints non-deletable. */
 export function ensureWaypoints(route: GpxRoute): GpxRoute {
   if (!route.waypoints.length) return { ...route, waypoints: defaultWaypoints(route.points) };
   const { km } = trackProgress(route.points);
@@ -102,8 +102,7 @@ export function ensureWaypoints(route: GpxRoute): GpxRoute {
     fixed: true,
   });
   const waypoints = route.waypoints.map((waypoint) => {
-    const d = waypointKm(waypoint, route.points, km);
-    return { ...waypoint, fixed: waypoint.fixed || d <= ENDPOINT_TOLERANCE_KM || total - d <= ENDPOINT_TOLERANCE_KM };
+    return { ...waypoint, fixed: waypoint.fixed ?? false };
   });
   const additions: Waypoint[] = [];
   if (!waypoints.some((waypoint) => waypointKm(waypoint, route.points, km) <= ENDPOINT_TOLERANCE_KM)) additions.push(at('auto-start', 'Start', 0));
