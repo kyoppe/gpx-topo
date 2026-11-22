@@ -139,9 +139,18 @@ const FOV = 0.5;
 /** The model stands on a plinth this many px thick. */
 const PLINTH = 6;
 const ZOOM_MIN = 1;
+/** How far the zoom goes on a model without terrain; with terrain it goes in until the camera is ZOOM_NEAR_M away. */
 const ZOOM_MAX = 8;
-/** Closing in, the camera stands up by this share of its tilt at ZOOM_MAX, so it looks down on the ground rather than across the model's sides. */
+const ZOOM_NEAR_M = 400;
+/** The camera tilts down to just above level (rad from straight down). */
+const TILT_MAX = 1.45;
+/**
+ * Closing in, the camera stands up by this share of the hero tilt by ZOOM_MAX, so it looks down on the ground rather
+ * than across the model's sides. Only the hero tilt: whatever the viewer has tilted it by on top stays.
+ */
 const ZOOM_STAND = 0.45;
+/** The camera keeps this far (m) above the ground under it, however low it is tilted. */
+const CAMERA_CLEAR_M = 40;
 /** Cards turn with the map until their lower edge leans this far on screen (rad), then hold. */
 const CARD_LEAN_MAX = (20 * Math.PI) / 180;
 /** Within this much (rad) of the map's half turn, cards swing level and over to the other side rather than jump across. */
@@ -530,14 +539,26 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     for (let c = 0; c < 4; c += 1) for (let ri = 0; ri < 4; ri += 1) m[c * 4 + ri] = rows[ri][c];
   }
 
+  /** How much of the hero tilt is left at a zoom: the camera stands up as it closes in. */
+  function standOf(zoom: number) {
+    return 1 - ZOOM_STAND * clamp(Math.log(zoom) / Math.log(ZOOM_MAX), 0, 1);
+  }
+
+  /** How far the view may zoom in from here: until the camera is ZOOM_NEAR_M from what it looks at. */
+  function zoomCap() {
+    const k = perM();
+    if (!k) return ZOOM_MAX;
+    const fitD = camera(st.eT, st.yawT, st.tiltT, 1, st.panT).D;
+    return Math.max(ZOOM_MAX, fitD / (ZOOM_NEAR_M * k));
+  }
+
   // The camera for a pose: straight down when flat, the hero view when up; pulled back until the model fits.
   function camera(e: number, yawOff: number, tiltOff: number, zoom: number, pan: Vec3): Cam {
     const p = smooth(e / 0.5);
     const lift = liftOf(e);
     const top = topZ(lift);
     const yaw = (HERO.yaw + yawOff) * p;
-    const stand = 1 - ZOOM_STAND * clamp(Math.log(zoom) / Math.log(ZOOM_MAX), 0, 1);
-    const tilt = clamp(HERO.tilt + tiltOff, 0.02, 1.48) * p * stand;
+    const tilt = clamp(HERO.tilt * standOf(zoom) + tiltOff, 0.02, TILT_MAX) * p;
     const fit = Math.min((vw - FRAME_X) / PW, (vh - FRAME_Y) / PH, 1.3);
     const D0 = vh / 2 / Math.tan(FOV / 2) / fit;
     let tx = lerp(PW / 2, PW / 2 - 10, p);
@@ -550,7 +571,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     let eye: Vec3 = [0, 0, 1];
     const build = (D: number, x: number, y: number, z: number) => {
       eye = [x + dir[0] * D, y + dir[1] * D, z + dir[2] * D];
-      viewProjection(m, eye, r, u, dir, D * 0.1, D * 14);
+      // far enough for the whole model even from low down and close in, and for the table to have faded into the
+      // background by the time it is cut off
+      viewProjection(m, eye, r, u, dir, D * 0.05, Math.max(D * 14, D + Math.hypot(PW, PH) * 1.5, 12000));
     };
     let D = D0;
     if (p > 0.001) {
@@ -688,13 +711,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   /** Keep the current Flyover rig when manual input takes over the 3D view. */
   function adoptRig(g: Rig) {
     const yaw = wrapAngle(g.yaw - HERO.yaw);
+    // the rig's tilt from straight down, less what the zoom stands the hero tilt up by
+    const want = clamp(Math.PI / 2 - g.pitch, 0.02, TILT_MAX);
     let zoom = 1;
-    let tilt = g.pitch - HERO.tilt;
+    let tilt = want - HERO.tilt;
     for (let i = 0; i < 5; i += 1) {
-      const stand = 1 - ZOOM_STAND * clamp(Math.log(zoom) / Math.log(ZOOM_MAX), 0, 1);
-      tilt = clamp(g.pitch / Math.max(0.2, stand) - HERO.tilt, -HERO.tilt + 0.02, 1.48 / Math.max(0.2, stand) - HERO.tilt);
+      tilt = want - HERO.tilt * standOf(zoom);
       const c = camera(1, yaw, tilt, zoom, [0, 0, 0]);
-      zoom = clamp(zoom * (c.D / Math.max(1, g.dist)), ZOOM_MIN, ZOOM_MAX);
+      zoom = clamp(zoom * (c.D / Math.max(1, g.dist)), ZOOM_MIN, Math.max(ZOOM_MAX, zoom * 4));
     }
     const c = camera(1, yaw, tilt, zoom, [0, 0, 0]);
     st.e = st.eT = 1;
@@ -2943,6 +2967,18 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (st.eT > 0.5) together();
     else apart(1, true);
   }
+  /** Stands the camera up rather than let it go into the ground under it. */
+  function keepAboveGround() {
+    const k = perM();
+    if (!k || st.eT < 0.5) return;
+    for (let it = 0; it < 24; it += 1) {
+      const c = targetCam();
+      const g = groundAt(c.eye[0], c.eye[1], 1) + CAMERA_CLEAR_M * k;
+      if (c.eye[2] >= g || st.tiltT <= 0.12 - HERO.tilt * standOf(st.zoomT)) return;
+      st.tiltT -= 0.02;
+    }
+  }
+
   function clampPan() {
     const b = targetCam().base;
     st.panT[0] = clamp(st.panT[0], -b[0], PW - b[0]);
@@ -3022,6 +3058,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     px = ev.clientX;
     py = ev.clientY;
     downOnMap = onTerrain(t);
+    // laid flat, the page stays where it is: only the model is moved about
+    if ((panning || ev.shiftKey) && st.eT < 0.5) return;
     drag = panning || ev.shiftKey ? 'pan' : 'turn';
     panFrom = null;
     if (drag === 'pan') {
@@ -3092,7 +3130,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     if (moved > 4 && st.eT < 0.5) apart(1);
     st.yawT -= dx * 0.0055;
-    st.tiltT = clamp(st.tiltT - dy * 0.0045, -HERO.tilt + 0.12, 1.32 - HERO.tilt);
+    // down to straight down, and up to just above level; never into the ground
+    const hero = HERO.tilt * standOf(st.zoomT);
+    st.tiltT = clamp(st.tiltT - dy * 0.0045, 0.12 - hero, TILT_MAX - hero);
+    keepAboveGround();
     need();
   };
   const onPointerUp = (ev: PointerEvent) => {
@@ -3126,11 +3167,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   // the right button moves the model, so the browser's menu stays shut except over a field being typed in
-  const onContextMenu = (ev: Event) => {
-    const t = ev.target as Element;
-    if (t !== canvas && t.closest?.(EDITABLE)) return;
-    ev.preventDefault();
-  };
   // The wheel raises the flat page into the model as far as it is turned, and a page left part way up
   // stays there; risen, it zooms toward the point under the pointer; zoomed all the way out, it lowers
   // the model back to the page.
@@ -3183,7 +3219,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       return;
     }
     const z0 = st.zoomT;
-    const z1 = clamp(z0 * Math.exp(-dy * rate), ZOOM_MIN, ZOOM_MAX);
+    const z1 = clamp(z0 * Math.exp(-dy * rate), ZOOM_MIN, Math.max(z0, zoomCap()));
     if (Math.abs(z1 - z0) < 1e-6) return;
     const tc = targetCam();
     const [sx, sy] = canvasPoint(ev);
@@ -3206,6 +3242,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     if (z1 <= ZOOM_MIN + 1e-6) st.panT = [0, 0, 0];
     clampPan();
+    keepAboveGround();
     setHover(null);
     need();
   };
@@ -3230,7 +3267,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
-  window.addEventListener('contextmenu', onContextMenu, true);
   canvas.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('keydown', onKey);
 
@@ -3395,7 +3431,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.removeEventListener('pointermove', onPointerMove);
     canvas.removeEventListener('pointerup', onPointerUp);
     canvas.removeEventListener('pointercancel', onPointerUp);
-    window.removeEventListener('contextmenu', onContextMenu, true);
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('pointerleave', onLeave);
     window.removeEventListener('keydown', onKey);

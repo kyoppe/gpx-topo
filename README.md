@@ -20,7 +20,7 @@ The bundled `SFMT2026-110km.gpx` fixture loads first, on the flat map. `GPX を�
 | --- | --- |
 | `起こす` / `寝かす` | Raise the map into the 3D model, or put it back |
 | Drag | Turn the model; on the flat map this raises it too, as many times round as you like (the side panel turns with it until it leans 20 degrees on screen, then holds there, and swings level and over to the other side as the map passes half a turn; its cards step aside rather than cover each other, and run off the edge of the view rather than being drawn in over the map). Going back to the plain view turns the short way |
-| Right drag, middle drag, or Shift + drag | Move the model. A right drag works from anywhere, pins and panel included; the browser menu stays away except in text fields |
+| Right drag, middle drag, or Shift + drag | Move the model (in 3D; the flat map stays put). A right drag works from anywhere, pins and panel included; the browser menu stays away except in text fields |
 | Wheel (or pinch) in | On the flat map, raise it into the 3D model as far as the wheel is turned; in 3D, zoom toward the pointer, the camera looking down more steeply the closer it gets so the ground stays in view rather than the model's sides. The side panel keeps its place while zoomed in. Close views fetch finer tiles for the part in view, nearest the middle first |
 | Wheel (or pinch) out | Zoom out; once all the way out, lower the model back to the flat map |
 | Hover the ground (3D) | Show the elevation there and light the contour at that height |

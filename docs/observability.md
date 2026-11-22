@@ -62,6 +62,8 @@ attributes:
 - `png_export_requested`
 - `info_link_clicked` for links inside the falling Info flag
 - `highest_point_toggled` and `waypoint_placement_toggled`
+- `info_flag_toggled`
+- `date_picker_opened` and `date_changed`
 
 Prefer stable attributes such as `ok`, `source`, `map_style`, `waypoint_id`,
 `waypoint_name`, `route_distance_km`, and `waypoint_count`. The loaded GPX
