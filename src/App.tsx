@@ -700,6 +700,7 @@ export default function App() {
       setToast(error instanceof Error ? error.message : '3D を開始できませんでした。');
       return;
     }
+    addAction('html_in_canvas_ready');
     engineRef.current = engine;
     return () => {
       engineRef.current = null;
