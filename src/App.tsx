@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { renderBasemaps, streamRelief } from './basemap';
+import { renderBasemaps, streamRelief, type MapStyle } from './basemap';
 import { gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel } from './engine';
 import { calculateStats, parseGpx, serializeGpx, type GpxRoute } from './gpx';
@@ -206,6 +206,7 @@ export default function App() {
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   /** the projection whose whole map has finished drawing */
   const [basemap, setBasemap] = useState<MapProjection | null>(null);
+  const [baseMapStyle, setBaseMapStyle] = useState<MapStyle>('pale');
   const [demGrid, setDemGrid] = useState<{ projection: MapProjection; grid: ElevationGrid } | null>(null);
   const [apart, setApart] = useState(false);
   const [placing, setPlacing] = useState(false);
@@ -372,6 +373,7 @@ export default function App() {
     const relief = reliefRef.current;
     if (!projection || !flat || !relief) return;
     const controller = new AbortController();
+    setBasemap(null);
     let timer = 0;
     const flush = () => {
       timer = 0;
@@ -379,7 +381,7 @@ export default function App() {
     };
     void renderBasemaps(projection, Math.min(2, window.devicePixelRatio || 1), { flat, relief }, controller.signal, () => {
       if (!timer) timer = window.setTimeout(flush, 200);
-    })
+    }, baseMapStyle)
       .then(() => {
         if (controller.signal.aborted) return;
         window.clearTimeout(timer);
@@ -393,7 +395,7 @@ export default function App() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [projection]);
+  }, [projection, baseMapStyle]);
 
   useEffect(() => {
     if (!projection || !points) return;
@@ -601,7 +603,7 @@ export default function App() {
     };
     void streamRelief(projection, s, region, context, controller.signal, () => {
       if (!timer) timer = window.setTimeout(flush, 150);
-    })
+    }, baseMapStyle)
       .then(() => {
         if (controller.signal.aborted) return;
         window.clearTimeout(timer);
@@ -612,7 +614,7 @@ export default function App() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [shownDetail, projection]);
+  }, [shownDetail, projection, baseMapStyle]);
 
   useLayoutEffect(() => {
     engineRef.current?.refreshPop();
@@ -773,6 +775,13 @@ export default function App() {
                     aria-label="ルート名"
                     onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
                   />
+                  <label className="map-style">
+                    地図
+                    <select value={baseMapStyle} aria-label="地図の種類" onChange={(event) => setBaseMapStyle(event.target.value as MapStyle)}>
+                      <option value="pale">淡色地図</option>
+                      <option value="photo">航空写真</option>
+                    </select>
+                  </label>
                 </div>
               </section>
 

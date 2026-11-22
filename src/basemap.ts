@@ -1,15 +1,17 @@
 import type { MapProjection, MapTile } from './geo';
 
 /**
- * Two pictures of the same GSI pale map. The flat one is Zessoku's: the hillshade over it at 35 %.
- * The 3D one has no hillshade, and the map's own contours and vegetation marks are taken out,
- * so the model's 10 m contours are all that draws the relief.
+ * Two pictures of the selected GSI map. The flat pale map is Zessoku's: the hillshade over it at 35 %.
+ * The 3D pale map has no hillshade, and the map's own contours and vegetation marks are taken out,
+ * so the model's 10 m contours are all that draws the relief. Aerial photos stay untouched.
  */
 const PALE_MAX_ZOOM = 18;
 const HILLSHADE_MAX_ZOOM = 16;
 const HILLSHADE_OPACITY = 0.35;
 const PAPER = '#f2f1ee';
 const TILE = 256;
+
+export type MapStyle = 'pale' | 'photo';
 
 type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -33,7 +35,7 @@ function tilesIn(projection: MapProjection, zoom: number, region: MapRegion) {
     .filter((t) => t.left < region.x + region.w && t.left + t.size > region.x && t.top < region.y + region.h && t.top + t.size > region.y);
 }
 
-const tileUrl = (layer: string, tile: MapTile) => `/api/gsi/${layer}/${tile.z}/${tile.x}/${tile.y}.png`;
+const tileUrl = (layer: string, tile: MapTile) => `/api/gsi/${layer}/${tile.z}/${tile.x}/${tile.y}.${layer === 'seamlessphoto' ? 'jpg' : 'png'}`;
 
 function placeTile(context: Context2D, image: CanvasImageSource, tile: MapTile, region: MapRegion, density: number) {
   // a hair of overlap so tile seams never show
@@ -215,6 +217,7 @@ export async function renderBasemaps(
   targets: { flat: HTMLCanvasElement; relief: HTMLCanvasElement },
   signal: AbortSignal,
   onProgress: () => void,
+  style: MapStyle = 'pale',
 ) {
   const region: MapRegion = { x: 0, y: 0, w: projection.width, h: projection.height };
   const width = Math.max(1, Math.round(region.w * density));
@@ -223,31 +226,33 @@ export async function renderBasemaps(
   const relief = prepare(targets.relief, width, height);
   const strip = stripper();
   const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
-  const hillTiles = tilesIn(projection, Math.min(zoom, HILLSHADE_MAX_ZOOM), region);
-  const hills = Promise.all(hillTiles.map((tile) => loadTile(tileUrl('hillshademap', tile), signal)));
+  const layer = style === 'photo' ? 'seamlessphoto' : 'pale';
   let loaded = 0;
   await Promise.all(
     tilesIn(projection, zoom, region).map(async (tile) => {
-      const image = await loadTile(tileUrl('pale', tile), signal);
+      const image = await loadTile(tileUrl(layer, tile), signal);
       if (!image) return;
       if (signal.aborted) return image.close();
       loaded += 1;
       placeTile(flat, image, tile, region, density);
-      placeTile(relief, strip(image), tile, region, density);
+      placeTile(relief, style === 'photo' ? image : strip(image), tile, region, density);
       image.close();
       onProgress();
     }),
   );
   if (loaded === 0) throw new Error('GSI map tiles are unavailable.');
-  const shades = await hills;
-  if (signal.aborted) return;
-  flat.globalAlpha = HILLSHADE_OPACITY;
-  shades.forEach((image, index) => {
-    if (!image) return;
-    placeTile(flat, image, hillTiles[index], region, density);
-    image.close();
-  });
-  flat.globalAlpha = 1;
+  if (style === 'pale') {
+    const hillTiles = tilesIn(projection, Math.min(zoom, HILLSHADE_MAX_ZOOM), region);
+    const shades = await Promise.all(hillTiles.map((tile) => loadTile(tileUrl('hillshademap', tile), signal)));
+    if (signal.aborted) return;
+    flat.globalAlpha = HILLSHADE_OPACITY;
+    shades.forEach((image, index) => {
+      if (!image) return;
+      placeTile(flat, image, hillTiles[index], region, density);
+      image.close();
+    });
+    flat.globalAlpha = 1;
+  }
   onProgress();
 }
 
@@ -262,19 +267,21 @@ export async function streamRelief(
   context: CanvasRenderingContext2D,
   signal: AbortSignal,
   onTile: () => void,
+  style: MapStyle = 'pale',
 ) {
   const strip = stripper();
   const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
+  const layer = style === 'photo' ? 'seamlessphoto' : 'pale';
   const cx = region.x + region.w / 2;
   const cy = region.y + region.h / 2;
   const away = (t: MapTile) => Math.hypot(t.left + t.size / 2 - cx, t.top + t.size / 2 - cy);
   const tiles = tilesIn(projection, zoom, region).sort((a, b) => away(a) - away(b));
   await Promise.all(
     tiles.map(async (tile) => {
-      const image = await loadTile(tileUrl('pale', tile), signal);
+      const image = await loadTile(tileUrl(layer, tile), signal);
       if (!image) return;
       if (signal.aborted) return image.close();
-      placeTile(context, strip(image), tile, region, density);
+      placeTile(context, style === 'photo' ? image : strip(image), tile, region, density);
       image.close();
       onTile();
     }),

@@ -345,6 +345,26 @@ body {
   outline: none;
 }
 
+.map-style {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  color: var(--ink3);
+  font-size: 11px;
+}
+
+.map-style select {
+  min-width: 112px;
+  padding: 3px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: #f1f3f5;
+  color: var(--ink);
+  font: inherit;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
