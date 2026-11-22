@@ -1753,7 +1753,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         relief: relief?.tex.ready ? relief.tex : null,
         // the hillshade goes as the model rises, before its own contours come in
         flat: 1 - smooth((st.e - 0.05) / 0.4),
-        detail: model?.mapStyle === 'pale' && detail?.rect && detail.tex.ready ? { tex: detail.tex, rect: detail.rect } : null,
+        detail: detail?.rect && detail.tex.ready ? { tex: detail.tex, rect: detail.rect } : null,
         lift,
         contour: hasLand ? smooth((st.e - 0.25) / 0.45) : 0,
         hover: hasLand && hover && lift > 0.5 ? hover.ele : null,
@@ -1776,7 +1776,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (busy || wasBusy) need();
     wasBusy = busy;
     // finer tiles belong to the model only; the flat page keeps the whole-map picture
-    if (st.eT < 1 || model?.mapStyle === 'photo') dropDetail();
+    if (st.eT < 1) dropDetail();
     else if (!busy) {
       window.clearTimeout(detailTimer);
       detailTimer = window.setTimeout(checkDetail, 180);
@@ -1793,7 +1793,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onDetail(null);
   }
   function checkDetail() {
-    if (disposed || !model || model.mapStyle === 'photo' || drag || st.eT < 1 || st.e < 0.6) return;
+    if (disposed || !model || drag || st.eT < 1 || st.e < 0.6) return;
     const lift = liftOf(st.e);
     const toScreen = (x: number, y: number, z: number) => {
       const c = mul([x, y, z, 1]);

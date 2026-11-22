@@ -193,6 +193,11 @@ body {
   stroke-width: var(--route-line-width, 2.6);
 }
 
+.photo-route-overlay .terrain .route-casing,
+.photo-route-overlay .terrain .route-line {
+  opacity: 0;
+}
+
 .pin {
   position: absolute;
   top: 0;

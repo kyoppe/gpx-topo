@@ -579,7 +579,7 @@ export default function App() {
 
   // A close view: keep the current picture visible while a padded, sharper picture is prepared,
   // then crossfade once the new tiles are ready.
-  const shownDetail = mapReady && baseMapStyle === 'pale' ? detailWanted : null;
+  const shownDetail = mapReady ? detailWanted : null;
   useLayoutEffect(() => {
     const el = detailRef.current;
     const base = reliefRef.current;
@@ -595,8 +595,9 @@ export default function App() {
     const region = shownDetail;
     const s = region.density;
     const last = detailDrawn.current;
+    const photoRouteOnly = baseMapStyle === 'photo';
     let keep: OffscreenCanvas | null = null;
-    if (last && el.width > 1) {
+    if (!photoRouteOnly && last && el.width > 1) {
       keep = new OffscreenCanvas(el.width, el.height);
       keep.getContext('2d')?.drawImage(el, 0, 0);
     }
@@ -605,6 +606,12 @@ export default function App() {
     const context = el.getContext('2d');
     if (!context) return;
     context.imageSmoothingQuality = 'high';
+    if (photoRouteOnly) {
+      context.clearRect(0, 0, el.width, el.height);
+      detailDrawn.current = region;
+      engineRef.current?.refreshDetail();
+      return;
+    }
     const k = base.width / projection.width;
     context.drawImage(base, region.x * k, region.y * k, region.w * k, region.h * k, 0, 0, el.width, el.height);
     if (keep && last) context.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
@@ -717,10 +724,11 @@ export default function App() {
   const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, 630));
   const flyoverPlaying = flyoverPhase === 'intro' || flyoverPhase === 'run';
   const flyoverReturning = flyoverPhase === 'return';
+  const photoRouteOverlay = baseMapStyle === 'photo' && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
 
   return (
-    <main className="app">
+    <main className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}`}>
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <div className="stage">
           <div ref={pageRef} className="page" style={{ width: layout.pageWidth, height: layout.pageHeight }}>
