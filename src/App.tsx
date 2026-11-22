@@ -144,6 +144,44 @@ function KmField({ km, label, onCommit }: { km: number; label: string; onCommit:
   );
 }
 
+function WayNameField({ name, label, onCommit }: { name: string; label: string; onCommit: (name: string) => void }) {
+  const [draft, setDraft] = useState(name);
+  const composing = useRef(false);
+
+  useEffect(() => {
+    if (!composing.current) setDraft(name);
+  }, [name]);
+
+  return (
+    <input
+      className="way-name"
+      value={draft}
+      spellCheck={false}
+      aria-label={label}
+      onCompositionStart={() => {
+        composing.current = true;
+      }}
+      onCompositionEnd={(event) => {
+        composing.current = false;
+        const value = event.currentTarget.value;
+        setDraft(value);
+        onCommit(value);
+      }}
+      onChange={(event) => {
+        const value = event.target.value;
+        setDraft(value);
+        if (!composing.current) onCommit(value);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' && !composing.current) event.currentTarget.blur();
+      }}
+      onBlur={() => {
+        if (!composing.current) onCommit(draft);
+      }}
+    />
+  );
+}
+
 function Fallback() {
   return (
     <main className="unsupported">
@@ -889,15 +927,10 @@ export default function App() {
                           <b>{index + 1}</b>
                         </button>
                         <span className="way-body">
-                          <input
-                            className="way-name"
-                            value={way.name}
-                            spellCheck={false}
-                            aria-label={`${index + 1} 番の名前`}
-                            onChange={(event) => editWay(way.id, { name: event.target.value })}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') event.currentTarget.blur();
-                            }}
+                          <WayNameField
+                            name={way.name}
+                            label={`${index + 1} 番の名前`}
+                            onCommit={(name) => editWay(way.id, { name })}
                           />
                           <small>
                             <KmField km={way.km} label={`${way.name} の km`} onCommit={(km) => moveWay(way.id, km)} />
