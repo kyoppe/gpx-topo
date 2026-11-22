@@ -153,10 +153,27 @@ function KmField({ km, label, onCommit }: { km: number; label: string; onCommit:
 function WayNameField({ name, label, onCommit }: { name: string; label: string; onCommit: (name: string) => void }) {
   const [draft, setDraft] = useState(name);
   const composing = useRef(false);
+  const draftRef = useRef(name);
+  const committedRef = useRef(name);
 
   useEffect(() => {
-    if (!composing.current) setDraft(name);
+    if (!composing.current) {
+      draftRef.current = name;
+      committedRef.current = name;
+      setDraft(name);
+    }
   }, [name]);
+
+  const commitDraft = () => {
+    const value = draftRef.current;
+    if (value === committedRef.current) return;
+    committedRef.current = value;
+    onCommit(value);
+  };
+  const updateDraft = (value: string) => {
+    draftRef.current = value;
+    setDraft(value);
+  };
 
   return (
     <input
@@ -170,19 +187,16 @@ function WayNameField({ name, label, onCommit }: { name: string; label: string; 
       onCompositionEnd={(event) => {
         composing.current = false;
         const value = event.currentTarget.value;
-        setDraft(value);
-        onCommit(value);
+        updateDraft(value);
       }}
       onChange={(event) => {
-        const value = event.target.value;
-        setDraft(value);
-        if (!composing.current) onCommit(value);
+        updateDraft(event.target.value);
       }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' && !composing.current) event.currentTarget.blur();
       }}
       onBlur={() => {
-        if (!composing.current) onCommit(draft);
+        if (!composing.current) commitDraft();
       }}
     />
   );
@@ -240,6 +254,7 @@ export default function App() {
   /** the part of the map the detail canvas holds now */
   const detailDrawn = useRef<DetailRequest | null>(null);
   const touchedRef = useRef(false);
+  const fileLoadPendingRef = useRef(false);
 
   const layout = useMemo(() => layoutFor(viewport.width, viewport.height), [viewport]);
   const points = route?.points ?? null;
@@ -371,7 +386,10 @@ export default function App() {
         return response.text();
       })
       .then((xml) => {
+        if (cancelled || touchedRef.current || fileLoadPendingRef.current) return;
         const next = ensureWaypoints(parseGpx(xml));
+        if (cancelled || touchedRef.current || fileLoadPendingRef.current) return;
+        setRoute(next);
         reportInfo('gpx-topo GPX loaded', {
           event_type: 'gpx_loaded',
           source: 'fixture',
@@ -385,9 +403,9 @@ export default function App() {
           file_name: DEFAULT_GPX_URL,
           waypoint_count: next.waypoints.length,
         });
-        if (!cancelled && !touchedRef.current) setRoute(next);
       })
       .catch((error) => {
+        if (cancelled || touchedRef.current || fileLoadPendingRef.current) return;
         reportError('load_default_gpx', error, { file_name: DEFAULT_GPX_URL });
         setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。');
       });
@@ -507,19 +525,20 @@ export default function App() {
     },
     [placeAt],
   );
-  const editWay = (id: string, change: Partial<GpxRoute['waypoints'][number]>) => {
+  const renameWay = (id: string, name: string) => {
+    const previous = route?.waypoints.find((waypoint) => waypoint.id === id);
+    if (!previous || previous.name === name) return;
     addAction('waypoint_edit', {
       waypoint_id: id,
-      waypoint_name: typeof change.name === 'string' ? change.name : undefined,
-      fields: Object.keys(change),
+      waypoint_name: name,
     });
-    setRoute((current) => current && { ...current, waypoints: current.waypoints.map((w) => (w.id === id ? { ...w, ...change } : w)) });
+    setRoute((current) => current && { ...current, waypoints: current.waypoints.map((w) => (w.id === id ? { ...w, name } : w)) });
   };
   const moveWay = (id: string, at: number) => {
     const spot = placeAt(at);
     if (spot) {
-      addAction('waypoint_move', { waypoint_id: id, distance_km: Number(at.toFixed(2)) });
-      editWay(id, spot);
+      addAction('waypoint_move', { waypoint_id: id, distance_km: Number(spot.km.toFixed(2)) });
+      setRoute((current) => current && { ...current, waypoints: current.waypoints.map((w) => (w.id === id ? { ...w, ...spot } : w)) });
     }
   };
   const removeWay = (id: string) => {
@@ -765,10 +784,13 @@ export default function App() {
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     addAction('gpx_file_open_requested', { file_name: file.name, file_size: file.size });
-    touchedRef.current = true;
-    const xml = await file.text();
+    fileLoadPendingRef.current = true;
+    let xml = '';
     try {
+      xml = await file.text();
       const next = ensureWaypoints(parseGpx(xml));
+      fileLoadPendingRef.current = false;
+      touchedRef.current = true;
       reportInfo('gpx-topo GPX loaded', {
         event_type: 'gpx_loaded',
         source: 'file',
@@ -791,6 +813,7 @@ export default function App() {
       setFileName(file.name);
       setToast(`${file.name} を読み込みました (${next.points.length.toLocaleString('ja-JP')} 点)。`);
     } catch (error) {
+      fileLoadPendingRef.current = false;
       reportError('load_gpx_file', error, { file_name: file.name, file_size: file.size, gpx_content: xml });
       setToast(error instanceof Error ? error.message : 'GPX を読み込めませんでした。');
     }
@@ -1098,7 +1121,7 @@ export default function App() {
                           <WayNameField
                             name={way.name}
                             label={`${index + 1} 番の名前`}
-                            onCommit={(name) => editWay(way.id, { name })}
+                            onCommit={(name) => renameWay(way.id, name)}
                           />
                           <small>
                             <KmField km={way.km} label={`${way.name} の km`} onCommit={(km) => moveWay(way.id, km)} />

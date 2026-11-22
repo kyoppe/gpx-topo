@@ -69,6 +69,9 @@ body is sent to Browser Logs as `gpx_content`, not attached to every RUM
 action. Do not create a custom event for every render frame, pointer move, or
 generic click that automatic interaction tracking already captures.
 
+`waypoint_edit` is emitted once when a name edit is committed (on blur or
+Enter). `waypoint_move` records the clamped waypoint distance after the move.
+
 ## Browser Logs
 
 Use Browser Logs for diagnosis rather than product analytics:
