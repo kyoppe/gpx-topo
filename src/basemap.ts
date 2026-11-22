@@ -6,6 +6,8 @@ import type { MapProjection, MapTile } from './geo';
  * so the model's 10 m contours are all that draws the relief. Aerial photos stay untouched.
  */
 const PALE_MAX_ZOOM = 18;
+/** Start with one extra source zoom so the first close view does not need a new base texture. */
+const INITIAL_ZOOM_BONUS = 1;
 const HILLSHADE_MAX_ZOOM = 16;
 const HILLSHADE_OPACITY = 0.35;
 const PAPER = '#f2f1ee';
@@ -225,7 +227,7 @@ export async function renderBasemaps(
   const flat = prepare(targets.flat, width, height);
   const relief = prepare(targets.relief, width, height);
   const strip = stripper();
-  const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
+  const zoom = Math.min(PALE_MAX_ZOOM, projection.zoomFor(density, 5, PALE_MAX_ZOOM) + INITIAL_ZOOM_BONUS);
   const layer = style === 'photo' ? 'seamlessphoto' : 'pale';
   let loaded = 0;
   await Promise.all(
