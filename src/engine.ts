@@ -1354,7 +1354,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         }
         const dx = p.x - c.x;
         const dy = p.y - c.y;
-        const up = 1.2 * lit + EPS;
+        const up = EPS;
         p.ex = c.ex;
         p.ey = c.ey;
         p.z = c.z;
