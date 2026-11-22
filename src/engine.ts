@@ -1135,57 +1135,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const side = k.side;
       const faceEy = back ? neg(b) : b;
       const faceN = back ? neg(c) : c;
-      if (solid && facing) {
-        const gap = 0.12 * s;
-        items.push({
-          solid: side,
-          useNormal: true,
-          nrm: faceN,
-          O: [0, 1, 2].map((i) => C[i] - a[i] * hw - faceEy[i] * hh + faceN[i] * (hd - gap)) as Vec3,
-          ex: a.map((v) => v * 2 * hw) as Vec3,
-          ey: faceEy.map((v) => v * 2 * hh) as Vec3,
-        });
-      }
       items.push(quad(k, { glow: 1 }));
       // the sides and the shadow belong to the key, not to each face
-      if (!solid || !facing) continue;
-      const rr = Math.min(7 * s, hw, hh);
-      const outline: [number, number][] = [
-        [-hw + rr, hh],
-        [hw - rr, hh],
-      ];
-      const arc = (cx: number, cy: number, from: number, to: number) => {
-        const segments = 3;
-        for (let i = 1; i <= segments; i += 1) {
-          const t = i / segments;
-          const angle = from + (to - from) * t;
-          outline.push([cx + rr * Math.cos(angle), cy + rr * Math.sin(angle)]);
-        }
-      };
-      arc(hw - rr, hh - rr, Math.PI / 2, 0);
-      outline.push([hw, -hh + rr]);
-      arc(hw - rr, -hh + rr, 0, -Math.PI / 2);
-      outline.push([-hw + rr, -hh]);
-      arc(-hw + rr, -hh + rr, -Math.PI / 2, -Math.PI);
-      outline.push([-hw, hh - rr]);
-      arc(-hw + rr, hh - rr, -Math.PI, -Math.PI * 1.5);
-      for (let i = 0; i < outline.length; i += 1) {
-        const [x1, y1] = outline[i];
-        const [x2, y2] = outline[(i + 1) % outline.length];
-        const dx = x2 - x1;
-        const dy = y2 - y1;
-        const length = Math.hypot(dx, dy);
-        if (length < 1e-6) continue;
-        const outward = [0, 1, 2].map((j) => a[j] * (-dy / length) + faceEy[j] * (dx / length)) as Vec3;
-        items.push({
-          solid: side,
-          useNormal: true,
-          nrm: outward,
-          O: [0, 1, 2].map((j) => C[j] + a[j] * x1 + faceEy[j] * y1 - faceN[j] * hd) as Vec3,
-          ex: [0, 1, 2].map((j) => a[j] * dx + faceEy[j] * dy) as Vec3,
-          ey: faceN.map((v) => v * 2 * hd) as Vec3,
-        });
-      }
+      if (back || !solid) continue;
+      const rr = Math.min(7, k.h / 3) * s;
+      items.push({ solid: side, useNormal: true, nrm: b, O: P(-hw + rr, hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
+      items.push({ solid: side, useNormal: true, nrm: neg(b), O: P(-hw + rr, -hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
+      items.push({ solid: side, useNormal: true, nrm: a, O: P(hw, -hh + rr, -hd), ex: b.map((v) => v * (2 * hh - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
+      items.push({ solid: side, useNormal: true, nrm: neg(a), O: P(-hw, -hh + rr, -hd), ex: b.map((v) => v * (2 * hh - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
       const blur = 2.2 + d * 0.55 + up * 0.3;
       const m = blur * 1.2;
       const kx = wx + (ww - k.w) / 2;
