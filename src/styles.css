@@ -133,13 +133,16 @@ body {
   stroke-linejoin: round;
 }
 
+/* a sky blue line in a dark casing, as in Zessoku, so the course never reads as one of the map's blue rivers */
 .route-casing {
-  stroke: rgba(255, 255, 255, 0.9);
-  stroke-width: 5;
+  stroke: #0f172a;
+  stroke-opacity: 0.9;
+  stroke-width: 5.6;
 }
 
 .route-line {
-  stroke: var(--accent);
+  stroke: #38bdf8;
+  stroke-opacity: 0.9;
   stroke-width: 2.6;
 }
 
