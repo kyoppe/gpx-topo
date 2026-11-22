@@ -563,6 +563,7 @@ export default function App() {
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
+      mapStyle: baseMapStyle,
       profilePoint: (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))],
       profileKm: profile.K,
     };
@@ -576,9 +577,9 @@ export default function App() {
     engineRef.current?.setPlacing(placing);
   }, [placing]);
 
-  // a close view: the part in view, drawn again from finer tiles as they come in. It starts from
-  // the whole-map picture, and from the last close view where the two overlap.
-  const shownDetail = mapReady ? detailWanted : null;
+  // A close view: keep the current picture visible while a padded, sharper picture is prepared,
+  // then crossfade once the new tiles are ready.
+  const shownDetail = mapReady && baseMapStyle === 'pale' ? detailWanted : null;
   useLayoutEffect(() => {
     const el = detailRef.current;
     const base = reliefRef.current;
@@ -607,28 +608,45 @@ export default function App() {
     const k = base.width / projection.width;
     context.drawImage(base, region.x * k, region.y * k, region.w * k, region.h * k, 0, 0, el.width, el.height);
     if (keep && last) context.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
+    const start = new OffscreenCanvas(el.width, el.height);
+    start.getContext('2d')?.drawImage(el, 0, 0);
+    const next = document.createElement('canvas');
+    next.width = el.width;
+    next.height = el.height;
+    const nextContext = next.getContext('2d');
+    if (!nextContext) return;
+    nextContext.imageSmoothingQuality = 'high';
+    nextContext.drawImage(base, region.x * k, region.y * k, region.w * k, region.h * k, 0, 0, next.width, next.height);
+    if (keep && last) nextContext.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
     detailDrawn.current = region;
     engineRef.current?.refreshDetail();
-    // Aerial photos keep the fixed base image while the route overlay still adapts to zoom.
-    if (baseMapStyle === 'photo') return;
     const controller = new AbortController();
-    let timer = 0;
+    let animation = 0;
     const flush = () => {
-      timer = 0;
       engineRef.current?.refreshDetail();
     };
-    void streamRelief(projection, s, region, context, controller.signal, () => {
-      if (!timer) timer = window.setTimeout(flush, 150);
-    }, baseMapStyle)
+    void streamRelief(projection, s, region, nextContext, controller.signal, () => {})
       .then(() => {
         if (controller.signal.aborted) return;
-        window.clearTimeout(timer);
-        flush();
+        const started = performance.now();
+        const crossfade = (now: number) => {
+          if (controller.signal.aborted) return;
+          const progress = Math.min(1, (now - started) / 220);
+          context.clearRect(0, 0, el.width, el.height);
+          context.globalAlpha = 1 - progress;
+          context.drawImage(start, 0, 0);
+          context.globalAlpha = progress;
+          context.drawImage(next, 0, 0);
+          context.globalAlpha = 1;
+          flush();
+          if (progress < 1) animation = requestAnimationFrame(crossfade);
+        };
+        animation = requestAnimationFrame(crossfade);
       })
       .catch(() => {});
     return () => {
       controller.abort();
-      window.clearTimeout(timer);
+      cancelAnimationFrame(animation);
     };
   }, [shownDetail, projection, baseMapStyle]);
 

@@ -17,11 +17,22 @@ export type MapStyle = 'pale' | 'photo';
 
 type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
+const tileBlobCache = new Map<string, Promise<Blob | null>>();
+const MAX_TILE_BLOBS = 256;
+
 async function loadTile(url: string, signal?: AbortSignal) {
   try {
-    const response = await fetch(url, { signal });
-    if (!response.ok) return null;
-    return await createImageBitmap(await response.blob());
+    let blob = tileBlobCache.get(url);
+    if (!blob) {
+      blob = fetch(url)
+        .then((response) => (response.ok ? response.blob() : null))
+        .catch(() => null);
+      tileBlobCache.set(url, blob);
+      if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+    }
+    const source = await blob;
+    if (!source || signal?.aborted) return null;
+    return await createImageBitmap(source);
   } catch (error) {
     if (signal?.aborted) throw error;
     return null;
@@ -72,6 +83,7 @@ const MARK_SIDE = 14;
 const MARK_PX = 80;
 /** ...when nothing else is inked this close (px), which keeps the strokes of text together. */
 const MARK_GAP = 3;
+const DETAIL_HALO = 0.18;
 
 /**
  * Takes the pale map's contour lines and labels out of a tile, and its vegetation marks
@@ -274,10 +286,18 @@ export async function streamRelief(
   const strip = stripper();
   const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
   const layer = style === 'photo' ? 'seamlessphoto' : 'pale';
+  const fetchRegion: MapRegion = {
+    x: Math.max(0, region.x - region.w * DETAIL_HALO),
+    y: Math.max(0, region.y - region.h * DETAIL_HALO),
+    w: Math.min(projection.width, region.w * (1 + 2 * DETAIL_HALO)),
+    h: Math.min(projection.height, region.h * (1 + 2 * DETAIL_HALO)),
+  };
+  fetchRegion.w = Math.min(projection.width - fetchRegion.x, fetchRegion.w);
+  fetchRegion.h = Math.min(projection.height - fetchRegion.y, fetchRegion.h);
   const cx = region.x + region.w / 2;
   const cy = region.y + region.h / 2;
   const away = (t: MapTile) => Math.hypot(t.left + t.size / 2 - cx, t.top + t.size / 2 - cy);
-  const tiles = tilesIn(projection, zoom, region).sort((a, b) => away(a) - away(b));
+  const tiles = tilesIn(projection, zoom, fetchRegion).sort((a, b) => away(a) - away(b));
   await Promise.all(
     tiles.map(async (tile) => {
       const image = await loadTile(tileUrl(layer, tile), signal);

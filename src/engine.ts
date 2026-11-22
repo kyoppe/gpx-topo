@@ -25,6 +25,7 @@ export type EngineModel = {
   date: string;
   lat: number;
   lon: number;
+  mapStyle: 'pale' | 'photo';
   /** Where a distance along the route sits on the elevation profile drawing. */
   profilePoint(km: number): [number, number];
   /** The distance along the route (km) at an x on the elevation profile drawing. */
@@ -913,6 +914,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function setModel(next: EngineModel) {
     const terrainChanged = !model || model.terrain !== next.terrain;
+    const mapStyleChanged = !model || model.mapStyle !== next.mapStyle;
     model = next;
     PW = next.pageWidth;
     PH = next.pageHeight;
@@ -922,11 +924,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     MH = next.mapHeight;
     R.setMesh(clamp(Math.round(MW / 2) + 1, 64, 640), clamp(Math.round(MH / 2) + 1, 64, 640));
     const terrain = next.terrain;
-    if (terrainChanged) {
-      if (terrain) {
+    if (terrainChanged || mapStyleChanged) {
+      if (terrainChanged && terrain) {
         const g = terrain.grid;
         R.setTerrain(g.values, g.nx + 1, g.ny + 1, 1 / terrain.metersPerPixel, terrain.baseElevation, PLINTH);
-      } else R.clearTerrain();
+      } else if (terrainChanged) R.clearTerrain();
       hover = null;
       if (detailReq) {
         detailReq = null;
@@ -1740,7 +1742,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         relief: relief?.tex.ready ? relief.tex : null,
         // the hillshade goes as the model rises, before its own contours come in
         flat: 1 - smooth((st.e - 0.05) / 0.4),
-        detail: detail?.rect && detail.tex.ready ? { tex: detail.tex, rect: detail.rect } : null,
+        detail: model?.mapStyle === 'pale' && detail?.rect && detail.tex.ready ? { tex: detail.tex, rect: detail.rect } : null,
         lift,
         contour: hasLand ? smooth((st.e - 0.25) / 0.45) : 0,
         hover: hasLand && hover && lift > 0.5 ? hover.ele : null,
@@ -1763,7 +1765,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (busy || wasBusy) need();
     wasBusy = busy;
     // finer tiles belong to the model only; the flat page keeps the whole-map picture
-    if (st.eT < 1) dropDetail();
+    if (st.eT < 1 || model?.mapStyle === 'photo') dropDetail();
     else if (!busy) {
       window.clearTimeout(detailTimer);
       detailTimer = window.setTimeout(checkDetail, 180);
@@ -1780,7 +1782,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onDetail(null);
   }
   function checkDetail() {
-    if (disposed || !model || drag || st.eT < 1 || st.e < 0.6) return;
+    if (disposed || !model || model.mapStyle === 'photo' || drag || st.eT < 1 || st.e < 0.6) return;
     const lift = liftOf(st.e);
     const toScreen = (x: number, y: number, z: number) => {
       const c = mul([x, y, z, 1]);
