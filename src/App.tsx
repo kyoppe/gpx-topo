@@ -6,7 +6,7 @@ import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type E
 import { calculateStats, parseGpx, serializeGpx, type GpxRoute } from './gpx';
 import { createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
-import { defaultWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
+import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { buildTerrain } from './terrain';
 
@@ -107,11 +107,6 @@ function downloadBlob(blob: Blob, filename: string) {
   link.download = filename;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-/** A route as loaded: one that brings no waypoints gets the default ones, which then edit like any other. */
-function withWaypoints(route: GpxRoute): GpxRoute {
-  return route.waypoints.length ? route : { ...route, waypoints: defaultWaypoints(route.points) };
 }
 
 /** A waypoint's km: typing a new one moves it along the route once Enter is pressed or the field is left; Esc puts it back. */
@@ -347,7 +342,7 @@ export default function App() {
         return response.text();
       })
       .then((xml) => {
-        if (!cancelled && !touchedRef.current) setRoute(withWaypoints(parseGpx(xml)));
+        if (!cancelled && !touchedRef.current) setRoute(ensureWaypoints(parseGpx(xml)));
       })
       .catch(() => setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。'));
     return () => {
@@ -468,7 +463,7 @@ export default function App() {
     if (spot) editWay(id, spot);
   };
   const removeWay = (id: string) => {
-    setRoute((current) => current && { ...current, waypoints: current.waypoints.filter((w) => w.id !== id) });
+    setRoute((current) => current && { ...current, waypoints: current.waypoints.filter((w) => w.id !== id || w.fixed) });
     setOverrides((current) => {
       const next = { ...current };
       delete next[id];
@@ -646,7 +641,7 @@ export default function App() {
     if (!file) return;
     touchedRef.current = true;
     try {
-      const next = withWaypoints(parseGpx(await file.text()));
+      const next = ensureWaypoints(parseGpx(await file.text()));
       engineRef.current?.together();
       setPop(null);
       setOverrides({});
@@ -958,9 +953,15 @@ export default function App() {
                           {clockInput(way.minutes)}
                           {way.minutes >= 1440 && <small>+{Math.floor(way.minutes / 1440)}d</small>}
                         </button>
-                        <button type="button" className="way-del" aria-label={`${way.name} を削除`} onClick={() => removeWay(way.id)}>
-                          ×
-                        </button>
+                        {way.fixed ? (
+                          <span className="way-fixed" aria-label={`${way.name} は削除できません`}>
+                            固定
+                          </span>
+                        ) : (
+                          <button type="button" className="way-del" aria-label={`${way.name} を削除`} onClick={() => removeWay(way.id)}>
+                            ×
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ol>

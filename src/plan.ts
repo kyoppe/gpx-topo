@@ -16,6 +16,7 @@ export type PlannedWaypoint = {
   minutes: number;
   /** True when the time is the estimate, not a target the user or the file gave. */
   estimated: boolean;
+  fixed: boolean;
 };
 
 function meters(a: TrackPoint, b: TrackPoint) {
@@ -63,15 +64,53 @@ export function pointAtKm(points: readonly TrackPoint[], km: ArrayLike<number>, 
   return { km: d, lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t, ele };
 }
 
-/** For a file without waypoints: a start, a checkpoint every 25 km and the finish. */
+const MARATHON_DISTANCE_KM = 42.195;
+const ULTRA_DISTANCE_KM = 100;
+const ENDPOINT_TOLERANCE_KM = 1;
+
+/** For a file without waypoints: a start, distance-based checkpoints and the finish. */
 export function defaultWaypoints(points: readonly TrackPoint[]): Waypoint[] {
   const { km } = trackProgress(points);
   const total = km[km.length - 1];
-  const at = (id: string, name: string, d: number): Waypoint => ({ id, name, ...pointAtKm(points, km, d) });
-  const out = [at('auto-start', 'Start', 0)];
-  for (let mark = 25; mark < total - 8; mark += 25) out.push(at(`auto-${mark}`, `${mark} km`, mark));
-  out.push(at('auto-finish', 'Finish', total));
+  const step = total <= MARATHON_DISTANCE_KM ? 5 : total < ULTRA_DISTANCE_KM ? 10 : 25;
+  const at = (id: string, name: string, d: number, fixed = false): Waypoint => ({
+    id,
+    name,
+    ...pointAtKm(points, km, d),
+    ...(fixed ? { fixed: true } : {}),
+  });
+  const out = [at('auto-start', 'Start', 0, true)];
+  for (let mark = step; mark < total - 1e-6; mark += step) out.push(at(`auto-${mark}`, `${mark} km`, mark));
+  out.push(at('auto-finish', 'Finish', total, true));
   return out;
+}
+
+function waypointKm(waypoint: Waypoint, points: readonly TrackPoint[], km: ArrayLike<number>) {
+  if (waypoint.km !== undefined) return Math.max(0, Math.min(km[km.length - 1], waypoint.km));
+  return km[nearestTrackIndex(points, waypoint.lat, waypoint.lon)];
+}
+
+/** Keep user waypoints, add only missing endpoints, and mark both endpoints as non-deletable. */
+export function ensureWaypoints(route: GpxRoute): GpxRoute {
+  if (!route.waypoints.length) return { ...route, waypoints: defaultWaypoints(route.points) };
+  const { km } = trackProgress(route.points);
+  const total = km[km.length - 1];
+  const at = (id: string, name: string, d: number): Waypoint => ({
+    id,
+    name,
+    ...pointAtKm(route.points, km, d),
+    fixed: true,
+  });
+  const waypoints = route.waypoints.map((waypoint) => {
+    const d = waypointKm(waypoint, route.points, km);
+    return { ...waypoint, fixed: waypoint.fixed || d <= ENDPOINT_TOLERANCE_KM || total - d <= ENDPOINT_TOLERANCE_KM };
+  });
+  const additions: Waypoint[] = [];
+  if (!waypoints.some((waypoint) => waypointKm(waypoint, route.points, km) <= ENDPOINT_TOLERANCE_KM)) additions.push(at('auto-start', 'Start', 0));
+  if (!waypoints.some((waypoint) => total - waypointKm(waypoint, route.points, km) <= ENDPOINT_TOLERANCE_KM)) {
+    additions.push(at('auto-finish', 'Finish', total));
+  }
+  return additions.length ? { ...route, waypoints: [...waypoints, ...additions] } : { ...route, waypoints };
 }
 
 /** Index of the highest track point that has an elevation, or -1 when none has. */
@@ -154,6 +193,7 @@ export function planWaypoints(
       km: at,
       minutes,
       estimated: overrides[waypoint.id] === undefined && time === undefined,
+      fixed: waypoint.fixed ?? false,
     };
   });
 }

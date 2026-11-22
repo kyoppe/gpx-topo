@@ -3,7 +3,7 @@
 `gpx-topo` shows a GPX route on a faint GSI map and raises the same page into a 3D terrain model built from GSI DEM tiles.
 
 - The terrain is one continuous surface at true scale: heights use the same metres per pixel as the map (1:1), with 10 m contours and 50 m index contours.
-- The flat map is the GSI pale map with its hillshade. On the 3D model the hillshade, the map's own contour lines, and its vegetation marks are taken out, so the relief is drawn by the model's contours and its sunlight only.
+- The map can use the GSI pale map or seamless aerial photos. The pale map has hillshade only when flat; on the 3D model its hillshade, own contour lines, and vegetation marks are taken out, so the relief is drawn by the model's contours and sunlight. Aerial photos do not use the GSI hillshade.
 - React owns the page: the map, waypoint pins, the side panel, the bar, and the pickers are ordinary HTML.
 - HTML-in-Canvas (`<canvas layoutsubtree>`, `texElementSubImage2D`, `updateElementGeometry`) turns each piece into a WebGL2 texture and keeps the real DOM under it, so text stays selectable and buttons stay clickable while the model is turned.
 - The bar is a row of real buttons. On the flat map they are plain flat buttons; as the page stands up they rise into keys on a slab in front of the camera. The date and time pickers rise off the panel; the time picker turns as two lit drums.
@@ -37,7 +37,7 @@ The bundled `SFMT2026-110km.gpx` fixture loads first, on the flat map. `GPX ã‚’é
 
 Raising and zooming are separate wheel gestures: pause the wheel to go from one to the next. A page left part way up stays where it is.
 
-Waypoints without a target time get an estimate of 6 min/km plus 0.1 min per metre climbed. A file without waypoints gets a start, a checkpoint every 25 km, and the finish, which can be renamed, moved, and deleted like any other.
+Waypoints without a target time get an estimate of 6 min/km plus 0.1 min per metre climbed. A file without waypoints gets fixed Start and Finish markers plus checkpoints every 5 km up to marathon distance, every 10 km below 100 km, or every 25 km from 100 km onward. A file with waypoints gets no automatic intermediate checkpoints; only missing endpoints are filled. Fixed Start and Finish markers cannot be deleted.
 
 ## Local development
 

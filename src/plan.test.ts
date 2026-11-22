@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GpxRoute } from './gpx';
-import { alongTrack, defaultWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
+import { alongTrack, defaultWaypoints, ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 
 // about 1.11 km per point northwards, flat at 100 m with one hill at point 40
 const points = Array.from({ length: 60 }, (_, i) => ({
@@ -46,11 +46,37 @@ describe('points along the track', () => {
 describe('default waypoints', () => {
   it('gives a file without waypoints a start, checkpoints and the finish', () => {
     const plan = planWaypoints({ ...bare, waypoints: defaultWaypoints(points) }, 360, {});
-    expect(plan.map((w) => w.name)).toEqual(['Start', '25 km', '50 km', 'Finish']);
-    expect(plan.map((w) => +w.km.toFixed(1))).toEqual([0, 25, 50, +km[59].toFixed(1)]);
+    expect(plan.map((w) => w.name)).toEqual(['Start', '10 km', '20 km', '30 km', '40 km', '50 km', '60 km', 'Finish']);
+    expect(plan.map((w) => +w.km.toFixed(1))).toEqual([0, 10, 20, 30, 40, 50, 60, +km[59].toFixed(1)]);
     expect(plan.every((w) => w.estimated)).toBe(true);
     expect(plan[0].minutes).toBe(360);
-    expect(plan.at(-1)!.minutes).toBeGreaterThan(plan[2].minutes);
+    expect(plan.at(-1)!.minutes).toBeGreaterThan(plan[3].minutes);
+  });
+
+  it('uses five-kilometre checkpoints on marathon-length routes', () => {
+    const short = points.slice(0, 38);
+    expect(defaultWaypoints(short).map((w) => w.name)).toEqual(['Start', '5 km', '10 km', '15 km', '20 km', '25 km', '30 km', '35 km', '40 km', 'Finish']);
+  });
+
+  it('adds only missing endpoints when a file already has waypoints', () => {
+    const middle = { id: 'middle', name: 'Aid', ...pointAtKm(points, km, 20) };
+    const route = ensureWaypoints({ ...bare, waypoints: [middle] });
+    expect(route.waypoints.map((w) => w.name)).toEqual(['Aid', 'Start', 'Finish']);
+    expect(route.waypoints.find((w) => w.name === 'Start')?.fixed).toBe(true);
+    expect(route.waypoints.find((w) => w.name === 'Finish')?.fixed).toBe(true);
+    expect(route.waypoints.find((w) => w.name === 'Aid')?.fixed).toBe(false);
+  });
+
+  it('keeps existing endpoint waypoints instead of adding automatic copies', () => {
+    const route = ensureWaypoints({
+      ...bare,
+      waypoints: [
+        { id: 'start', name: '出発', ...points[0] },
+        { id: 'finish', name: '到着', ...points.at(-1)! },
+      ],
+    });
+    expect(route.waypoints.map((w) => w.name)).toEqual(['出発', '到着']);
+    expect(route.waypoints.every((w) => w.fixed)).toBe(true);
   });
 });
 
