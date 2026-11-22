@@ -9,6 +9,7 @@ import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
+import { addAction, reportError, reportInfo, reportWarning } from './observability';
 import { buildTerrain } from './terrain';
 
 const DEFAULT_GPX_URL = '/fixtures/SFMT2026-110km.gpx';
@@ -263,6 +264,15 @@ export default function App() {
     () => (projection ? plan.map((way) => ({ ...way, ...projection.project(way), ele: way.ele })) : []),
     [plan, projection],
   );
+  const focusWaypoint = (id: string, source: 'map_pin' | 'side_panel') => {
+    const way = ways.find((item) => item.id === id);
+    addAction('waypoint_focus_requested', {
+      waypoint_id: id,
+      waypoint_name: way?.name,
+      source,
+    });
+    engineRef.current?.focusWay(id);
+  };
 
   const grid = demGrid && demGrid.projection === projection ? demGrid.grid : null;
   const terrain = useMemo(
@@ -361,9 +371,26 @@ export default function App() {
         return response.text();
       })
       .then((xml) => {
-        if (!cancelled && !touchedRef.current) setRoute(ensureWaypoints(parseGpx(xml)));
+        const next = ensureWaypoints(parseGpx(xml));
+        reportInfo('gpx-topo GPX loaded', {
+          event_type: 'gpx_loaded',
+          source: 'fixture',
+          file_name: DEFAULT_GPX_URL,
+          gpx_content: xml,
+          waypoint_count: next.waypoints.length,
+          route_distance_km: calculateStats(next.points).distanceKm,
+        });
+        addAction('gpx_loaded', {
+          source: 'fixture',
+          file_name: DEFAULT_GPX_URL,
+          waypoint_count: next.waypoints.length,
+        });
+        if (!cancelled && !touchedRef.current) setRoute(next);
       })
-      .catch(() => setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。'));
+      .catch((error) => {
+        reportError('load_default_gpx', error, { file_name: DEFAULT_GPX_URL });
+        setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。');
+      });
     return () => {
       cancelled = true;
     };
@@ -402,8 +429,11 @@ export default function App() {
         flush();
         setBasemap(projection);
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setToast('地理院タイルを読み込めませんでした。');
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          reportError('load_basemap', error, { map_style: baseMapStyle });
+          setToast('地理院タイルを読み込めませんでした。');
+        }
       });
     return () => {
       controller.abort();
@@ -425,8 +455,9 @@ export default function App() {
         const first = await loadDemGrid(projection, cx, cy, signal);
         if (signal.aborted) return;
         setDemGrid({ projection, grid: first });
-      } catch {
+      } catch (error) {
         if (signal.aborted) return;
+        reportWarning('load_dem_coarse', error);
         setToast('GSI DEM を読み込めなかったため、GPX の標高から地形を作っています。');
         setDemGrid({ projection, grid: gpxElevationGrid(projectTrack(points, projection, 4), cx, cy, projection.width, projection.height) });
         return;
@@ -435,8 +466,9 @@ export default function App() {
       try {
         const fine = await loadDemGrid(projection, fx, fy, signal);
         if (!signal.aborted) setDemGrid({ projection, grid: fine });
-      } catch {
+      } catch (error) {
         // the first pass stays
+        if (!signal.aborted) reportWarning('load_dem_fine', error);
       }
     })();
     return () => controller.abort();
@@ -475,13 +507,24 @@ export default function App() {
     },
     [placeAt],
   );
-  const editWay = (id: string, change: Partial<GpxRoute['waypoints'][number]>) =>
+  const editWay = (id: string, change: Partial<GpxRoute['waypoints'][number]>) => {
+    addAction('waypoint_edit', {
+      waypoint_id: id,
+      waypoint_name: typeof change.name === 'string' ? change.name : undefined,
+      fields: Object.keys(change),
+    });
     setRoute((current) => current && { ...current, waypoints: current.waypoints.map((w) => (w.id === id ? { ...w, ...change } : w)) });
+  };
   const moveWay = (id: string, at: number) => {
     const spot = placeAt(at);
-    if (spot) editWay(id, spot);
+    if (spot) {
+      addAction('waypoint_move', { waypoint_id: id, distance_km: Number(at.toFixed(2)) });
+      editWay(id, spot);
+    }
   };
   const removeWay = (id: string) => {
+    const removed = route?.waypoints.find((waypoint) => waypoint.id === id);
+    addAction('waypoint_remove', { waypoint_id: id, waypoint_name: removed?.name });
     setRoute((current) => {
       if (!current) return current;
       const waypoints = current.waypoints.filter((waypoint) => waypoint.id !== id || waypoint.fixed);
@@ -497,18 +540,22 @@ export default function App() {
   const addAtTypedKm = () => {
     const value = parseKm(addKm);
     if (value === null) {
+      addAction('waypoint_add_rejected', { input: addKm });
       setToast('追加する位置を km で入力してください。');
       return;
     }
+    addAction('waypoint_add_requested', { distance_km: Number(value.toFixed(2)), source: 'form' });
     addWay(value);
     setAddKm('');
   };
   const onRouteClick = useCallback(
     (km: number | null) => {
       if (km === null) {
+        addAction('waypoint_add_rejected', { source: 'map' });
         setToast('ルートの上をクリックしてください。');
         return;
       }
+      addAction('waypoint_add_requested', { distance_km: Number(km.toFixed(2)), source: 'map' });
       addWay(km);
       setPlacing(false);
     },
@@ -521,6 +568,7 @@ export default function App() {
       setToast('標高が分からないため、最高点を出せません。');
       return;
     }
+    addAction('highest_point_toggled', { enabled: !showHigh });
     setShowHigh((on) => !on);
   };
 
@@ -538,15 +586,23 @@ export default function App() {
         onApartChange: setApart,
         onRouteClick: (km) => routeClickRef.current(km),
         onDetail: setDetailWanted,
-        onFlightChange: setFlyoverPhase,
-        onInfoChange: setInfoOpen,
+        onFlightChange: (phase) => {
+          addAction('flyover_state_changed', { phase: phase ?? 'idle' });
+          setFlyoverPhase(phase);
+        },
+        onInfoChange: (open) => {
+          addAction('info_flag_toggled', { open });
+          setInfoOpen(open);
+        },
         onTimeCommit: (target, minutes) => {
+          addAction('elapsed_time_committed', { target, minutes });
           if (target === 'start') setStartTime(clockInput(minutes));
           else setOverrides((current) => ({ ...current, [target]: minutes }));
         },
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
       });
     } catch (error) {
+      reportError('create_html_in_canvas_engine', error);
       setToast(error instanceof Error ? error.message : '3D を開始できませんでした。');
       return;
     }
@@ -660,7 +716,9 @@ export default function App() {
         };
         animation = requestAnimationFrame(crossfade);
       })
-      .catch(() => {});
+      .catch((error) => {
+        if (!controller.signal.aborted) reportWarning('load_detail_relief', error);
+      });
     return () => {
       controller.abort();
       cancelAnimationFrame(animation);
@@ -675,6 +733,7 @@ export default function App() {
   const openDate = () => {
     const engine = engineRef.current;
     if (!engine || engine.popBusy('pop-date')) return;
+    addAction('date_picker_opened');
     popSeq.current += 1;
     setMonth(date.slice(0, 7));
     setPeek(null);
@@ -683,6 +742,7 @@ export default function App() {
   const openTime = (target: string, minutes: number, anchor: string, label: string) => {
     const engine = engineRef.current;
     if (!engine || engine.popBusy(anchor)) return;
+    addAction('elapsed_time_picker_opened', { target });
     popSeq.current += 1;
     const relative = target !== 'start';
     setPop({
@@ -704,9 +764,26 @@ export default function App() {
   // ---------------------------------------------------------------- actions
   const onFile = async (file: File | undefined) => {
     if (!file) return;
+    addAction('gpx_file_open_requested', { file_name: file.name, file_size: file.size });
     touchedRef.current = true;
+    const xml = await file.text();
     try {
-      const next = ensureWaypoints(parseGpx(await file.text()));
+      const next = ensureWaypoints(parseGpx(xml));
+      reportInfo('gpx-topo GPX loaded', {
+        event_type: 'gpx_loaded',
+        source: 'file',
+        file_name: file.name,
+        file_size: file.size,
+        gpx_content: xml,
+        waypoint_count: next.waypoints.length,
+        route_distance_km: calculateStats(next.points).distanceKm,
+      });
+      addAction('gpx_loaded', {
+        source: 'file',
+        file_name: file.name,
+        file_size: file.size,
+        waypoint_count: next.waypoints.length,
+      });
       engineRef.current?.together();
       setPop(null);
       setOverrides({});
@@ -714,14 +791,21 @@ export default function App() {
       setFileName(file.name);
       setToast(`${file.name} を読み込みました (${next.points.length.toLocaleString('ja-JP')} 点)。`);
     } catch (error) {
+      reportError('load_gpx_file', error, { file_name: file.name, file_size: file.size, gpx_content: xml });
       setToast(error instanceof Error ? error.message : 'GPX を読み込めませんでした。');
     }
   };
 
   const exportPng = async () => {
-    const blob = await engineRef.current?.capture();
-    if (blob) downloadBlob(blob, `${route?.name || 'gpx-topo'}.png`);
-    else setToast('PNG を書き出せませんでした。');
+    addAction('png_export_requested', { route_name: route?.name || 'gpx-topo' });
+    try {
+      const blob = await engineRef.current?.capture();
+      if (blob) downloadBlob(blob, `${route?.name || 'gpx-topo'}.png`);
+      else setToast('PNG を書き出せませんでした。');
+    } catch (error) {
+      reportError('export_png', error, { route_name: route?.name || 'gpx-topo' });
+      setToast('PNG を書き出せませんでした。');
+    }
   };
 
   if (!native) return <Fallback />;
@@ -791,7 +875,10 @@ export default function App() {
                   type="button"
                   className="map-switch-option"
                   aria-pressed={baseMapStyle === 'pale'}
-                  onClick={() => setBaseMapStyle('pale')}
+                  onClick={() => {
+                    addAction('map_style_changed', { style: 'pale' });
+                    setBaseMapStyle('pale');
+                  }}
                 >
                   淡色地図
                 </button>
@@ -799,7 +886,10 @@ export default function App() {
                   type="button"
                   className="map-switch-option"
                   aria-pressed={baseMapStyle === 'photo'}
-                  onClick={() => setBaseMapStyle('photo')}
+                  onClick={() => {
+                    addAction('map_style_changed', { style: 'photo' });
+                    setBaseMapStyle('photo');
+                  }}
                 >
                   航空写真
                 </button>
@@ -812,7 +902,7 @@ export default function App() {
                   data-piece="pin"
                   data-way={way.id}
                   drawable=""
-                  onClick={() => engineRef.current?.focusWay(way.id)}
+                  onClick={() => focusWaypoint(way.id, 'map_pin')}
                 >
                   <span className="pin-label">
                     <b>{index + 1}</b>
@@ -1000,7 +1090,7 @@ export default function App() {
                           type="button"
                           className="way-go"
                           aria-label={`${way.name} の地点の光にする`}
-                          onClick={() => engineRef.current?.focusWay(way.id)}
+                          onClick={() => focusWaypoint(way.id, 'side_panel')}
                         >
                           <b>{index + 1}</b>
                         </button>
@@ -1091,6 +1181,7 @@ export default function App() {
                           aria-label={dateLabel(c.iso)}
                           onPointerEnter={() => peekDate(c.iso)}
                           onClick={() => {
+                            addAction('date_changed', { date: c.iso });
                             setDate(c.iso);
                             setMonth(c.iso.slice(0, 7));
                             engineRef.current?.closePop();
@@ -1194,7 +1285,17 @@ export default function App() {
                 ホイールで立体・ズーム · Esc で平面
               </span>
             </div>
-            <button type="button" className="key key-open" data-piece="key" data-key="open" drawable="" onClick={() => fileRef.current?.click()}>
+            <button
+              type="button"
+              className="key key-open"
+              data-piece="key"
+              data-key="open"
+              drawable=""
+              onClick={() => {
+                addAction('gpx_file_picker_opened');
+                fileRef.current?.click();
+              }}
+            >
               GPX を開く
             </button>
             <button
@@ -1205,7 +1306,10 @@ export default function App() {
               data-latched={placing ? '' : undefined}
               drawable=""
               aria-pressed={placing}
-              onClick={() => setPlacing((on) => !on)}
+              onClick={() => {
+                addAction('waypoint_placement_toggled', { enabled: !placing });
+                setPlacing((on) => !on);
+              }}
             >
               {placing ? 'ルートをクリック' : 'ウェイポイント追加'}
             </button>
@@ -1217,7 +1321,10 @@ export default function App() {
               data-face="front"
               drawable=""
               tabIndex={apart ? -1 : 0}
-              onClick={() => engineRef.current?.toggle()}
+              onClick={() => {
+                addAction('view_mode_toggled', { target: 'raised' });
+                engineRef.current?.toggle();
+              }}
             >
               起こす
             </button>
@@ -1229,7 +1336,10 @@ export default function App() {
               data-face="back"
               drawable=""
               tabIndex={apart ? 0 : -1}
-              onClick={() => engineRef.current?.toggle()}
+              onClick={() => {
+                addAction('view_mode_toggled', { target: 'flat' });
+                engineRef.current?.toggle();
+              }}
             >
               寝かす
             </button>
@@ -1243,7 +1353,11 @@ export default function App() {
               aria-label={flyoverPlaying ? (flyoverPaused ? 'Flyoverを再開' : 'Flyoverを一時停止') : 'Flyoverを再生'}
               aria-pressed={flyoverPlaying}
               disabled={flyoverReturning}
-              onClick={() => (flyoverPlaying ? engineRef.current?.toggleFlyoverPause() : engineRef.current?.flyover())}
+              onClick={() => {
+                addAction('flyover_control', { action: flyoverPlaying ? (flyoverPaused ? 'resume' : 'pause') : 'play' });
+                if (flyoverPlaying) engineRef.current?.toggleFlyoverPause();
+                else engineRef.current?.flyover();
+              }}
             >
               {flyoverPlaying ? (flyoverPaused ? '▶' : 'Ⅱ') : '▶'}
             </button>
@@ -1256,7 +1370,10 @@ export default function App() {
                 data-appear=""
                 drawable=""
                 aria-label="Flyoverを停止"
-                onClick={() => engineRef.current?.flyover()}
+                onClick={() => {
+                  addAction('flyover_control', { action: 'stop' });
+                  engineRef.current?.flyover();
+                }}
               >
                 ■
               </button>
