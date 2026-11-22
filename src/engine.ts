@@ -87,11 +87,12 @@ type Piece = {
   anchor: [number, number, number, number];
   /** detail: the part of the map its texture holds (map uv), set when it is uploaded */
   rect: [number, number, number, number] | null;
-  /** keys: which key, which face of it, the well it sits in on the bar, its side colour, and how it moves */
+  /** keys: which key, which face of it, the well it sits in on the bar, its side colour, its corner radius (CSS px), and how it moves */
   name: string;
   face: string;
   well: [number, number, number, number];
   side: Vec3;
+  radius: number;
   hot: number;
   press: number;
   flip: number;
@@ -148,6 +149,10 @@ const CARD_FLIP = (40 * Math.PI) / 180;
  */
 const CARD_GAP = 4;
 const CARD_GLIDE = 10;
+const CARD_RADIUS = 12;
+const CARD_THICKNESS = 3.2;
+const PANEL_CONTACT_MARGIN = 4;
+const PANEL_AVOID_TILT = 0.72;
 /** The part of the map in view is drawn again from finer tiles once it wants this much more than the whole map has. */
 const DETAIL_GAIN = 1.25;
 /** Longest side of the detail texture at a device pixel ratio of 1; it grows with the ratio. */
@@ -223,6 +228,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let flight: Flight | null = null;
   let panelAlpha = 1;
   let panelAlphaT = 1;
+  let panelAvoidReady = false;
+  let panelAvoidDepth = 0;
+  let panelAvoidNormal: Vec3 = [0, 0, 1];
   let placing = false;
   let disposed = false;
   let cam: Cam = { vp: new Float32Array(16), eye: [0, 0, 1], r: [1, 0, 0], u: [0, -1, 0], dir: [0, 0, 1], base: [0, 0, 0], yaw: 0, D: 1 };
@@ -734,6 +742,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       st.kmT = saved.kmT;
     }
     flight = null;
+    panelAvoidReady = false;
     callbacks.onFlightChange(null);
   }
 
@@ -756,6 +765,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (!flight || flight.phase === 'return') return;
     adoptRig(flight.current);
     flight = null;
+    panelAvoidReady = false;
     panelAlphaT = 0;
     callbacks.onFlightChange(null);
     need();
@@ -848,6 +858,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       return;
     }
     panelAlphaT = 1;
+    panelAvoidReady = false;
     const home = rigOf(camera(st.e, st.yaw, st.tilt, st.zoom, st.pan));
     flight = {
       phase: 'intro',
@@ -1014,6 +1025,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     face: '',
     well: [0, 0, 0, 0],
     side: [0.85, 0.86, 0.88],
+    radius: 9,
     hot: 0,
     press: 0,
     flip: 0,
@@ -1276,7 +1288,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       k.h = k.el.offsetHeight;
       const well = bar.el.querySelector<HTMLElement>(`[data-well="${k.name}"]`);
       if (well) k.well = [well.offsetLeft, well.offsetTop, well.offsetWidth, well.offsetHeight];
-      k.side = hex(getComputedStyle(k.el).getPropertyValue('--side')) ?? k.side;
+      const css = getComputedStyle(k.el);
+      k.side = hex(css.getPropertyValue('--side')) ?? k.side;
+      k.radius = parseFloat(css.borderTopLeftRadius) || k.radius;
     }
   }
   function hudFrame(dt: number, rise: number) {
@@ -1371,11 +1385,32 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       items.push(quad(k, { glow: 1 }));
       // the sides and the shadow belong to the key, not to each face
       if (!solid) continue;
-      const rr = Math.min(7, k.h / 3) * s;
-      items.push({ solid: side, useNormal: true, nrm: b, O: P(-hw + rr, hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
-      items.push({ solid: side, useNormal: true, nrm: neg(b), O: P(-hw + rr, -hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
-      items.push({ solid: side, useNormal: true, nrm: a, O: P(hw, -hh + rr, -hd), ex: b.map((v) => v * (2 * hh - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
-      items.push({ solid: side, useNormal: true, nrm: neg(a), O: P(-hw, -hh + rr, -hd), ex: b.map((v) => v * (2 * hh - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
+      // the sides follow the face's own rounded corners, so every key is closed at its corners whatever lies behind it
+      const rr = Math.min(k.radius, k.w / 2, k.h / 2) * s;
+      const deep = c.map((v) => v * 2 * hd) as Vec3;
+      items.push({ solid: side, useNormal: true, nrm: b, O: P(-hw + rr, hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: deep });
+      items.push({ solid: side, useNormal: true, nrm: neg(b), O: P(-hw + rr, -hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: deep });
+      items.push({ solid: side, useNormal: true, nrm: a, O: P(hw, -hh + rr, -hd), ex: b.map((v) => v * (2 * hh - 2 * rr)) as Vec3, ey: deep });
+      items.push({ solid: side, useNormal: true, nrm: neg(a), O: P(-hw, -hh + rr, -hd), ex: b.map((v) => v * (2 * hh - 2 * rr)) as Vec3, ey: deep });
+      const ARC = 4;
+      for (const [sx, sy] of [
+        [1, 1],
+        [-1, 1],
+        [-1, -1],
+        [1, -1],
+      ]) {
+        const base = Math.atan2(sy, sx) - Math.PI / 4;
+        const at2 = (t: number) => P(sx * (hw - rr) + rr * Math.cos(t), sy * (hh - rr) + rr * Math.sin(t), -hd);
+        for (let j = 0; j < ARC; j += 1) {
+          const t0 = base + ((Math.PI / 2) * j) / ARC;
+          const t1 = base + ((Math.PI / 2) * (j + 1)) / ARC;
+          const tm = (t0 + t1) / 2;
+          const p0 = at2(t0);
+          const p1 = at2(t1);
+          const nrm = [0, 1, 2].map((i) => a[i] * Math.cos(tm) + b[i] * Math.sin(tm)) as Vec3;
+          items.push({ solid: side, useNormal: true, nrm, O: p0, ex: [0, 1, 2].map((i) => p1[i] - p0[i]) as Vec3, ey: deep });
+        }
+      }
       const blur = 2.2 + d * 0.55 + up * 0.3;
       const m = blur * 1.2;
       const kx = wx + (ww - k.w) / 2;
@@ -1811,33 +1846,78 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
           const top = 18;
           const bottom = top + totalH * fit;
           const baseDepth = Math.max(1, cam.D * 0.58);
-          let depth = baseDepth;
-          let slope: Vec3 | null = null;
-          for (const sy of [top, (top + bottom) / 2, bottom]) {
-            for (const sx of [left, (left + vw - 18) / 2, vw - 18]) {
+          const panelUnit = (2 * baseDepth * Math.tan(FOV / 2)) / vh;
+          const cardDepth = CARD_THICKNESS * panelUnit * fit;
+          const contactMargin = panelUnit * PANEL_CONTACT_MARGIN;
+          let wantedDepth = baseDepth;
+          const slopeSum: Vec3 = [0, 0, 0];
+          let slopeWeight = 0;
+          let nearestTerrainDepth = Infinity;
+          const sampleSteps = 4;
+          for (let iy = 0; iy <= sampleSteps; iy += 1) {
+            const sy = top + ((bottom - top) * iy) / sampleSteps;
+            for (let ix = 0; ix <= sampleSteps; ix += 1) {
+              const sx = left + ((vw - 18 - left) * ix) / sampleSteps;
               const { o, d } = ray(cam, sx, sy);
               const P = pick(cam, sx, sy, lift);
               if (!P || P[0] < MAPX || P[0] > MAPX + MW || P[1] < MAPY || P[1] > MAPY + MH) continue;
               const groundDepth = (P[0] - o[0]) * d[0] + (P[1] - o[1]) * d[1] + (P[2] - o[2]) * d[2];
               const viewAngle = Math.max(0.05, -(d[0] * cam.dir[0] + d[1] * cam.dir[1] + d[2] * cam.dir[2]));
-              const safeDepth = (groundDepth - 8) * viewAngle;
-              if (safeDepth < depth) {
-                depth = Math.max(1, safeDepth);
-                slope = surfaceNormal(P[0] - MAPX, P[1] - MAPY, lift);
-              }
+              const terrainDepth = groundDepth * viewAngle;
+              nearestTerrainDepth = Math.min(nearestTerrainDepth, terrainDepth);
+              // Sample the whole panel so a peak between the old nine points cannot pierce it.
+              // Keep only a small screen-space margin for rasterisation, not a large visual gap.
+              const safeDepth = terrainDepth - cardDepth - contactMargin;
+              const penetration = baseDepth - safeDepth;
+              if (penetration <= 0) continue;
+              const local = surfaceNormal(P[0] - MAPX, P[1] - MAPY, lift);
+              const weight = clamp(penetration / Math.max(1, baseDepth), 0, 1);
+              for (let i = 0; i < 3; i += 1) slopeSum[i] += local[i] * weight;
+              slopeWeight += weight;
+              wantedDepth = Math.min(wantedDepth, Math.max(1, safeDepth));
             }
           }
-          const avoid = clamp((baseDepth - depth) / Math.max(1, baseDepth * 0.4), 0, 1);
-          let n = cam.dir;
-          if (slope && avoid > 0) {
-            n = slope.map((v, i) => lerp(cam.dir[i], v, 0.38 * avoid)) as Vec3;
-            const nl = Math.hypot(n[0], n[1], n[2]) || 1;
-            n = n.map((v) => v / nl) as Vec3;
+          if (!panelAvoidReady) {
+            panelAvoidReady = true;
+            panelAvoidDepth = baseDepth;
+            panelAvoidNormal = [...cam.dir];
           }
-          let u: Vec3 = [cam.r[1] * n[2] - cam.r[2] * n[1], cam.r[2] * n[0] - cam.r[0] * n[2], cam.r[0] * n[1] - cam.r[1] * n[0]];
-          if (u[0] * cam.u[0] + u[1] * cam.u[1] + u[2] * cam.u[2] < 0) u = u.map((v) => -v) as Vec3;
-          const plane = cam.eye.map((v, i) => v - cam.dir[i] * depth) as Vec3;
-          const unit = (2 * depth * Math.tan(FOV / 2)) / vh;
+          let targetNormal = cam.dir;
+          if (slopeWeight > 0) {
+            const length = Math.hypot(slopeSum[0], slopeSum[1], slopeSum[2]) || 1;
+            const slope = slopeSum.map((v) => v / length) as Vec3;
+            const tilt = PANEL_AVOID_TILT * clamp((baseDepth - wantedDepth) / Math.max(1, baseDepth * 0.4), 0, 1);
+            targetNormal = slope.map((v, i) => lerp(cam.dir[i], v, tilt)) as Vec3;
+            const nl = Math.hypot(targetNormal[0], targetNormal[1], targetNormal[2]) || 1;
+            targetNormal = targetNormal.map((v) => v / nl) as Vec3;
+          }
+          const panelAxis = (normal: Vec3) => {
+            let axis: Vec3 = [cam.r[1] * normal[2] - cam.r[2] * normal[1], cam.r[2] * normal[0] - cam.r[0] * normal[2], cam.r[0] * normal[1] - cam.r[1] * normal[0]];
+            const length = Math.hypot(axis[0], axis[1], axis[2]) || 1;
+            axis = axis.map((v) => v / length) as Vec3;
+            if (axis[0] * cam.u[0] + axis[1] * cam.u[1] + axis[2] * cam.u[2] < 0) axis = axis.map((v) => -v) as Vec3;
+            return axis;
+          };
+          if (Number.isFinite(nearestTerrainDepth)) {
+            const targetAxis = panelAxis(targetNormal);
+            const currentAxis = panelAxis(panelAvoidNormal);
+            const edgeDepth =
+              (bottom - top) * panelUnit * fit * 0.5 * Math.max(
+                Math.abs(targetAxis[0] * cam.dir[0] + targetAxis[1] * cam.dir[1] + targetAxis[2] * cam.dir[2]),
+                Math.abs(currentAxis[0] * cam.dir[0] + currentAxis[1] * cam.dir[1] + currentAxis[2] * cam.dir[2]),
+              );
+            wantedDepth = Math.min(wantedDepth, Math.max(1, nearestTerrainDepth - cardDepth - contactMargin - edgeDepth));
+          }
+          const depthEase = 1 - Math.exp(-dt * 3.4);
+          panelAvoidDepth += (wantedDepth - panelAvoidDepth) * depthEase;
+          panelAvoidDepth = clamp(panelAvoidDepth, 1, baseDepth);
+          const normalEase = 1 - Math.exp(-dt * 2.8);
+          panelAvoidNormal = panelAvoidNormal.map((v, i) => lerp(v, targetNormal[i], normalEase)) as Vec3;
+          const normalLength = Math.hypot(panelAvoidNormal[0], panelAvoidNormal[1], panelAvoidNormal[2]) || 1;
+          const n = panelAvoidNormal.map((v) => v / normalLength) as Vec3;
+          const u = panelAxis(n);
+          const plane = cam.eye.map((v, i) => v - cam.dir[i] * panelAvoidDepth) as Vec3;
+          const unit = (2 * panelAvoidDepth * Math.tan(FOV / 2)) / vh;
           return { gap, fit, unit, plane, r: cam.r, u, n };
         })()
       : null;
@@ -1965,13 +2045,23 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const opaque: DrawItem[] = [];
     for (const c of cards) {
       const back = c.nrm.map((v) => -v) as Vec3;
-      const depth = 8;
+      const scaleX = Math.hypot(c.ex[0], c.ex[1], c.ex[2]);
+      const scaleY = Math.hypot(c.ey[0], c.ey[1], c.ey[2]);
+      const depth = CARD_THICKNESS * Math.min(scaleX, scaleY);
       const backO = c.O.map((v, i) => v - c.nrm[i] * depth) as Vec3;
-      opaque.push(q(c, { O: backO, solid: [0.97, 0.97, 0.96], nrm: back, useNormal: true }));
+      opaque.push(
+        q(c, {
+          O: backO,
+          solid: [0.97, 0.97, 0.96],
+          round: [CARD_RADIUS / Math.max(1, c.w), CARD_RADIUS / Math.max(1, c.h)],
+          nrm: back,
+          useNormal: true,
+        }),
+      );
       opaque.push(q(c));
       if (lit > 0.05) {
         // a card has thickness: its lower and side edges
-        const T2 = 6 + 2 * lit;
+        const T2 = depth;
         const edge: Vec3 = [0.9, 0.9, 0.89];
         const dn = c.nrm.map((v) => -v * T2) as Vec3;
         const at = (fx: number, fy: number) => [0, 1, 2].map((i) => c.O[i] + c.ex[i] * fx + c.ey[i] * fy) as Vec3;

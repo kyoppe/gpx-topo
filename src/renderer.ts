@@ -24,6 +24,8 @@ export type DrawItem = {
   shade?: { w: number; h: number; blur: number; strength: number };
   /** a solid quad cut to an ellipse: its centre and radii in the quad's uv */
   disc?: [number, number, number, number];
+  /** a solid rounded rectangle: horizontal and vertical corner radii in uv */
+  round?: [number, number];
   /** a fixed darkening, for faces that should read as turned away even on the flat page */
   dim?: number;
 };
@@ -158,7 +160,7 @@ in vec2 vUV; in vec3 vW;
 uniform sampler2D uTex;
 ${COMMON}
 uniform float uTable, uRecv, uA2C, uAlpha, uUnlit, uUseN, uGlow, uDim;
-uniform vec4 uSolid, uDisc; uniform vec3 uNrm;
+uniform vec4 uSolid, uDisc; uniform vec2 uRound; uniform vec3 uNrm;
 uniform vec4 uShade;          // soft shadow: quad w, h, blur, strength
 out vec4 o;
 
@@ -190,6 +192,12 @@ void main(){
     alb*=1.0-0.20*exp(-max(sd,0.0)/7.0)-0.10*exp(-max(sd,0.0)/46.0);
   } else if(uSolid.a>0.5){
     alb=uSolid.rgb;
+    if(uRound.x>0.0&&uRound.y>0.0){
+      vec2 q=max(abs(vUV-0.5)-vec2(0.5-uRound.x,0.5-uRound.y),0.0)/uRound;
+      float d=length(q), aa=max(fwidth(d),0.002);
+      if(d>1.0+aa) discard;
+      a*=1.0-smoothstep(1.0-aa,1.0+aa,d);
+    }
     if(uDisc.z>0.0){
       vec2 d=(vUV-uDisc.xy)/uDisc.zw; float r=dot(d,d);
       if(r>1.0) discard;
@@ -646,6 +654,8 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
       gl.uniform1f(u.uGlow, it.glow ?? 0);
       const dc = it.disc ?? [0, 0, 0, 1];
       gl.uniform4f(u.uDisc, dc[0], dc[1], dc[2], dc[3]);
+      const rr = it.round ?? [0, 0];
+      gl.uniform2f(u.uRound, rr[0], rr[1]);
       gl.uniform1f(u.uDim, it.dim ?? 1);
       gl.uniform3fv(u.uNrm, it.nrm ?? [0, 0, 1]);
       gl.uniform4f(u.uSolid, it.solid?.[0] ?? 0, it.solid?.[1] ?? 0, it.solid?.[2] ?? 0, it.solid ? 1 : 0);
