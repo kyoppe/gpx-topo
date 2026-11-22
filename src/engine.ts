@@ -1590,9 +1590,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
       if (p.kind === 'content') {
         if (p.el.hasAttribute('data-map-control')) {
-          const mx = clamp(p.x - MAPX + p.w / 2, 0, MW);
-          const my = clamp(p.y - MAPY + p.h / 2, 0, MH);
-          const z = groundZ(mx, my, lift) + 1.2 + EPS * (20 + order);
+          const x0 = clamp(p.x - MAPX, 0, MW);
+          const x1 = clamp(p.x + p.w - MAPX, 0, MW);
+          const y0 = clamp(p.y - MAPY, 0, MH);
+          const y1 = clamp(p.y + p.h - MAPY, 0, MH);
+          const xs = [x0, (x0 + x1) / 2, x1];
+          const ys = [y0, (y0 + y1) / 2, y1];
+          const highest = Math.max(...xs.flatMap((x) => ys.map((y) => groundZ(x, y, lift))));
+          const clearance = 1.2 + 8 * lift;
+          const z = highest + clearance + EPS * (20 + order);
           p.ex = [1, 0, 0];
           p.ey = [0, 1, 0];
           p.z = z;
