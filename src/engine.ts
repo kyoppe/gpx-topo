@@ -153,6 +153,8 @@ const CARD_RADIUS = 12;
 const CARD_THICKNESS = 3.2;
 const PANEL_CONTACT_MARGIN = 4;
 const PANEL_AVOID_TILT = 0.72;
+const PIN_GAP = 6;
+const PIN_DODGE_GLIDE = 12;
 /** The part of the map in view is drawn again from finer tiles once it wants this much more than the whole map has. */
 const DETAIL_GAIN = 1.25;
 /** Longest side of the detail texture at a device pixel ratio of 1; it grows with the ratio. */
@@ -366,6 +368,62 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     });
     return gliding;
+  }
+  /** In the flat map, gently separate waypoint labels that overlap on screen. */
+  function dodgePins(dt: number, flat: number) {
+    const shown = pins.filter((p) => !p.hidden && p.w > 0 && p.h > 0);
+    if (!shown.length) return false;
+    const base = shown.map((p) => [...p.O] as Vec3);
+    const offsets = shown.map((p) => (flat > 0.001 ? [...p.dodge] : [0, 0])) as [number, number][];
+    const setOffset = (p: Piece, origin: Vec3, offset: [number, number]) => {
+      p.O = [0, 1, 2].map((i) => origin[i] + p.ex[i] * offset[0] + p.ey[i] * offset[1]) as Vec3;
+    };
+    const polygon = (p: Piece): ScreenPoint[] => cornersOf(p).map((P) => toScreen(P) ?? [0, 0]);
+    const local = (p: Piece, screen: ScreenPoint): [number, number] => {
+      const o = toScreen(p.O);
+      const x = toScreen([p.O[0] + p.ex[0], p.O[1] + p.ex[1], p.O[2] + p.ex[2]]);
+      const y = toScreen([p.O[0] + p.ey[0], p.O[1] + p.ey[1], p.O[2] + p.ey[2]]);
+      if (!o || !x || !y) return [0, 0];
+      const ax = x[0] - o[0];
+      const ay = x[1] - o[1];
+      const bx = y[0] - o[0];
+      const by = y[1] - o[1];
+      const det = ax * by - ay * bx;
+      if (Math.abs(det) < 1e-6) return [0, 0];
+      return [(screen[0] * by - screen[1] * bx) / det, (ax * screen[1] - ay * screen[0]) / det];
+    };
+    if (flat > 0.001) {
+      for (let pass = 0; pass < 6; pass += 1) {
+        shown.forEach((p, i) => setOffset(p, base[i], offsets[i]));
+        let clear = true;
+        for (let i = 0; i < shown.length; i += 1) {
+          for (let j = i + 1; j < shown.length; j += 1) {
+            const push = separation(polygon(shown[i]), polygon(shown[j]), PIN_GAP);
+            if (!push) continue;
+            clear = false;
+            const ai = local(shown[i], [-push[0] / 2, -push[1] / 2]);
+            const bj = local(shown[j], [push[0] / 2, push[1] / 2]);
+            offsets[i] = [offsets[i][0] + ai[0], offsets[i][1] + ai[1]];
+            offsets[j] = [offsets[j][0] + bj[0], offsets[j][1] + bj[1]];
+          }
+        }
+        if (clear) break;
+      }
+    }
+    const glide = 1 - Math.exp(-dt * PIN_DODGE_GLIDE);
+    let moving = false;
+    shown.forEach((p, i) => {
+      const target: [number, number] = [offsets[i][0] * flat, offsets[i][1] * flat];
+      const dx = target[0] - p.dodge[0];
+      const dy = target[1] - p.dodge[1];
+      if (Math.abs(dx) + Math.abs(dy) < 0.05) p.dodge = target;
+      else {
+        p.dodge = [p.dodge[0] + dx * glide, p.dodge[1] + dy * glide];
+        moving = true;
+      }
+      setOffset(p, base[i], p.dodge);
+    });
+    return moving;
   }
   /** Whether a card stands between the eye and a world point. */
   function behindCard(P: Vec3) {
@@ -2028,6 +2086,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
       p.O = [p.x, p.y, 0];
     }
+    if (dodgePins(dt, 1 - smooth(st.e / 0.24))) moving = true;
     for (const p of pieces) {
       if (p.kind === 'terrain' || p.kind === 'relief' || p.kind === 'detail' || p.kind === 'bar' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.hidden) continue;
       if (p.kind === 'pin' && pinCovered(p)) unplace(p);
