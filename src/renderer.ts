@@ -95,17 +95,23 @@ float terrainShadow(vec3 P){
   if(P.z>top) return 1.0;
   float lz=max(uSun.z,0.035), lxy=max(length(uSun.xy),1e-4);
   vec2 d=uSun.xy/lxy; float rise=lz/lxy;
-  float vis=1.0, t=1.2;
-  for(int i=0;i<48;i++){
+  // only the stretch of the ray over the map and below its top can be blocked: march that, finest where it starts
+  vec2 inv=1.0/(d+vec2(d.x>=0.0?1e-5:-1e-5,d.y>=0.0?1e-5:-1e-5));
+  vec2 t0=(uMap.xy-P.xy)*inv, t1=(uMap.xy+uMapPx-P.xy)*inv;
+  float a=max(max(min(t0.x,t1.x),min(t0.y,t1.y)),1.2);
+  float b=min(min(max(t0.x,t1.x),max(t0.y,t1.y)),(top-P.z)/rise);
+  if(b<=a) return 1.0;
+  // each pixel starts a little apart, so what the steps miss shows as fine grain rather than a staircase
+  float j=h21(gl_FragCoord.xy), vis=1.0;
+  for(int i=0;i<64;i++){
+    float x=(float(i)+j)/64.0;
+    float t=a+(b-a)*x*x;
     vec3 Q=vec3(P.xy+d*t,P.z+rise*t);
-    if(Q.z>top) break;
-    vec2 uv=(Q.xy-uMap.xy)*uMap.zw;
-    if(uv.x>=0.0&&uv.y>=0.0&&uv.x<=1.0&&uv.y<=1.0){
-      float w=0.5+t*0.022;
-      vis=min(vis,smoothstep(-w,w,Q.z-tzAt(uv)));
-      if(vis<0.01) break;
-    }
-    t=t*1.1+0.5;
+    vec2 uv=clamp((Q.xy-uMap.xy)*uMap.zw,0.0,1.0);
+    // farther from what casts it, the edge of a shadow is softer
+    float w=0.5+t*0.032;
+    vis=min(vis,smoothstep(-w,w,Q.z-tzAt(uv)));
+    if(vis<0.01) break;
   }
   return vis;
 }
