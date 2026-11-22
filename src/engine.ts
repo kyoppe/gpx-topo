@@ -1125,12 +1125,25 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const facing = Math.cos(th) >= 0 ? !back : back;
       if (facing) place(k);
       else unplace(k);
+      const neg = (v: Vec3) => v.map((x) => -x) as Vec3;
+      const side = k.side;
+      if (solid && facing) {
+        const gap = 0.12 * s;
+        const faceEy = back ? neg(b) : b;
+        const faceN = back ? neg(c) : c;
+        items.push({
+          solid: side,
+          useNormal: true,
+          nrm: faceN,
+          O: back ? P(-hw, hh, -hd + gap) : P(-hw, -hh, hd - gap),
+          ex: a.map((v) => v * 2 * hw) as Vec3,
+          ey: faceEy.map((v) => v * 2 * hh) as Vec3,
+        });
+      }
       items.push(quad(k, { glow: 1 }));
       // the sides and the shadow belong to the key, not to each face
       if (back || !solid) continue;
       const rr = Math.min(7, k.h / 3) * s;
-      const neg = (v: Vec3) => v.map((x) => -x) as Vec3;
-      const side = k.side;
       items.push({ solid: side, useNormal: true, nrm: b, O: P(-hw + rr, hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
       items.push({ solid: side, useNormal: true, nrm: neg(b), O: P(-hw + rr, -hh, -hd), ex: a.map((v) => v * (2 * hw - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
       items.push({ solid: side, useNormal: true, nrm: a, O: P(hw, -hh + rr, -hd), ex: b.map((v) => v * (2 * hh - 2 * rr)) as Vec3, ey: c.map((v) => v * 2 * hd) as Vec3 });
