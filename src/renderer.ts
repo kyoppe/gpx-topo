@@ -28,6 +28,16 @@ export type DrawItem = {
   round?: [number, number];
   /** a fixed darkening, for faces that should read as turned away even on the flat page */
   dim?: number;
+  /** a ring rather than a disc: the share of the radius that is cut out of the middle */
+  ring?: number;
+  /** a shine on a solid: strength and sharpness */
+  spec?: [number, number];
+  /**
+   * silk flying from a pole at its right edge (uv x = 1), drawn on a fine grid: how far it billows (world px), how far
+   * its waves have run, how many run across it, its size in CSS px (for the weave), and the share of its width that is
+   * the heading tape it hangs by
+   */
+  cloth?: { amp: number; phase: number; waves: number; px: [number, number]; hoist: number };
 };
 
 export type TerrainPass = {
@@ -160,12 +170,12 @@ in vec2 vUV; in vec3 vW;
 uniform sampler2D uTex;
 ${COMMON}
 uniform float uTable, uRecv, uA2C, uAlpha, uUnlit, uUseN, uGlow, uDim;
-uniform vec4 uSolid, uDisc; uniform vec2 uRound; uniform vec3 uNrm;
+uniform vec4 uSolid, uDisc; uniform vec2 uRound, uSpec; uniform vec3 uNrm, uEx, uEy; uniform float uRing;
 uniform vec4 uShade;          // soft shadow: quad w, h, blur, strength
 out vec4 o;
 
 void main(){
-  vec3 P=vW; vec4 t; vec3 alb; float a=1.0;
+  vec3 P=vW; vec4 t; vec3 alb; float a=1.0; vec3 nS=vec3(0.0);
   if(uShade.x>0.0){
     vec2 q=vUV*uShade.xy; float m=uShade.z*1.2;
     float sd=rbox(q,vec4(m,m,uShade.x-m,uShade.y-m),12.0);
@@ -200,15 +210,20 @@ void main(){
     }
     if(uDisc.z>0.0){
       vec2 d=(vUV-uDisc.xy)/uDisc.zw; float r=dot(d,d);
-      if(r>1.0) discard;
-      alb*=0.9+0.1*sqrt(1.0-r);
+      if(r>1.0||r<uRing*uRing) discard;
+      if(uUseN>0.5){
+        // round: a ball, or a ring's tube, bulging towards its normal
+        float q=uRing>0.0?(sqrt(r)-uRing)/(1.0-uRing)*2.0-1.0:sqrt(r);
+        vec2 dd=uRing>0.0?normalize(d)*q:d;
+        nS=normalize(normalize(uEx)*dd.x+normalize(uEy)*dd.y+normalize(uNrm)*sqrt(max(1.0-dot(dd,dd),0.0)));
+      } else alb*=0.9+0.1*sqrt(1.0-r);
     }
   } else {
     t=texture(uTex,vUV,-0.4); a=t.a;
     if(a<0.004) discard;
     alb=t.rgb/max(a,1e-4);
   }
-  vec3 n=uUseN>0.5?normalize(uNrm):vec3(0.0,0.0,1.0);
+  vec3 n=dot(nS,nS)>0.0?nS:(uUseN>0.5?normalize(uNrm):vec3(0.0,0.0,1.0));
   float ndl=uUseN>0.5?max(dot(n,uSun),0.0)*0.85+0.15*max(uSun.z,0.0):uSun.z;
   float sun=1.0, ao=1.0;
   if(uRecv>0.5){
@@ -230,6 +245,10 @@ void main(){
   col=mix(col,shoulder(col),uLight);
   if(uUnlit>0.5) col=alb*(1.0+0.35*uNight);
   if(uGlow>0.0) col=mix(col,alb*vec3(1.02,0.97,0.88),uGlow*uNight*uLight);
+  if(uSpec.x>0.0){
+    vec3 V=normalize(uEye-P), H=normalize(uSun+V);
+    col+=uSunCol*uExpo*uSpec.x*pow(max(dot(n,H),0.0),uSpec.y)*sun*uLight*mix(vec3(1.0),alb*1.6,0.5);
+  }
   col*=uDim;
   if(uTable>0.5){
     float far=length(P.xy-uEye.xy); col=mix(col,vec3(0.79,0.80,0.81),smoothstep(2200.0,9000.0,far));
@@ -352,6 +371,115 @@ void main(){
 
 type Program = { p: WebGLProgram; u: Record<string, WebGLUniformLocation | null> };
 
+// Silk on a fine grid, hemmed all round. It hangs still at the pole (uv x = 1) and billows more towards the fly end: travelling waves that
+// lean as they run, smaller ripples riding on them, and the weight of the cloth dragging the far corner down. The
+// normals come from the surface itself, so the folds catch the light: a soft wrapped diffuse, a sharp sheen along the
+// threads, and darker hollows.
+const CVS = `#version 300 es
+layout(location=0) in vec2 aPos;
+uniform mat4 uVP; uniform vec3 uO, uEx, uEy;
+uniform vec4 uCloth;          // amplitude (world px), phase, waves across, hoist share
+out vec2 vUV; out vec3 vW; out vec3 vN; out float vD;
+float lift(vec2 p){
+  float f=1.0-p.x, t=uCloth.y, k=uCloth.z*6.2831853;
+  float hold=smoothstep(0.0,0.3,f-uCloth.w);
+  float s=f*k-t+p.y*1.1;
+  float w=0.60*sin(s)+0.24*sin(s*1.83+p.y*2.9-t*0.37)+0.10*sin(f*k*3.4-t*1.9+p.y*6.3)+0.05*sin(f*k*7.1-t*2.6-p.y*9.0);
+  return uCloth.x*hold*(0.3+0.7*f)*w;
+}
+vec3 at(vec2 p){
+  vec3 n=normalize(cross(uEx,uEy)), ey=normalize(uEy), ex=normalize(uEx);
+  float f=1.0-p.x, hold=smoothstep(0.0,0.3,f-uCloth.w);
+  vec3 w=uO+p.x*uEx+p.y*uEy+n*lift(p);
+  // the far corner drops under the cloth's weight, and the billows draw the fly end in a little
+  w+=ey*uCloth.x*0.55*f*f*(0.25+0.75*p.y)*hold;
+  w+=ex*uCloth.x*0.25*f*hold;
+  return w;
+}
+void main(){
+  vec3 P=at(aPos);
+  const float e=1.0/160.0;
+  vN=normalize(cross(at(aPos+vec2(e,0.0))-P, at(aPos+vec2(0.0,e))-P));
+  vD=lift(aPos)/max(uCloth.x,1e-3);
+  vW=P; vUV=aPos; gl_Position=uVP*vec4(P,1.0);
+}`;
+
+const CFS = `#version 300 es
+precision highp float;
+in vec2 vUV; in vec3 vW; in vec3 vN; in float vD;
+uniform sampler2D uTex;
+${COMMON}
+uniform vec4 uCloth; uniform vec2 uPx; uniform vec3 uEx, uEy; uniform float uA2C, uAlpha;
+out vec4 o;
+void main(){
+  vec2 px=vUV*uPx;
+  float a=1.0;
+  float hoist=1.0-uCloth.w;
+  vec3 alb; float shine=1.0, rough=0.0;
+  vec4 t=texture(uTex,vUV,-0.6);
+  alb=t.rgb/max(t.a,1e-4);
+  vec3 n=normalize(vN);
+  vec3 V=normalize(uEye-vW);
+  if(dot(n,V)<0.0) n=-n;
+  vec3 ex=normalize(uEx), ey=normalize(uEy);
+  // the weave: fine threads either way, faded out before they would shimmer
+  float fx=fwidth(px.x), fy=fwidth(px.y);
+  float wv=clamp(1.6-max(fx,fy)*1.6,0.0,1.0);
+  float wx=sin(px.x*2.4), wy=sin(px.y*2.4);
+  alb*=1.0+0.05*wv*wx*wy;
+  n=normalize(n+(ex*cos(px.x*2.4)+ey*cos(px.y*2.4))*0.05*wv);
+  // the heading tape it hangs by: heavy canvas, stitched down, with a brass grommet at either end
+  if(vUV.x>hoist){
+    float b=(vUV.x-hoist)/uCloth.w;
+    alb=vec3(0.80,0.77,0.69)*(0.94+0.06*vn(px*vec2(0.9,0.25)))*(1.0+0.05*sin(px.y*3.1)*wv);
+    shine=0.25; rough=1.0;
+    float st=abs(px.x-(hoist*uPx.x+2.5));
+    if(st<0.7&&fract(px.y/6.0)<0.6) alb*=0.55;
+    vec2 g=vec2((hoist+uCloth.w*0.5)*uPx.x, 0.0);
+    float gr=uCloth.w*uPx.x*0.3;
+    for(int i=0;i<2;i++){
+      g.y=i==0?gr*1.7:uPx.y-gr*1.7;
+      float d=length(px-g);
+      if(d<gr*0.55) discard;
+      if(d<gr){
+        alb=vec3(0.78,0.6,0.3); shine=2.2;
+        vec2 r=(px-g)/gr; float q=(length(r)-0.55)/0.45*2.0-1.0;
+        n=normalize(n+(ex*r.x+ey*r.y)/max(length(r),1e-3)*q*0.8);
+      }
+    }
+  } else {
+    // hems: the edges are turned under and stitched
+    float hm=min(min(px.y,uPx.y-px.y),px.x);
+    if(hm<7.0){ alb*=0.86; if(abs(hm-4.5)<0.6&&fract(px.x/5.0)<0.6) alb*=0.6; }
+  }
+  vec3 L=normalize(uSun), H=normalize(L+V);
+  float sun=terrainShadow(vW+n*0.6);
+  float wrap=max((dot(n,L)+0.4)/1.4,0.0);
+  // silk: a broad sheen and a sharp one, stretched along the threads, and a glow at grazing angles
+  float th=dot(ex,H); float along=pow(sqrt(max(1.0-th*th,0.0)),70.0);
+  float sharp=pow(max(dot(n,H),0.0),90.0);
+  float broad=pow(max(dot(n,H),0.0),12.0);
+  float fres=pow(1.0-max(dot(n,V),0.0),4.0);
+  float hollow=0.78+0.22*smoothstep(-1.0,0.8,vD*sign(dot(normalize(cross(uEx,uEy)),V)));
+  vec3 light=uAmb*hollow+uSunCol*wrap*sun*hollow;
+  if(uNight>0.01) light+=lampLight(vW,n)*uNight*1.6;
+  vec3 col=alb*light*uExpo;
+  vec3 tint=mix(vec3(1.0),alb,0.25)*mix(1.0,0.2,rough);
+  col+=uSunCol*uExpo*tint*sun*shine*(0.55*sharp+0.18*broad+0.22*along*(1.0-rough));
+  col+=uAmb*fres*0.35*shine;
+  // what the silk mirrors: a soft sky above, the ground below, and the long bright streaks of the sky's light down
+  // each fold, as a studio light would draw them
+  vec3 R=reflect(-V,n);
+  vec3 env=mix(vec3(0.16,0.17,0.19),vec3(0.78,0.81,0.86),smoothstep(-0.25,0.75,R.z));
+  float streak=pow(max(dot(R,normalize(vec3(-0.25,0.35,0.9))),0.0),24.0)+0.6*pow(max(dot(R,normalize(vec3(0.5,-0.6,0.62))),0.0),40.0);
+  col+=(env*(0.06+0.5*fres)+vec3(1.0,0.98,0.95)*streak*0.55)*shine*(1.0-rough)*mix(1.0,0.75,uNight)*uExpo;
+  col=mix(alb,col,uLight);
+  col=mix(col,shoulder(col),uLight);
+  col=grade(col);
+  a*=uAlpha;
+  if(uA2C>0.5) o=vec4(col,a); else o=vec4(col*a,a);
+}`;
+
 export type Renderer = ReturnType<typeof createRenderer>;
 
 export function createRenderer(canvas: HtmlInCanvasElement) {
@@ -389,6 +517,7 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
   };
   const main = program(VS, FS);
   const land = program(TVS, TFS);
+  const silk = program(CVS, CFS);
   const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
   const maxAniso = aniso ? Math.min(16, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT) as number) : 0;
   const floatLinear = !!gl.getExtension('OES_texture_float_linear');
@@ -401,6 +530,34 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  // a fine grid for cloth, which bends where a quad cannot
+  const CLOTH_X = 120;
+  const CLOTH_Y = 60;
+  const clothVao = gl.createVertexArray()!;
+  gl.bindVertexArray(clothVao);
+  const clothBuffer = gl.createBuffer();
+  const clothIndex = gl.createBuffer();
+  {
+    const v = new Float32Array((CLOTH_X + 1) * (CLOTH_Y + 1) * 2);
+    for (let j = 0; j <= CLOTH_Y; j += 1) for (let i = 0; i <= CLOTH_X; i += 1) v.set([i / CLOTH_X, j / CLOTH_Y], (j * (CLOTH_X + 1) + i) * 2);
+    const idx = new Uint16Array(CLOTH_X * CLOTH_Y * 6);
+    let k = 0;
+    for (let j = 0; j < CLOTH_Y; j += 1) {
+      for (let i = 0; i < CLOTH_X; i += 1) {
+        const a = j * (CLOTH_X + 1) + i;
+        idx.set([a, a + 1, a + CLOTH_X + 1, a + 1, a + CLOTH_X + 2, a + CLOTH_X + 1], k);
+        k += 6;
+      }
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, clothBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, clothIndex);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  }
+  const clothCount = CLOTH_X * CLOTH_Y * 6;
 
   const meshVao = gl.createVertexArray()!;
   gl.bindVertexArray(meshVao);
@@ -640,8 +797,27 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
     gl.bindVertexArray(quad);
     const u = main.u;
     gl.uniform1i(u.uTex, 0);
+    let a2c = true;
     const item = (it: DrawItem) => {
       if (it.tex && !it.tex.ready) return;
+      if (it.cloth) {
+        const c = it.cloth;
+        const su = silk.u;
+        gl.useProgram(silk.p);
+        gl.bindTexture(gl.TEXTURE_2D, it.tex ? it.tex.tex : white);
+        gl.uniform3fv(su.uO, it.O);
+        gl.uniform3fv(su.uEx, it.ex);
+        gl.uniform3fv(su.uEy, it.ey);
+        gl.uniform4f(su.uCloth, c.amp, c.phase, c.waves, c.hoist);
+        gl.uniform2f(su.uPx, c.px[0], c.px[1]);
+        gl.uniform1f(su.uAlpha, it.alpha ?? 1);
+        gl.uniform1f(su.uA2C, a2c ? 1 : 0);
+        gl.bindVertexArray(clothVao);
+        gl.drawElements(gl.TRIANGLES, clothCount, gl.UNSIGNED_SHORT, 0);
+        gl.bindVertexArray(quad);
+        gl.useProgram(main.p);
+        return;
+      }
       gl.bindTexture(gl.TEXTURE_2D, it.tex ? it.tex.tex : white);
       gl.uniform3fv(u.uO, it.O);
       gl.uniform3fv(u.uEx, it.ex);
@@ -656,6 +832,9 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
       gl.uniform4f(u.uDisc, dc[0], dc[1], dc[2], dc[3]);
       const rr = it.round ?? [0, 0];
       gl.uniform2f(u.uRound, rr[0], rr[1]);
+      gl.uniform1f(u.uRing, it.ring ?? 0);
+      const sp = it.spec ?? [0, 1];
+      gl.uniform2f(u.uSpec, sp[0], sp[1]);
       gl.uniform1f(u.uDim, it.dim ?? 1);
       gl.uniform3fv(u.uNrm, it.nrm ?? [0, 0, 1]);
       gl.uniform4f(u.uSolid, it.solid?.[0] ?? 0, it.solid?.[1] ?? 0, it.solid?.[2] ?? 0, it.solid ? 1 : 0);
@@ -667,9 +846,11 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
       gl.disable(gl.BLEND);
       gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
       gl.uniform1f(u.uA2C, 1);
+      a2c = true;
       for (const it of opaque) item(it);
       gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
       gl.uniform1f(u.uA2C, 0);
+      a2c = false;
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthMask(false);
@@ -677,6 +858,10 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
       gl.depthMask(true);
       gl.disable(gl.BLEND);
     };
+    gl.useProgram(silk.p);
+    common(silk, S, S.light, false);
+    gl.uniform1i(silk.u.uTex, 0);
+    gl.useProgram(main.p);
     common(main, S, S.light, false);
     pass(S.opaque, S.blend);
     if (S.hud.length) {
@@ -696,10 +881,14 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
     gl.deleteBuffer(quadBuffer);
     gl.deleteBuffer(meshBuffer);
     gl.deleteBuffer(meshIndex);
+    gl.deleteBuffer(clothBuffer);
+    gl.deleteBuffer(clothIndex);
+    gl.deleteVertexArray(clothVao);
     gl.deleteVertexArray(quad);
     gl.deleteVertexArray(meshVao);
     gl.deleteProgram(main.p);
     gl.deleteProgram(land.p);
+    gl.deleteProgram(silk.p);
   }
 
   return { gl, setTerrain, clearTerrain, setMesh, layer, deleteLayer, upload, draw, dispose, maxTexture };

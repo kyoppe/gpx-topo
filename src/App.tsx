@@ -8,6 +8,7 @@ import { createMapProjection, pathD, projectTrack, type MapProjection } from './
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
+import { FlagContent, useFlagBrushes } from './Flag';
 import { buildTerrain } from './terrain';
 
 const DEFAULT_GPX_URL = '/fixtures/SFMT2026-110km.gpx';
@@ -213,6 +214,10 @@ export default function App() {
   const [baseMapStyle, setBaseMapStyle] = useState<MapStyle>('pale');
   const [demGrid, setDemGrid] = useState<{ projection: MapProjection; grid: ElevationGrid } | null>(null);
   const [apart, setApart] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const flagRef = useRef<HTMLDivElement>(null);
+  const flagTwinRef = useRef<HTMLDivElement>(null);
+  const flagBrushes = useFlagBrushes(flagRef, flagTwinRef);
   const [placing, setPlacing] = useState(false);
   const [showHigh, setShowHigh] = useState(false);
   const [addKm, setAddKm] = useState('');
@@ -534,6 +539,7 @@ export default function App() {
         onRouteClick: (km) => routeClickRef.current(km),
         onDetail: setDetailWanted,
         onFlightChange: setFlyoverPhase,
+        onInfoChange: setInfoOpen,
         onTimeCommit: (target, minutes) => {
           if (target === 'start') setStartTime(clockInput(minutes));
           else setOverrides((current) => ({ ...current, [target]: minutes }));
@@ -1165,6 +1171,10 @@ export default function App() {
                 )}
               </div>
             )}
+            {/* the (i) flag: a pirate flag the engine drops onto the map and flies in the wind; its links stay real links */}
+            <div ref={flagRef} className="flag" data-piece="flag" drawable="" role="dialog" aria-label="gpx-topo について" aria-hidden={!infoOpen}>
+              <FlagContent brushes={flagBrushes} />
+            </div>
           </div>
 
           {/* the bar: each button is drawn as a key on a slab in front of the camera, and still is the button */}
@@ -1260,6 +1270,21 @@ export default function App() {
           </nav>
         </div>
       </canvas>
+
+      <div ref={flagTwinRef} className="flag flag-twin" aria-hidden="true">
+        <FlagContent brushes={[]} twin />
+      </div>
+      <button
+        type="button"
+        className="info-button"
+        aria-label="使い方とリンク"
+        title="使い方とリンク"
+        aria-pressed={infoOpen}
+        disabled={flyoverPlaying || flyoverReturning}
+        onClick={() => engineRef.current?.toggleInfo()}
+      >
+        i
+      </button>
 
       <input
         ref={fileRef}
