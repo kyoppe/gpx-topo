@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { decodeDemElevation } from './dem';
+import { cropElevationGrid, decodeDemElevation } from './dem';
 
 describe('GSI DEM PNG decoder', () => {
   it('decodes positive and negative elevations from RGB values', () => {
@@ -10,5 +10,16 @@ describe('GSI DEM PNG decoder', () => {
 
   it('returns null for GSI no-data pixels', () => {
     expect(decodeDemElevation(128, 0, 0)).toBeNull();
+  });
+
+  it('crops a visible window from a prefetched grid', () => {
+    const source = {
+      nx: 2,
+      ny: 2,
+      values: new Float32Array([0, 10, 20, 10, 20, 30, 20, 30, 40]),
+      source: 'gsi-dem' as const,
+    };
+    const cropped = cropElevationGrid(source, 4, 4, 1, 1, 2, 2, 2, 2);
+    expect(Array.from(cropped.values)).toEqual([10, 15, 20, 15, 20, 25, 20, 25, 30]);
   });
 });

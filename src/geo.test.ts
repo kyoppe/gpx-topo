@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { nearestAlong } from './geo';
+import { createCenteredProjection, nearestAlong } from './geo';
 
 // an L on screen: 0 to 10 km along the top, then 10 to 15 km down the right
 const line = [
@@ -27,5 +27,22 @@ describe('nearestAlong', () => {
   it('needs two points', () => {
     expect(nearestAlong([], 0, 0)).toBeNull();
     expect(nearestAlong([line[0]], 0, 0)).toBeNull();
+  });
+});
+
+describe('createCenteredProjection', () => {
+  it('keeps the requested center at the middle of the map', () => {
+    const projection = createCenteredProjection(35.681236, 139.767125, 800, 600, 3);
+    expect(projection.inverse(400, 300).lat).toBeCloseTo(35.681236, 6);
+    expect(projection.inverse(400, 300).lon).toBeCloseTo(139.767125, 6);
+    expect(projection.project({ lat: 35.681236, lon: 139.767125 })).toMatchObject({ x: 400, y: 300 });
+  });
+
+  it('wraps longitude when panning across the date line', () => {
+    const projection = createCenteredProjection(0, 179.8, 800, 600, 8);
+    const point = projection.project({ lat: 0, lon: -179.8 });
+    expect(point.x).toBeGreaterThan(0);
+    expect(point.x).toBeLessThan(800);
+    expect(projection.inverse(point.x, point.y).lon).toBeCloseTo(-179.8, 6);
   });
 });

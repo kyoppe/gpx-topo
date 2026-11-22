@@ -164,3 +164,38 @@ export function gpxElevationGrid(
   }
   return { nx, ny, values, source: 'gpx' };
 }
+
+/** Crops a rectangular map-space window from a larger elevation grid. */
+export function cropElevationGrid(
+  source: ElevationGrid,
+  sourceWidth: number,
+  sourceHeight: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  nx: number,
+  ny: number,
+): ElevationGrid {
+  const sourceW = source.nx + 1;
+  const sample = (px: number, py: number) => {
+    const gx = Math.max(0, Math.min(1, px / sourceWidth)) * source.nx;
+    const gy = Math.max(0, Math.min(1, py / sourceHeight)) * source.ny;
+    const i = Math.min(source.nx - 1, Math.floor(gx));
+    const j = Math.min(source.ny - 1, Math.floor(gy));
+    const fx = gx - i;
+    const fy = gy - j;
+    const a = source.values[j * sourceW + i];
+    const b = source.values[j * sourceW + i + 1];
+    const c = source.values[(j + 1) * sourceW + i];
+    const d = source.values[(j + 1) * sourceW + i + 1];
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+  };
+  const values = new Float32Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j += 1) {
+    for (let i = 0; i <= nx; i += 1) {
+      values[j * (nx + 1) + i] = sample(x + (i / nx) * width, y + (j / ny) * height);
+    }
+  }
+  return { nx, ny, values, source: source.source };
+}

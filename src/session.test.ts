@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { loadStart, saveStart, startNow } from './session';
+import { loadStart, loadView, saveStart, saveView, startNow } from './session';
 
 describe('session', () => {
   beforeEach(() => localStorage.clear());
@@ -18,5 +18,28 @@ describe('session', () => {
 
   it('starts a new GPX now, to the minute', () => {
     expect(startNow(new Date(2026, 10, 2, 7, 5, 42))).toEqual({ date: '2026-11-02', time: '07:05' });
+  });
+
+  it('keeps the last view and map viewport for the next visit', () => {
+    saveView({
+      viewMode: 'map',
+      mapViewport: { lat: 38.0123, lon: 138.1234, scale: 1.75 },
+      baseMapStyle: 'photo',
+    });
+    expect(loadView()).toEqual({
+      viewMode: 'map',
+      mapViewport: { lat: 38.0123, lon: 138.1234, scale: 1.75 },
+      baseMapStyle: 'photo',
+    });
+  });
+
+  it('ignores an invalid saved view', () => {
+    localStorage.setItem(
+      'gpx-topo:view',
+      JSON.stringify({ viewMode: 'map', mapViewport: { lat: 91, lon: 0, scale: 1 }, baseMapStyle: 'pale' }),
+    );
+    expect(loadView()).toBeNull();
+    localStorage.setItem('gpx-topo:view', 'not json');
+    expect(loadView()).toBeNull();
   });
 });

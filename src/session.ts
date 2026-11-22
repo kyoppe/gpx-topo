@@ -1,3 +1,5 @@
+import type { ViewMode } from './mapMode';
+
 // What carries over to the next visit: the GPX last opened, the plan made on it (its waypoints, their target times,
 // the route's title), and the start (date and time) set for it.
 //
@@ -6,10 +8,17 @@
 
 export type Start = { date: string; time: string };
 export type SavedGpx = { name: string; xml: string };
+export type MapViewport = { lat: number; lon: number; scale: number };
+export type SavedView = {
+  viewMode: ViewMode;
+  mapViewport: MapViewport | null;
+  baseMapStyle: 'pale' | 'photo';
+};
 /** The plan made on a GPX: which file it belongs to, and what was changed on it. */
 export type SavedPlan<W> = { file: string; title: string; waypoints: W[]; overrides: Record<string, number> };
 
 const START_KEY = 'gpx-topo:start';
+const VIEW_KEY = 'gpx-topo:view';
 const DB_NAME = 'gpx-topo';
 const STORE = 'gpx';
 const LAST = 'last';
@@ -31,6 +40,50 @@ export function loadStart(): Start | null {
 export function saveStart(start: Start) {
   try {
     localStorage.setItem(START_KEY, JSON.stringify(start));
+  } catch {
+    // not kept: the next visit starts from the defaults
+  }
+}
+
+function validMapViewport(value: unknown): value is MapViewport {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<MapViewport>;
+  return (
+    typeof candidate.lat === 'number' &&
+    Number.isFinite(candidate.lat) &&
+    candidate.lat >= -90 &&
+    candidate.lat <= 90 &&
+    typeof candidate.lon === 'number' &&
+    Number.isFinite(candidate.lon) &&
+    candidate.lon >= -180 &&
+    candidate.lon <= 180 &&
+    typeof candidate.scale === 'number' &&
+    Number.isFinite(candidate.scale) &&
+    candidate.scale > 0
+  );
+}
+
+export function loadView(): SavedView | null {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<SavedView>;
+    if (value.viewMode !== 'gpx' && value.viewMode !== 'map') return null;
+    if (value.baseMapStyle !== 'pale' && value.baseMapStyle !== 'photo') return null;
+    if (value.mapViewport !== null && !validMapViewport(value.mapViewport)) return null;
+    return {
+      viewMode: value.viewMode,
+      mapViewport: value.mapViewport,
+      baseMapStyle: value.baseMapStyle,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveView(view: SavedView) {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(view));
   } catch {
     // not kept: the next visit starts from the defaults
   }

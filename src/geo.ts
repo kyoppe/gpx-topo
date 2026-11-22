@@ -139,6 +139,85 @@ export function createMapProjection(
   };
 }
 
+/** Creates a fixed-scale projection centred on a latitude/longitude. */
+export function createCenteredProjection(
+  centerLat: number,
+  centerLon: number,
+  width: number,
+  height: number,
+  scale: number,
+): MapProjection {
+  const safeScale = Math.max(1e-6, scale);
+  const center = worldPoint(centerLat, centerLon);
+  const originX = center.x - width / 2 / safeScale;
+  const originY = center.y - height / 2 / safeScale;
+  const normalizedLon = ((centerLon + 540) % 360) - 180;
+  const metersPerPixel =
+    (EARTH_CIRCUMFERENCE_M * Math.cos((centerLat * Math.PI) / 180)) / TILE / safeScale;
+  const nearestWorldX = (x: number) => {
+    let result = x;
+    while (result - center.x > TILE / 2) result -= TILE;
+    while (result - center.x < -TILE / 2) result += TILE;
+    return result;
+  };
+  const project = (point: { lat: number; lon: number; ele?: number | null }): MapPoint => {
+    const world = worldPoint(point.lat, point.lon);
+    return {
+      x: (nearestWorldX(world.x) - originX) * safeScale,
+      y: (world.y - originY) * safeScale,
+      ele: point.ele ?? null,
+    };
+  };
+  const inverse = (x: number, y: number) => {
+    const point = geoPoint(originX + x / safeScale, originY + y / safeScale);
+    return {
+      lat: point.lat,
+      lon: ((point.lon + 540) % 360) - 180,
+    };
+  };
+  const tiles = (zoom: number) => {
+    const count = 2 ** zoom;
+    const tileWorld = TILE / count;
+    const size = tileWorld * safeScale;
+    const x0 = Math.floor(originX / tileWorld);
+    const x1 = Math.floor((originX + width / safeScale) / tileWorld);
+    const y0 = Math.max(0, Math.floor(originY / tileWorld));
+    const y1 = Math.min(count - 1, Math.floor((originY + height / safeScale) / tileWorld));
+    const list: MapTile[] = [];
+    for (let ty = y0; ty <= y1; ty += 1) {
+      for (let tx = x0; tx <= x1; tx += 1) {
+        const wrapped = ((tx % count) + count) % count;
+        list.push({
+          key: `${zoom}/${wrapped}/${ty}`,
+          z: zoom,
+          x: wrapped,
+          y: ty,
+          left: (tx * tileWorld - originX) * safeScale,
+          top: (ty * tileWorld - originY) * safeScale,
+          size,
+        });
+      }
+    }
+    return list;
+  };
+  const zoomFor = (texelsPerPx: number, min: number, max: number) =>
+    Math.max(min, Math.min(max, Math.round(Math.log2(safeScale * texelsPerPx))));
+  return {
+    width,
+    height,
+    scale: safeScale,
+    originX,
+    originY,
+    centerLat,
+    centerLon: normalizedLon,
+    metersPerPixel,
+    project,
+    inverse,
+    tiles,
+    zoomFor,
+  };
+}
+
 /** Projects the track and resamples it so consecutive points are at least `spacing` map px apart. */
 export function projectTrack(
   points: readonly TrackPoint[],

@@ -27,6 +27,7 @@ export type EngineModel = {
   lat: number;
   lon: number;
   mapStyle: 'pale' | 'photo';
+  mapMode: boolean;
   /** Where a distance along the route sits on the elevation profile drawing. */
   profilePoint(km: number): [number, number];
   /** The distance along the route (km) at an x on the elevation profile drawing. */
@@ -40,6 +41,10 @@ export type PhotoCloseVia = 'button' | 'escape';
 
 export type EngineCallbacks = {
   onApartChange(apart: boolean): void;
+  /** A flat-map drag moved the visible map by this incremental screen delta. */
+  onMapDrag(dx: number, dy: number): void;
+  /** A completed drag in the flat map mode, in screen px. */
+  onMapPan(dx: number, dy: number): void;
   /** A click while placing a waypoint: how far along the route (km) it landed, or null when it missed the route. */
   onRouteClick(km: number | null): void;
   onDetail(request: DetailRequest | null): void;
@@ -278,7 +283,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let vh = 1;
   let last = 0;
   let pending = false;
-  let drag: 'turn' | 'pan' | 'drum' | 'runner' | null = null;
+  let drag: 'turn' | 'pan' | 'map' | 'drum' | 'runner' | null = null;
   let activeWay: string | null = null;
   let flight: Flight | null = null;
   /** the (i) flag: waiting for the map to stand, falling, planted, or being pulled out; and the view to go back to */
@@ -3244,6 +3249,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let py = 0;
   let moved = 0;
   let downOnMap = false;
+  let mapDragTotal: [number, number] = [0, 0];
   let panFrom: { cam: Cam; P: Vec3; pan: Vec3 } | null = null;
   const onPointerDown = (ev: PointerEvent) => {
     const t = ev.target as Element;
@@ -3282,6 +3288,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     px = ev.clientX;
     py = ev.clientY;
     downOnMap = onTerrain(t);
+    if (!panning && model?.mapMode && st.eT < 0.5 && st.e < 0.03 && downOnMap) {
+      drag = 'map';
+      mapDragTotal = [0, 0];
+      canvas.setPointerCapture(ev.pointerId);
+      canvas.classList.add('turning');
+      return;
+    }
     // laid flat, the page stays where it is: only the model is moved about
     if ((panning || ev.shiftKey) && st.eT < 0.5) return;
     drag = panning || ev.shiftKey ? 'pan' : 'turn';
@@ -3340,6 +3353,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     px = ev.clientX;
     py = ev.clientY;
     moved += Math.abs(dx) + Math.abs(dy);
+    if (drag === 'map') {
+      // Move the already-rendered map image while dragging. React and the
+      // tile/DEM effects are updated only once the pointer is released.
+      callbacks.onMapDrag(dx, dy);
+      mapDragTotal[0] += dx;
+      mapDragTotal[1] += dy;
+      need();
+      return;
+    }
     if (drag === 'pan' && panFrom) {
       const [sx, sy] = canvasPoint(ev);
       const { o, d } = ray(panFrom.cam, sx, sy);
@@ -3365,6 +3387,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const was = drag;
     drag = null;
     panFrom = null;
+    if (was === 'map') {
+      if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapPan(...mapDragTotal);
+      mapDragTotal = [0, 0];
+    }
     if (was === 'drum' && drumDrag) {
       const d = drumDrag.drum;
       // a click picks the row; a flick keeps it turning a little
@@ -3701,6 +3727,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     toggleInfo,
     showPhoto,
     hidePhoto,
+    isFlat: () => st.e < 0.03 && st.eT < 0.03,
     focusWay,
     setPlacing,
     capture,

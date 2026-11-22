@@ -51,6 +51,15 @@ export function FlagContent({ brushes, copy, twin = false }: { brushes: Brush[];
         <p className="flag-lead">{copy.flag.lead}</p>
         <div className="flag-cols">
           <section>
+            <h3>{copy.flag.modes}</h3>
+            <ul>
+              <li>
+                <strong>{copy.ui.gpxMode}</strong> - {copy.flag.gpxModeDescription}
+              </li>
+              <li>
+                <strong>{copy.ui.mapMode}</strong> - {copy.flag.mapModeDescription}
+              </li>
+            </ul>
             <h3>{copy.flag.loadRoute}</h3>
             <ul>
               {copy.flag.loadRouteItems.map((item) => (
@@ -59,12 +68,17 @@ export function FlagContent({ brushes, copy, twin = false }: { brushes: Brush[];
             </ul>
             <h3>{copy.flag.viewMap}</h3>
             <ul>
-              {copy.flag.viewMapItems.map((item) => (
+              {copy.flag.viewMapItems.slice(0, 2).map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
           </section>
           <section>
+            <ul className="flag-continuation">
+              {copy.flag.viewMapItems.slice(2).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
             <h3>{copy.flag.waypointsAndTimes}</h3>
             <ul>
               {copy.flag.waypointsAndTimesItems.map((item) => (

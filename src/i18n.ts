@@ -104,6 +104,13 @@ export type Copy = {
     loadingGpx: string;
     dragHint: string;
     scrollHint: string;
+    mapMode: string;
+    gpxMode: string;
+    mapSearchPlaceholder: string;
+    mapSearchSubmit: string;
+    mapSearchNoResults: string;
+    mapSearchFailed: string;
+    mapSearchBusy: string;
     openGpx: string;
     clickRouteMode: string;
     raise: string;
@@ -117,6 +124,9 @@ export type Copy = {
   };
   flag: {
     lead: string;
+    modes: string;
+    gpxModeDescription: string;
+    mapModeDescription: string;
     loadRoute: string;
     loadRouteItems: readonly [string, string];
     viewMap: string;
@@ -221,6 +231,13 @@ function makeCopy(language: Language): Copy {
         loadingGpx: 'GPX を読み込み中',
         dragHint: 'ドラッグで回転 · 右ドラッグで移動',
         scrollHint: 'ホイールで立体・ズーム · Esc で平面',
+        mapMode: 'Map',
+        gpxMode: 'GPX',
+        mapSearchPlaceholder: '住所・地名・座標・GoogleマップURL',
+        mapSearchSubmit: '検索',
+        mapSearchNoResults: '検索結果がありません。',
+        mapSearchFailed: '検索できませんでした。',
+        mapSearchBusy: '検索中…',
         openGpx: 'GPX を開く',
         clickRouteMode: 'ルートをクリック',
         raise: '起こす',
@@ -234,6 +251,9 @@ function makeCopy(language: Language): Copy {
       },
       flag: {
         lead: 'GPX のルートを、国土地理院の地図と標高から作った立体模型の上で見るアプリです。',
+        modes: 'モード',
+        gpxModeDescription: 'GPXを開き、ルート・ウェイポイント・経過時間を扱います。',
+        mapModeDescription: '地図を検索・ドラッグし、選んだ範囲を立体化します。',
         loadRoute: 'ルートを読み込む',
         loadRouteItems: ['「GPX を開く」で手元の GPX ファイルを読み込む（最初はサンプルのコース）', 'カメラのボタンで、今の画面を PNG で保存'],
         viewMap: '地図を見る',
@@ -342,6 +362,13 @@ function makeCopy(language: Language): Copy {
       loadingGpx: 'Loading GPX',
       dragHint: 'Drag to rotate · Right-drag to move',
       scrollHint: 'Scroll to raise and zoom · Esc to lay flat',
+      mapMode: 'Map',
+      gpxMode: 'GPX',
+      mapSearchPlaceholder: 'Address, place, coordinates, or Google Maps URL',
+      mapSearchSubmit: 'Search',
+      mapSearchNoResults: 'No search results.',
+      mapSearchFailed: 'Search failed.',
+      mapSearchBusy: 'Searching…',
       openGpx: 'Open GPX',
       clickRouteMode: 'Click the route',
       raise: 'Raise',
@@ -355,6 +382,9 @@ function makeCopy(language: Language): Copy {
     },
     flag: {
       lead: 'View GPX routes on a 3D model built from Geospatial Information Authority of Japan maps and elevation data.',
+      modes: 'Modes',
+      gpxModeDescription: 'Open a GPX and work with routes, waypoints, and elapsed time.',
+      mapModeDescription: 'Search and drag the map, then raise the chosen area into 3D.',
       loadRoute: 'Load a route',
       loadRouteItems: ['Open a GPX file with “Open GPX” (a sample route is loaded first)', 'Use the camera button to save the current view as a PNG'],
       viewMap: 'View the map',

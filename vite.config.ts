@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
 
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { resolveGoogleMapsUrl } from './src/mapSearch';
 
 function commitVersion() {
   const injected = process.env.CF_PAGES_COMMIT_SHA || process.env.GITHUB_SHA;
@@ -13,8 +14,40 @@ function commitVersion() {
   }
 }
 
+function mapSearchRedirects(): Plugin {
+  return {
+    name: 'gpx-topo-map-search-redirects',
+    configureServer(server) {
+      server.middlewares.use('/api/search', async (request, response, next) => {
+        const query = new URL(request.url ?? '', 'http://localhost').searchParams.get('q')?.trim() ?? '';
+        if (!query || query.length > 200) {
+          next();
+          return;
+        }
+        try {
+          const coordinates = await resolveGoogleMapsUrl(query);
+          if (!coordinates) {
+            next();
+            return;
+          }
+          response.statusCode = 200;
+          response.setHeader('content-type', 'application/json');
+          response.setHeader('cache-control', 'public, max-age=3600');
+          response.end(
+            JSON.stringify({
+              results: [{ label: `${coordinates.lat.toFixed(6)}, ${coordinates.lon.toFixed(6)}`, ...coordinates }],
+            }),
+          );
+        } catch {
+          next();
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), mapSearchRedirects()],
   define: {
     __APP_VERSION__: JSON.stringify(commitVersion()),
   },
@@ -24,6 +57,11 @@ export default defineConfig({
         target: 'https://cyberjapandata.gsi.go.jp',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/gsi/, '/xyz'),
+      },
+      '/api/search': {
+        target: 'https://msearch.gsi.go.jp',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/search/, '/address-search/AddressSearch'),
       },
     },
   },

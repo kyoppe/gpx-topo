@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { renderBasemaps, streamRelief, type MapStyle } from './basemap';
-import { gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
+import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
-import { createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
+import { createCenteredProjection, createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
+import { toggleViewMode, type ViewMode } from './mapMode';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
+import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
 import { detectLanguage, getCopy, type Copy } from './i18n';
 import { addAction, reportError, reportInfo, reportWarning } from './observability';
-import { loadGpx, loadPlan, loadStart, saveGpx, savePlan, saveStart, startNow } from './session';
+import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, saveView, startNow, type MapViewport } from './session';
 import { buildTerrain } from './terrain';
 
 const DEFAULT_GPX_URL = '/fixtures/SFMT2026-110km.gpx';
@@ -23,6 +25,10 @@ const MIN_PAGE_HEIGHT = 640;
 const COARSE_DENSITY = 0.4;
 const FINE_DENSITY = 2.5;
 const MAX_LATTICE = 2047;
+/** Extra map pixels kept around the viewport so flat-map dragging never exposes an empty edge. */
+const MAP_PAN_BUFFER = 512;
+/** DEM prefetch extends beyond the visual drag buffer so the next viewport is already covered. */
+const DEM_PREFETCH = MAP_PAN_BUFFER * 2;
 const PROFILE_WIDTH = PANEL_WIDTH - 36;
 const PROFILE_HEIGHT = 84;
 
@@ -48,6 +54,23 @@ function layoutFor(width: number, height: number): Layout {
     mapHeight: pageHeight - PAD * 2,
     sideX: pageWidth - PAD - PANEL_WIDTH,
   };
+}
+
+function flatElevationGrid(nx: number, ny: number): ElevationGrid {
+  return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'gsi-dem' };
+}
+
+type DemCache = {
+  projection: MapProjection;
+  grid: ElevationGrid;
+};
+
+function projectionRect(source: MapProjection, target: MapProjection) {
+  if (Math.abs(source.scale - target.scale) > 1e-6) return null;
+  const x = (target.originX - source.originX) * source.scale;
+  const y = (target.originY - source.originY) * source.scale;
+  if (x < -0.5 || y < -0.5 || x + target.width > source.width + 0.5 || y + target.height > source.height + 0.5) return null;
+  return { x: Math.max(0, x), y: Math.max(0, y) };
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -82,6 +105,13 @@ function elapsedInput(startMinutes: number, targetMinutes: number) {
 type Pop =
   | { seq: number; kind: 'date'; anchor: string }
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
+
+type MapBuffer = {
+  flat: HTMLCanvasElement;
+  relief: HTMLCanvasElement;
+  density: number;
+  pad: number;
+};
 
 const SKY: [number, [number, number, number]][] = [
   [-12, [38, 48, 88]],
@@ -211,6 +241,7 @@ export default function App() {
     document.documentElement.lang = language;
     document.title = copy.appName;
   }, [copy.appName, language]);
+  const [savedView] = useState(() => loadView());
   const [route, setRoute] = useState<GpxRoute | null>(null);
   const [fileName, setFileName] = useState('SFMT2026-110km.gpx');
   // the start set last time carries over; a GPX opened afresh starts now (see onFile)
@@ -220,9 +251,15 @@ export default function App() {
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   /** the projection whose whole map has finished drawing */
   const [basemap, setBasemap] = useState<MapProjection | null>(null);
-  const [baseMapStyle, setBaseMapStyle] = useState<MapStyle>('pale');
-  const [demGrid, setDemGrid] = useState<{ projection: MapProjection; grid: ElevationGrid } | null>(null);
+  const [baseMapStyle, setBaseMapStyle] = useState<MapStyle>(() => savedView?.baseMapStyle ?? 'pale');
+  const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => savedView?.viewMode ?? 'gpx');
+  const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => savedView?.mapViewport ?? null);
+  const [mapSearch, setMapSearch] = useState('');
+  const [mapSearchResults, setMapSearchResults] = useState<SearchLocation[]>([]);
+  const [mapSearchBusy, setMapSearchBusy] = useState(false);
+  const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   /** the photo of the view: its picture, while it is out of the camera key */
   const [shot, setShot] = useState<{ url: string; blob: Blob; aspect: number } | null>(null);
@@ -251,19 +288,37 @@ export default function App() {
   const detailRef = useRef<HTMLCanvasElement | null>(null);
   /** the part of the map the detail canvas holds now */
   const detailDrawn = useRef<DetailRequest | null>(null);
+  const mapProjectionRef = useRef<MapProjection | null>(null);
+  const basemapRef = useRef<MapProjection | null>(null);
+  const mapBufferRef = useRef<MapBuffer | null>(null);
+  const mapDragOffsetRef = useRef<[number, number]>([0, 0]);
+  const apartRef = useRef(false);
+  const viewRestoredRef = useRef(false);
+  const mapSearchRequestRef = useRef(0);
   const touchedRef = useRef(false);
   const fileRequestRef = useRef(0);
   const statsCacheRef = useRef<{ points: GpxRoute['points']; stats: ReturnType<typeof calculateStats> } | null>(null);
   routeNameRef.current = route?.name ?? null;
+  apartRef.current = apart;
 
   const layout = useMemo(() => layoutFor(viewport.width, viewport.height), [viewport]);
   const points = route?.points ?? null;
-  const projection = useMemo(
+  const gpxProjection = useMemo(
     () => (points ? createMapProjection({ points }, layout.mapWidth, layout.mapHeight) : null),
     [points, layout.mapWidth, layout.mapHeight],
   );
+  const mapProjection = useMemo(
+    () =>
+      mapViewport
+        ? createCenteredProjection(mapViewport.lat, mapViewport.lon, layout.mapWidth, layout.mapHeight, mapViewport.scale)
+        : null,
+    [mapViewport, layout.mapWidth, layout.mapHeight],
+  );
+  const projection = viewMode === 'map' ? mapProjection : gpxProjection;
+  mapProjectionRef.current = mapProjection;
+  basemapRef.current = basemap;
   const progress = useMemo(() => (points ? trackProgress(points) : null), [points]);
-  const track = useMemo(() => (points && projection ? projectTrack(points, projection, 1.5) : []), [points, projection]);
+  const track = useMemo(() => (points && gpxProjection ? projectTrack(points, gpxProjection, 1.5) : []), [points, gpxProjection]);
   const routeD = useMemo(() => pathD(track), [track]);
   const statsFor = (candidate: GpxRoute['points']) => {
     if (statsCacheRef.current?.points === candidate) return statsCacheRef.current.stats;
@@ -282,8 +337,8 @@ export default function App() {
     [route, startMinutes, absoluteOverrides],
   );
   const ways = useMemo(
-    () => (projection ? plan.map((way) => ({ ...way, ...projection.project(way), ele: way.ele })) : []),
-    [plan, projection],
+    () => (gpxProjection ? plan.map((way) => ({ ...way, ...gpxProjection.project(way), ele: way.ele })) : []),
+    [plan, gpxProjection],
   );
   const focusWaypoint = (id: string, source: 'map_pin' | 'side_panel') => {
     const way = ways.find((item) => item.id === id);
@@ -295,20 +350,163 @@ export default function App() {
     engineRef.current?.focusWay(id);
   };
 
-  const grid = demGrid && demGrid.projection === projection ? demGrid.grid : null;
+  const grid = useMemo(() => {
+    if (!demGrid || !projection) return null;
+    const rect = projectionRect(demGrid.projection, projection);
+    if (!rect) return null;
+    const nx = Math.max(1, Math.round((demGrid.grid.nx * projection.width) / demGrid.projection.width));
+    const ny = Math.max(1, Math.round((demGrid.grid.ny * projection.height) / demGrid.projection.height));
+    return cropElevationGrid(
+      demGrid.grid,
+      demGrid.projection.width,
+      demGrid.projection.height,
+      rect.x,
+      rect.y,
+      projection.width,
+      projection.height,
+      nx,
+      ny,
+    );
+  }, [demGrid, projection]);
   const terrain = useMemo(
     () => (grid && projection ? buildTerrain(grid, layout.mapWidth, layout.mapHeight, projection.metersPerPixel) : null),
     [grid, projection, layout.mapWidth, layout.mapHeight],
   );
   const mapReady = !!projection && basemap === projection;
 
+  const switchViewMode = useCallback(
+    (next: ViewMode) => {
+      if (apart || next === viewMode || !engineRef.current?.isFlat()) return;
+      const target = toggleViewMode(viewMode, true);
+      if (target !== next) return;
+      if (target === 'map') {
+        if (!gpxProjection) return;
+        setMapViewport((current) => current ?? { lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
+      }
+      setMapSearchResults([]);
+      setMapSearchError(null);
+      setPop(null);
+      setViewMode(target);
+      addAction('view_mode_changed', { mode: target });
+    },
+    [apart, gpxProjection, viewMode],
+  );
+  const drawMapBuffer = useCallback((offset: [number, number]) => {
+    const buffer = mapBufferRef.current;
+    const flat = flatRef.current;
+    const relief = reliefRef.current;
+    if (!buffer || !flat || !relief) return;
+    const sx = (buffer.pad - offset[0]) * buffer.density;
+    const sy = (buffer.pad - offset[1]) * buffer.density;
+    const sourceWidth = flat.width;
+    const sourceHeight = flat.height;
+    for (const [target, source] of [
+      [flat, buffer.flat],
+      [relief, buffer.relief],
+    ] as const) {
+      const context = target.getContext('2d');
+      if (!context) continue;
+      context.clearRect(0, 0, target.width, target.height);
+      context.drawImage(source, sx, sy, sourceWidth, sourceHeight, 0, 0, target.width, target.height);
+    }
+    engineRef.current?.refreshMap();
+  }, []);
+  const panMapPreview = useCallback(
+    (dx: number, dy: number) => {
+      const [x, y] = mapDragOffsetRef.current;
+      const next: [number, number] = [
+        Math.max(-MAP_PAN_BUFFER, Math.min(MAP_PAN_BUFFER, x + dx)),
+        Math.max(-MAP_PAN_BUFFER, Math.min(MAP_PAN_BUFFER, y + dy)),
+      ];
+      mapDragOffsetRef.current = next;
+      drawMapBuffer(next);
+    },
+    [drawMapBuffer],
+  );
+  const panMap = useCallback((_dx: number, _dy: number) => {
+    const [offsetX, offsetY] = mapDragOffsetRef.current;
+    const current = mapProjectionRef.current;
+    if (!current || (offsetX === 0 && offsetY === 0)) return;
+    addAction('map_pan_completed', {
+      distance_px: Math.round(Math.hypot(offsetX, offsetY)),
+      delta_x_px: Math.round(offsetX),
+      delta_y_px: Math.round(offsetY),
+    });
+    setMapViewport((viewportState) => {
+      if (!viewportState) return viewportState;
+      const projection = createCenteredProjection(
+        viewportState.lat,
+        viewportState.lon,
+        current.width,
+        current.height,
+        viewportState.scale,
+      );
+      const center = projection.inverse(projection.width / 2 - offsetX, projection.height / 2 - offsetY);
+      return { ...viewportState, ...center };
+    });
+  }, []);
+  const centerMap = useCallback(
+    (center: Coordinates, source: string) => {
+      if (apartRef.current) return;
+      setMapViewport((viewportState) => ({
+        lat: center.lat,
+        lon: center.lon,
+        scale: viewportState?.scale ?? gpxProjection?.scale ?? 1,
+      }));
+      setMapSearchResults([]);
+      setMapSearchError(null);
+      addAction('map_search_selected', { source });
+    },
+    [gpxProjection],
+  );
+  const searchMap = useCallback(
+    async (event?: FormEvent) => {
+      event?.preventDefault();
+      if (apartRef.current) return;
+      const query = mapSearch.trim();
+      if (!query) return;
+      const coordinates = parseMapSearchInput(query);
+      if (coordinates) {
+        centerMap(coordinates, 'coordinates');
+        return;
+      }
+      const googleMapsUrl = isGoogleMapsUrl(query);
+      const request = ++mapSearchRequestRef.current;
+      setMapSearchBusy(true);
+      setMapSearchError(null);
+      setMapSearchResults([]);
+      try {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+        const body: unknown = await response.json();
+        if (request !== mapSearchRequestRef.current) return;
+        const results = normalizeSearchResponse(body);
+        if (googleMapsUrl && results.length > 0) {
+          centerMap(results[0], 'google_maps_url');
+        } else {
+          setMapSearchResults(results);
+        }
+        if (!results.length) setMapSearchError(copy.ui.mapSearchNoResults);
+        addAction('map_search_requested', { source: 'gsi', result_count: results.length });
+      } catch (error) {
+        if (request === mapSearchRequestRef.current) {
+          setMapSearchError(copy.ui.mapSearchFailed);
+          reportWarning('map_search_failed', error);
+        }
+      } finally {
+        if (request === mapSearchRequestRef.current) setMapSearchBusy(false);
+      }
+    },
+    [centerMap, copy.ui.mapSearchFailed, copy.ui.mapSearchNoResults, mapSearch],
+  );
+
   // elevation profile: distance across, height up
   /** The highest point of the route, from the file's elevations or else the terrain's. */
   const high = useMemo(() => {
-    if (!points || !progress || !projection) return null;
+    if (viewMode !== 'gpx' || !points || !progress || !gpxProjection) return null;
     const index = highestIndex(points);
     if (index >= 0) {
-      const { x, y } = projection.project(points[index]);
+      const { x, y } = gpxProjection.project(points[index]);
       return { km: progress.km[index], ele: points[index].ele as number, x, y };
     }
     if (!terrain) return null;
@@ -318,7 +516,7 @@ export default function App() {
       if (!best || ele > best.ele) best = { km: progress.km[p.index], ele, x: p.x, y: p.y };
     }
     return best;
-  }, [points, progress, projection, terrain, track]);
+  }, [gpxProjection, points, progress, terrain, track, viewMode]);
 
   const profile = useMemo(() => {
     if (!points || !progress || track.length < 2) return null;
@@ -350,9 +548,17 @@ export default function App() {
   }, [points, progress, track, terrain]);
 
   const sunRange = useMemo(() => {
+    if (viewMode === 'map') return { min: 0, max: 1440 };
     const lastMinutes = plan.length ? plan[plan.length - 1].minutes : startMinutes + 600;
     return { min: startMinutes - 60, max: Math.max(startMinutes + 120, lastMinutes + 60) };
-  }, [plan, startMinutes]);
+  }, [plan, startMinutes, viewMode]);
+  useLayoutEffect(() => {
+    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    if (!sun) return;
+    const current = Number(sun.value);
+    const bounded = Number.isFinite(current) ? Math.max(sunRange.min, Math.min(sunRange.max, current)) : 630;
+    if (current !== bounded) sun.value = String(Math.round(bounded));
+  }, [sunRange]);
   const daylight = useMemo(
     () => (projection ? sunTimes(date, projection.centerLat, projection.centerLon) : null),
     [date, projection],
@@ -461,6 +667,31 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (viewRestoredRef.current) return;
+    if (savedView?.viewMode === 'map' && !mapViewport) {
+      if (!gpxProjection) return;
+      setMapViewport({ lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
+      return;
+    }
+    viewRestoredRef.current = true;
+    addAction('view_state_restored', {
+      restored: !!savedView,
+      mode: savedView?.viewMode ?? 'gpx',
+      map_viewport: !!savedView?.mapViewport,
+      map_style: savedView?.baseMapStyle ?? 'pale',
+    });
+  }, [gpxProjection, mapViewport, savedView]);
+
+  useEffect(() => {
+    if (!viewRestoredRef.current) return;
+    const timer = window.setTimeout(
+      () => saveView({ viewMode, mapViewport, baseMapStyle }),
+      100,
+    );
+    return () => window.clearTimeout(timer);
+  }, [baseMapStyle, mapViewport, viewMode]);
+
   // the plan is kept as it is changed, for the GPX it was made on (once that GPX is in, so as not to write over it)
   useEffect(() => {
     if (!planReadyRef.current || !route) return;
@@ -491,20 +722,86 @@ export default function App() {
     const relief = reliefRef.current;
     if (!projection || !flat || !relief) return;
     const controller = new AbortController();
-    setBasemap(null);
-    let timer = 0;
-    const flush = () => {
-      timer = 0;
+    const density = Math.min(2, window.devicePixelRatio || 1);
+    const pad = viewMode === 'map' ? MAP_PAN_BUFFER : 0;
+    const renderProjection = pad
+      ? createCenteredProjection(projection.centerLat, projection.centerLon, projection.width + pad * 2, projection.height + pad * 2, projection.scale)
+      : projection;
+    const snapshot = (source: HTMLCanvasElement) => {
+      if (source.width < 2 || source.height < 2) return null;
+      const copy = document.createElement('canvas');
+      copy.width = source.width;
+      copy.height = source.height;
+      copy.getContext('2d')?.drawImage(source, 0, 0);
+      return copy;
+    };
+    const previousFlat = basemapRef.current ? snapshot(flat) : null;
+    const previousRelief = basemapRef.current ? snapshot(relief) : null;
+    const nextFlat = document.createElement('canvas');
+    const nextRelief = document.createElement('canvas');
+    let animation = 0;
+    const drawTransition = (alpha: number) => {
+      const targetWidth = Math.max(1, Math.round(projection.width * density));
+      const targetHeight = Math.max(1, Math.round(projection.height * density));
+      if (flat.width !== targetWidth || flat.height !== targetHeight) {
+        flat.width = targetWidth;
+        flat.height = targetHeight;
+      }
+      if (relief.width !== targetWidth || relief.height !== targetHeight) {
+        relief.width = targetWidth;
+        relief.height = targetHeight;
+      }
+      const sourceX = Math.round(pad * density);
+      const sourceY = sourceX;
+      const sourceWidth = nextFlat.width - sourceX * 2;
+      const sourceHeight = nextFlat.height - sourceY * 2;
+      for (const [target, previous] of [
+        [flat, previousFlat],
+        [relief, previousRelief],
+      ] as const) {
+        const source = target === flat ? nextFlat : nextRelief;
+        const context = target.getContext('2d');
+        if (!context) continue;
+        context.clearRect(0, 0, target.width, target.height);
+        if (previous) {
+          context.globalAlpha = 1 - alpha;
+          context.drawImage(previous, 0, 0, target.width, target.height);
+        }
+        context.globalAlpha = alpha;
+        context.drawImage(source, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, target.width, target.height);
+        context.globalAlpha = 1;
+      }
       engineRef.current?.refreshMap();
     };
-    void renderBasemaps(projection, Math.min(2, window.devicePixelRatio || 1), { flat, relief }, controller.signal, () => {
-      if (!timer) timer = window.setTimeout(flush, 200);
-    }, baseMapStyle)
+    const commit = () => {
+      if (viewMode === 'map') {
+        mapBufferRef.current = { flat: nextFlat, relief: nextRelief, density, pad };
+        mapDragOffsetRef.current = [0, 0];
+      } else {
+        mapBufferRef.current = null;
+      }
+      setBasemap(projection);
+    };
+    void renderBasemaps(renderProjection, density, { flat: nextFlat, relief: nextRelief }, controller.signal, () => {}, baseMapStyle)
       .then(() => {
         if (controller.signal.aborted) return;
-        window.clearTimeout(timer);
-        flush();
-        setBasemap(projection);
+        if (!previousFlat || !previousRelief) {
+          drawTransition(1);
+          commit();
+          return;
+        }
+        const started = performance.now();
+        const crossfade = (now: number) => {
+          if (controller.signal.aborted) return;
+          const progress = Math.min(1, (now - started) / 220);
+          drawTransition(progress);
+          if (progress < 1) {
+            animation = requestAnimationFrame(crossfade);
+          } else {
+            commit();
+          }
+        };
+        animation = requestAnimationFrame(crossfade);
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
@@ -514,42 +811,64 @@ export default function App() {
       });
     return () => {
       controller.abort();
-      window.clearTimeout(timer);
+      cancelAnimationFrame(animation);
     };
-  }, [projection, baseMapStyle]);
+  }, [baseMapStyle, projection, viewMode]);
 
   useEffect(() => {
-    if (!projection || !points) return;
+    if (!projection) return;
+    const sourcePad = viewMode === 'map' ? DEM_PREFETCH : 0;
+    const sourceProjection = sourcePad
+      ? createCenteredProjection(
+          projection.centerLat,
+          projection.centerLon,
+          projection.width + sourcePad * 2,
+          projection.height + sourcePad * 2,
+          projection.scale,
+        )
+      : projection;
+    const hasPrefetch =
+      viewMode === 'gpx' ||
+      (demGrid && demGrid.projection.width >= projection.width + DEM_PREFETCH * 2 && demGrid.projection.height >= projection.height + DEM_PREFETCH * 2);
+    const canReuse = demGrid && hasPrefetch && (viewMode === 'gpx' || demGrid.grid.source === 'gsi-dem') && projectionRect(demGrid.projection, projection);
+    if (canReuse) return;
     const controller = new AbortController();
     const { signal } = controller;
     const lattice = (density: number) => {
-      const k = Math.min(density, MAX_LATTICE / Math.max(projection.width, projection.height));
-      return [Math.round(projection.width * k), Math.round(projection.height * k)] as const;
+      const k = Math.min(density, MAX_LATTICE / Math.max(sourceProjection.width, sourceProjection.height));
+      return [Math.round(sourceProjection.width * k), Math.round(sourceProjection.height * k)] as const;
     };
     void (async () => {
       const [cx, cy] = lattice(COARSE_DENSITY);
       try {
-        const first = await loadDemGrid(projection, cx, cy, signal);
+        const first = await loadDemGrid(sourceProjection, cx, cy, signal);
         if (signal.aborted) return;
-        setDemGrid({ projection, grid: first });
+        setDemGrid({ projection: sourceProjection, grid: first });
       } catch (error) {
         if (signal.aborted) return;
         reportWarning('load_dem_coarse', error);
-        setToast(copy.toast.demFallback);
-        setDemGrid({ projection, grid: gpxElevationGrid(projectTrack(points, projection, 4), cx, cy, projection.width, projection.height) });
+        if (viewMode === 'gpx' && points) {
+          setToast(copy.toast.demFallback);
+          setDemGrid({
+            projection: sourceProjection,
+            grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
+          });
+        } else if (!demGrid) {
+          setDemGrid({ projection: sourceProjection, grid: flatElevationGrid(cx, cy) });
+        }
         return;
       }
       const [fx, fy] = lattice(FINE_DENSITY);
       try {
-        const fine = await loadDemGrid(projection, fx, fy, signal);
-        if (!signal.aborted) setDemGrid({ projection, grid: fine });
+        const fine = await loadDemGrid(sourceProjection, fx, fy, signal);
+        if (!signal.aborted) setDemGrid({ projection: sourceProjection, grid: fine });
       } catch (error) {
         // the first pass stays
         if (!signal.aborted) reportWarning('load_dem_fine', error);
       }
     })();
     return () => controller.abort();
-  }, [projection, points]);
+  }, [projection, points, viewMode]);
 
   useEffect(() => {
     if (!toast) return;
@@ -659,6 +978,8 @@ export default function App() {
     try {
       engine = createEngine(canvas, page, {
         onApartChange: setApart,
+        onMapDrag: panMapPreview,
+        onMapPan: panMap,
         onRouteClick: (km) => routeClickRef.current(km),
         onDetail: setDetailWanted,
         onFlightChange: (phase) => {
@@ -705,23 +1026,30 @@ export default function App() {
     engineRef.current?.refreshHud();
   }, [flyoverPhase]);
 
+  useEffect(() => {
+    if (viewMode === 'map') setPlacing(false);
+    engineRef.current?.refreshHud();
+  }, [apart, viewMode]);
+
   const model = useMemo<EngineModel | null>(() => {
-    if (!projection || !progress || !profile) return null;
+    if (!projection || !terrain) return null;
+    const gpx = viewMode === 'gpx' && progress && profile;
     return {
       ...layout,
       terrain,
       // every point of the track, as the drawn line has them, so the runner keeps to the line round every bend
-      route: track.map((p) => ({ x: p.x, y: p.y, km: progress.km[p.index] })),
-      ways: ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })),
-      marks: showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
+      route: gpx ? track.map((p) => ({ x: p.x, y: p.y, km: progress.km[p.index] })) : [],
+      ways: gpx ? ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })) : [],
+      marks: gpx && showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
       mapStyle: baseMapStyle,
-      profilePoint: (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))],
-      profileKm: profile.K,
+      mapMode: viewMode === 'map',
+      profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
+      profileKm: gpx ? profile.K : () => 0,
     };
-  }, [layout, terrain, track, progress, ways, showHigh, high, date, projection, profile]);
+  }, [baseMapStyle, date, high, layout, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
@@ -972,10 +1300,12 @@ export default function App() {
             {(['terrain', 'relief'] as const).map((piece) => (
               <div key={piece} className="terrain" data-piece={piece} drawable="" style={mapStyle}>
                 <canvas ref={piece === 'terrain' ? flatRef : reliefRef} />
-                <svg viewBox={`0 0 ${layout.mapWidth} ${layout.mapHeight}`} aria-hidden="true">
-                  <path className="route-casing" d={routeD} />
-                  <path className="route-line" d={routeD} />
-                </svg>
+                {viewMode === 'gpx' && (
+                  <svg viewBox={`0 0 ${layout.mapWidth} ${layout.mapHeight}`} aria-hidden="true">
+                    <path className="route-casing" d={routeD} />
+                    <path className="route-line" d={routeD} />
+                  </svg>
+                )}
                 {!terrain && <span className="terrain-status">{route ? copy.ui.loadingTerrain : copy.ui.loadingGpx}</span>}
               </div>
             ))}
@@ -1001,7 +1331,7 @@ export default function App() {
               }
             >
               <canvas ref={detailRef} />
-              {shownDetail && (
+              {shownDetail && viewMode === 'gpx' && (
                 <svg viewBox={`${shownDetail.x} ${shownDetail.y} ${shownDetail.w} ${shownDetail.h}`} aria-hidden="true">
                   {/* the line stays about as wide on screen as the view closes in */}
                   <path className="route-casing" d={routeD} style={{ strokeWidth: Math.max(1.2, 5.6 / shownDetail.zoom ** 0.75) }} />
@@ -1036,7 +1366,7 @@ export default function App() {
                   {copy.ui.aerial}
                 </button>
               </div>
-              {ways.map((way, index) => (
+              {viewMode === 'gpx' && ways.map((way, index) => (
                 <button
                   key={way.id}
                   type="button"
@@ -1053,7 +1383,7 @@ export default function App() {
                   </span>
                 </button>
               ))}
-              {showHigh && high && (
+              {viewMode === 'gpx' && showHigh && high && (
                 <div className="pin pin-high" data-piece="pin" data-mark="high" drawable="" role="img" aria-label={copy.ui.highestPoint(high.ele)}>
                   <span className="pin-label">
                     <b>▲</b>
@@ -1061,84 +1391,123 @@ export default function App() {
                   </span>
                 </div>
               )}
-              <div className="hiker" data-piece="hiker" drawable="" role="img" aria-label={copy.ui.positionAtTime} />
-              <div className="probe" data-piece="probe" drawable="" aria-hidden="true">
-                <b data-probe-text="">-</b>
-              </div>
+              {viewMode === 'gpx' && (
+                <>
+                  <div className="hiker" data-piece="hiker" drawable="" role="img" aria-label={copy.ui.positionAtTime} />
+                  <div className="probe" data-piece="probe" drawable="" aria-hidden="true">
+                    <b data-probe-text="">-</b>
+                  </div>
+                </>
+              )}
             </div>
 
             <aside className="side" style={{ left: layout.sideX, top: PAD, width: PANEL_WIDTH, height: layout.pageHeight - PAD * 2 }}>
               <section className="slot">
                 <div className="card" data-piece="card" drawable="" />
-                <div className="in in-title" data-piece="content" drawable="">
-                  <div className="brand">
-                    <img className="brand-mark" src="/gpx-topo-logo.png" alt="" aria-hidden="true" />
-                    <span>{copy.appName}</span>
+                {viewMode === 'gpx' ? (
+                  <div className="in in-title" data-piece="content" drawable="">
+                    <div className="brand">
+                      <img className="brand-mark" src="/gpx-topo-logo.png" alt="" aria-hidden="true" />
+                      <span>{copy.appName}</span>
+                    </div>
+                    <input
+                      className="route-name"
+                      value={route?.name ?? ''}
+                      spellCheck={false}
+                      aria-label={copy.ui.routeName}
+                      onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
+                    />
+                    <small className="file-name" data-selectable="">
+                      {fileName}
+                    </small>
                   </div>
-                  <input
-                    className="route-name"
-                    value={route?.name ?? ''}
-                    spellCheck={false}
-                    aria-label={copy.ui.routeName}
-                    onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
-                  />
-                  <small className="file-name" data-selectable="">
-                    {fileName}
-                  </small>
-                </div>
+                ) : !apart ? (
+                  <div className="in in-map-search" data-piece="content" drawable="">
+                    <div className="row">
+                      <span className="label">{copy.ui.map}</span>
+                      {mapSearchBusy && <small data-selectable="">{copy.ui.mapSearchBusy}</small>}
+                    </div>
+                    <form className="map-search-form" onSubmit={(event) => void searchMap(event)}>
+                      <input
+                        value={mapSearch}
+                        onChange={(event) => setMapSearch(event.target.value)}
+                        placeholder={copy.ui.mapSearchPlaceholder}
+                        aria-label={copy.ui.mapSearchPlaceholder}
+                        spellCheck={false}
+                      />
+                      <button type="submit" className="field" disabled={mapSearchBusy}>
+                        {copy.ui.mapSearchSubmit}
+                      </button>
+                    </form>
+                    {mapSearchError && <p className="map-search-error" data-selectable="">{mapSearchError}</p>}
+                    {mapSearchResults.length > 0 && (
+                      <ol className="map-search-results" data-scroll="">
+                        {mapSearchResults.map((result) => (
+                          <li key={`${result.lat}:${result.lon}:${result.label}`}>
+                            <button type="button" onClick={() => centerMap(result, 'result')}>
+                              {result.label}
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                ) : null}
               </section>
 
-              <section className="slot">
-                <div className="card" data-piece="card" drawable="" />
-                <div className="in in-stats" data-piece="content" drawable="">
-                  <dl className="stats" data-selectable="">
-                    <div>
-                      <dt>{copy.ui.distance}</dt>
-                      <dd>
-                        {stats ? stats.distanceKm.toFixed(1) : '-'}
-                        <span>km</span>
-                      </dd>
+              {viewMode === 'gpx' && (
+                <section className="slot">
+                  <div className="card" data-piece="card" drawable="" />
+                  <div className="in in-stats" data-piece="content" drawable="">
+                    <dl className="stats" data-selectable="">
+                      <div>
+                        <dt>{copy.ui.distance}</dt>
+                        <dd>
+                          {stats ? stats.distanceKm.toFixed(1) : '-'}
+                          <span>km</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>{copy.ui.elevationGain}</dt>
+                        <dd>
+                          {stats ? stats.ascentM.toLocaleString(copy.locale) : '-'}
+                          <span>m</span>
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="profile-box" data-profile="">
+                      <svg className="profile" viewBox={`0 0 ${PROFILE_WIDTH} ${PROFILE_HEIGHT}`} role="img" aria-label={copy.ui.elevationProfile}>
+                        {profile && (
+                          <>
+                            <path className="profile-area" d={profile.area} />
+                            <path className="profile-line" d={profile.line} />
+                            {ways.map((way, index) => {
+                              const x = profile.X(way.km);
+                              const y = profile.Y(profile.eleAt(way.km));
+                              return (
+                                <g key={way.id}>
+                                  <line className="profile-tick" x1={x} x2={x} y1={y + 6} y2={profile.bottom} />
+                                  <circle className="profile-dot" cx={x} cy={y} r={6} />
+                                  <text x={x} y={y + 0.5}>
+                                    {index + 1}
+                                  </text>
+                                </g>
+                              );
+                            })}
+                            {showHigh && high && (
+                              <path
+                                className="profile-high"
+                                d={`M${profile.X(high.km).toFixed(1)} ${(profile.Y(profile.eleAt(high.km)) - 11).toFixed(1)}l-5 8h10z`}
+                              />
+                            )}
+                            <circle className="profile-cursor" data-cursor="" r={8} cx={-20} cy={-20} />
+                          </>
+                        )}
+                      </svg>
                     </div>
-                    <div>
-                      <dt>{copy.ui.elevationGain}</dt>
-                      <dd>
-                        {stats ? stats.ascentM.toLocaleString(copy.locale) : '-'}
-                        <span>m</span>
-                      </dd>
-                    </div>
-                  </dl>
-                  <div className="profile-box" data-profile="">
-                    <svg className="profile" viewBox={`0 0 ${PROFILE_WIDTH} ${PROFILE_HEIGHT}`} role="img" aria-label={copy.ui.elevationProfile}>
-                      {profile && (
-                        <>
-                          <path className="profile-area" d={profile.area} />
-                          <path className="profile-line" d={profile.line} />
-                          {ways.map((way, index) => {
-                            const x = profile.X(way.km);
-                            const y = profile.Y(profile.eleAt(way.km));
-                            return (
-                              <g key={way.id}>
-                                <line className="profile-tick" x1={x} x2={x} y1={y + 6} y2={profile.bottom} />
-                                <circle className="profile-dot" cx={x} cy={y} r={6} />
-                                <text x={x} y={y + 0.5}>
-                                  {index + 1}
-                                </text>
-                              </g>
-                            );
-                          })}
-                          {showHigh && high && (
-                            <path
-                              className="profile-high"
-                              d={`M${profile.X(high.km).toFixed(1)} ${(profile.Y(profile.eleAt(high.km)) - 11).toFixed(1)}l-5 8h10z`}
-                            />
-                          )}
-                          <circle className="profile-cursor" data-cursor="" r={8} cx={-20} cy={-20} />
-                        </>
-                      )}
-                    </svg>
                   </div>
-                </div>
-              </section>
+                </section>
+              )}
 
               <section className="slot">
                 <div className="card" data-piece="card" drawable="" />
@@ -1160,23 +1529,25 @@ export default function App() {
                     aria-label={copy.ui.time}
                     style={{ ['--track' as string]: sunTrack }}
                   />
-                  <div className="row row-inputs">
-                    <label>
-                      {copy.ui.start}
-                      <button
-                        id="pop-start"
-                        type="button"
-                        className="field"
-                        data-open={isOpen('pop-start')}
-                        onClick={() => openTime('start', startMinutes, 'pop-start', copy.ui.startTime)}
-                      >
-                        <svg viewBox="0 0 16 16" aria-hidden="true">
-                          <circle cx="8" cy="8" r="6.2" />
-                          <path d="M8 4.6V8l2.4 1.6" />
-                        </svg>
-                        {startTime}
-                      </button>
-                    </label>
+                  <div className={`row row-inputs${viewMode === 'map' ? ' map-sun-inputs' : ''}`}>
+                    {viewMode === 'gpx' && (
+                      <label>
+                        {copy.ui.start}
+                        <button
+                          id="pop-start"
+                          type="button"
+                          className="field"
+                          data-open={isOpen('pop-start')}
+                          onClick={() => openTime('start', startMinutes, 'pop-start', copy.ui.startTime)}
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <circle cx="8" cy="8" r="6.2" />
+                            <path d="M8 4.6V8l2.4 1.6" />
+                          </svg>
+                          {startTime}
+                        </button>
+                      </label>
+                    )}
                     <label>
                       {copy.ui.date}
                       <button id="pop-date" type="button" className="field" data-open={isOpen('pop-date')} onClick={openDate}>
@@ -1195,7 +1566,8 @@ export default function App() {
                 </div>
               </section>
 
-              <section className="slot slot-fill">
+              {viewMode === 'gpx' && (
+                <section className="slot slot-fill">
                 <div className="card" data-piece="card" drawable="" />
                 <div className="in in-ways" data-piece="content" drawable="">
                   <div className="row">
@@ -1274,7 +1646,8 @@ export default function App() {
                     {copy.ui.gsiCredit}
                   </p>
                 </div>
-              </section>
+                </section>
+              )}
             </aside>
 
             {/* pickers: laid out here, raised off the panel by the engine */}
@@ -1465,10 +1838,15 @@ export default function App() {
           {/* the bar: each button is drawn as a key on a slab in front of the camera, and still is the button */}
           <nav className="hud" data-hud="" aria-label={copy.ui.controls}>
             <div className="bar" data-piece="bar" drawable="">
-              <span className="well" data-well="open" />
-              <span className="well" data-well="place" />
+              <span className="well" data-well="mode" />
+              {viewMode === 'gpx' && (
+                <>
+                  <span className="well" data-well="open" />
+                  <span className="well" data-well="place" />
+                </>
+              )}
               <span className="well well-flip" data-well="flip" />
-              <span className="well" data-well="fly" />
+              {viewMode === 'gpx' && <span className="well" data-well="fly" />}
               {flyoverPlaying && (
                 <span className="well" data-well="stop" data-appear="" />
               )}
@@ -1479,6 +1857,29 @@ export default function App() {
                 {copy.ui.scrollHint}
               </span>
             </div>
+            <button
+              type="button"
+              className="key key-mode"
+              data-piece="key"
+              data-key="mode"
+              drawable=""
+              aria-label={viewMode === 'gpx' ? copy.ui.mapMode : copy.ui.gpxMode}
+              disabled={apart}
+              onClick={() => switchViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
+            >
+              {viewMode === 'gpx' ? (
+                <svg className="map-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="m3 6.2 6-2.7 6 2.7 6-2.7v14.7l-6 2.7-6-2.7-6 2.7V6.2Z" />
+                  <path d="M9 3.5v14.7M15 6.2v14.7" />
+                  <path className="map-icon-pin" d="M15.8 4.5c0-2 1.4-3.5 3.2-3.5s3.2 1.5 3.2 3.5c0 2.5-3.2 6.7-3.2 6.7s-3.2-4.2-3.2-6.7Z" />
+                  <circle className="map-icon-pin-hole" cx="19" cy="4.5" r="1.1" />
+                </svg>
+              ) : (
+                copy.ui.gpxMode
+              )}
+            </button>
+            {viewMode === 'gpx' && (
+              <>
             <button
               type="button"
               className="key key-open"
@@ -1507,6 +1908,8 @@ export default function App() {
             >
               {placing ? copy.ui.clickRouteMode : copy.ui.addWaypoint}
             </button>
+              </>
+            )}
             <button
               type="button"
               className="key key-flip"
@@ -1537,40 +1940,44 @@ export default function App() {
             >
               {copy.ui.layFlat}
             </button>
-            <button
-              type="button"
-              className={`key key-fly${flyoverRunning ? ' key-flip' : ''}`}
-              data-piece="key"
-              data-key="fly"
-              data-playing={flyoverRunning ? '' : undefined}
-              drawable=""
-              aria-label={flyoverPlaying ? (flyoverPaused ? copy.ui.flyoverResume : copy.ui.flyoverPause) : copy.ui.flyoverPlay}
-              aria-pressed={flyoverPlaying}
-              disabled={flyoverReturning}
-              onClick={() => {
-                addAction('flyover_control', { action: flyoverPlaying ? (flyoverPaused ? 'resume' : 'pause') : 'play' });
-                if (flyoverPlaying) engineRef.current?.toggleFlyoverPause();
-                else engineRef.current?.flyover();
-              }}
-            >
-              {flyoverPlaying ? (flyoverPaused ? '▶' : 'Ⅱ') : '▶'}
-            </button>
-            {flyoverPlaying && (
-              <button
-                type="button"
-                className="key key-stop"
-                data-piece="key"
-                data-key="stop"
-                data-appear=""
-                drawable=""
-                aria-label={copy.ui.flyoverStop}
-                onClick={() => {
-                  addAction('flyover_control', { action: 'stop' });
-                  engineRef.current?.flyover();
-                }}
-              >
-                ■
-              </button>
+            {viewMode === 'gpx' && (
+              <>
+                <button
+                  type="button"
+                  className={`key key-fly${flyoverRunning ? ' key-flip' : ''}`}
+                  data-piece="key"
+                  data-key="fly"
+                  data-playing={flyoverRunning ? '' : undefined}
+                  drawable=""
+                  aria-label={flyoverPlaying ? (flyoverPaused ? copy.ui.flyoverResume : copy.ui.flyoverPause) : copy.ui.flyoverPlay}
+                  aria-pressed={flyoverPlaying}
+                  disabled={flyoverReturning}
+                  onClick={() => {
+                    addAction('flyover_control', { action: flyoverPlaying ? (flyoverPaused ? 'resume' : 'pause') : 'play' });
+                    if (flyoverPlaying) engineRef.current?.toggleFlyoverPause();
+                    else engineRef.current?.flyover();
+                  }}
+                >
+                  {flyoverPlaying ? (flyoverPaused ? '▶' : 'Ⅱ') : '▶'}
+                </button>
+                {flyoverPlaying && (
+                  <button
+                    type="button"
+                    className="key key-stop"
+                    data-piece="key"
+                    data-key="stop"
+                    data-appear=""
+                    drawable=""
+                    aria-label={copy.ui.flyoverStop}
+                    onClick={() => {
+                      addAction('flyover_control', { action: 'stop' });
+                      engineRef.current?.flyover();
+                    }}
+                  >
+                    ■
+                  </button>
+                )}
+              </>
             )}
             <button type="button" className="key key-camera" data-piece="key" data-key="camera" drawable="" aria-label={copy.ui.captureImage} onClick={() => void exportPng()}>
               <svg className="camera-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
