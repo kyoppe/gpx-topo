@@ -43,6 +43,7 @@ export type EngineCallbacks = {
   onTimeCommit(target: string, minutes: number): void;
   /** The picker marked `data-seq` finished folding away. */
   onPopClosed(seq: string): void;
+  onFlightChange(phase: 'intro' | 'run' | 'return' | null): void;
 };
 
 type Kind = 'sheet' | 'terrain' | 'relief' | 'detail' | 'card' | 'content' | 'pin' | 'bar' | 'key' | 'pop' | 'row';
@@ -541,6 +542,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       st.kmT = saved.kmT;
     }
     flight = null;
+    callbacks.onFlightChange(null);
   }
 
   function returnFromFlight() {
@@ -548,6 +550,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     flight.phase = 'return';
     flight.t = 0;
     flight.final ??= flight.current;
+    callbacks.onFlightChange('return');
     need();
   }
 
@@ -570,6 +573,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (q >= 1) {
         flight.phase = 'run';
         flight.t = 0;
+        callbacks.onFlightChange('run');
         setFlightRoute(start);
       }
       return pose;
@@ -589,6 +593,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         flight.phase = 'return';
         flight.t = 0;
         flight.final = pose;
+        callbacks.onFlightChange('return');
       }
       return pose;
     }
@@ -637,6 +642,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     st.eT = 1;
     st.bouncy = false;
     setFlightRoute(model.route[0].km);
+    callbacks.onFlightChange('intro');
     need();
   }
 

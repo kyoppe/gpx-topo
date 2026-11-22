@@ -209,6 +209,7 @@ export default function App() {
   const [addKm, setAddKm] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [detailWanted, setDetailWanted] = useState<DetailRequest | null>(null);
+  const [flyoverPhase, setFlyoverPhase] = useState<'intro' | 'run' | 'return' | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
   const [month, setMonth] = useState(() => todayIso().slice(0, 7));
   const [peek, setPeek] = useState<string | null>(null);
@@ -515,6 +516,7 @@ export default function App() {
         onApartChange: setApart,
         onRouteClick: (km) => routeClickRef.current(km),
         onDetail: setDetailWanted,
+        onFlightChange: setFlyoverPhase,
         onTimeCommit: (target, minutes) => {
           if (target === 'start') setStartTime(clockInput(minutes));
           else setOverrides((current) => ({ ...current, [target]: minutes }));
@@ -669,6 +671,8 @@ export default function App() {
   if (!native) return <Fallback />;
 
   const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, 630));
+  const flyoverPlaying = flyoverPhase === 'intro' || flyoverPhase === 'run';
+  const flyoverReturning = flyoverPhase === 'return';
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
 
   return (
@@ -1173,11 +1177,14 @@ export default function App() {
               className="key key-fly"
               data-piece="key"
               data-key="fly"
+              data-latched={flyoverPlaying ? '' : undefined}
               drawable=""
-              aria-label="Flyoverを再生"
+              aria-label={flyoverPlaying ? 'Flyoverを停止' : 'Flyoverを再生'}
+              aria-pressed={flyoverPlaying}
+              disabled={flyoverReturning}
               onClick={() => engineRef.current?.flyover()}
             >
-              ▶
+              {flyoverPlaying ? '■' : '▶'}
             </button>
             <button type="button" className="key key-png" data-piece="key" data-key="png" drawable="" onClick={() => void exportPng()}>
               PNG
