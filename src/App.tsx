@@ -72,6 +72,15 @@ function clockInput(minutes: number) {
   return formatClock(((minutes % 1440) + 1440) % 1440);
 }
 
+function elapsedFrom(startMinutes: number, targetMinutes: number) {
+  return Math.max(0, Math.round(targetMinutes - startMinutes));
+}
+
+function elapsedInput(startMinutes: number, targetMinutes: number) {
+  const minutes = elapsedFrom(startMinutes, targetMinutes);
+  return `+${Math.floor(minutes / 60)}:${pad2(minutes % 60)}`;
+}
+
 function dayLength(rise: number | null, set: number | null) {
   if (rise === null || set === null) return '-';
   const m = Math.round(set - rise);
@@ -80,7 +89,7 @@ function dayLength(rise: number | null, set: number | null) {
 
 type Pop =
   | { seq: number; kind: 'date'; anchor: string }
-  | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; label: string };
+  | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
 
 const SKY: [number, [number, number, number]][] = [
   [-12, [38, 48, 88]],
@@ -237,9 +246,13 @@ export default function App() {
   const routeD = useMemo(() => pathD(track), [track]);
   const stats = useMemo(() => (points ? calculateStats(points) : null), [points]);
   const startMinutes = parseClock(startTime) ?? 360;
+  const absoluteOverrides = useMemo(
+    () => Object.fromEntries(Object.entries(overrides).map(([id, elapsed]) => [id, startMinutes + elapsed])),
+    [overrides, startMinutes],
+  );
   const plan = useMemo(
-    () => (route ? planWaypoints(route, startMinutes, overrides) : []),
-    [route, startMinutes, overrides],
+    () => (route ? planWaypoints(route, startMinutes, absoluteOverrides) : []),
+    [route, startMinutes, absoluteOverrides],
   );
   const ways = useMemo(
     () => (projection ? plan.map((way) => ({ ...way, ...projection.project(way), ele: way.ele })) : []),
@@ -632,7 +645,16 @@ export default function App() {
     const engine = engineRef.current;
     if (!engine || engine.popBusy(anchor)) return;
     popSeq.current += 1;
-    setPop({ seq: popSeq.current, kind: 'time', anchor, target, minutes: ((minutes % 1440) + 1440) % 1440, label });
+    const relative = target !== 'start';
+    setPop({
+      seq: popSeq.current,
+      kind: 'time',
+      anchor,
+      target,
+      minutes: relative ? elapsedFrom(startMinutes, minutes) : ((minutes % 1440) + 1440) % 1440,
+      baseMinutes: relative ? startMinutes : 0,
+      label,
+    });
   };
   const peekDate = (iso: string | null) => {
     setPeek(iso);
@@ -757,7 +779,7 @@ export default function App() {
                   <span className="pin-label">
                     <b>{index + 1}</b>
                     <strong>{way.name}</strong>
-                    <small>{formatClock(way.minutes)}</small>
+                    <small>{elapsedInput(startMinutes, way.minutes)}</small>
                   </span>
                 </button>
               ))}
@@ -910,7 +932,7 @@ export default function App() {
                 <div className="in in-ways" data-piece="content" drawable="">
                   <div className="row">
                     <span className="label">ウェイポイント</span>
-                    {apart && <small data-selectable="">番号を押すとその時刻の日照になります</small>}
+                    {apart && <small data-selectable="">番号を押すとそのウェイポイントの光になります</small>}
                   </div>
                   <form
                     className="way-add"
@@ -943,7 +965,7 @@ export default function App() {
                         <button
                           type="button"
                           className="way-go"
-                          aria-label={`${way.name} の時刻の光にする`}
+                          aria-label={`${way.name} の地点の光にする`}
                           onClick={() => engineRef.current?.focusWay(way.id)}
                         >
                           <b>{index + 1}</b>
@@ -964,12 +986,11 @@ export default function App() {
                           id={`pop-${way.id}`}
                           type="button"
                           className="field field-way"
-                          aria-label={`${way.name} の目標時刻`}
+                          aria-label={`${way.name} の経過時間`}
                           data-open={isOpen(`pop-${way.id}`)}
                           onClick={() => openTime(way.id, way.minutes, `pop-${way.id}`, `${index + 1}. ${way.name}`)}
                         >
-                          {clockInput(way.minutes)}
-                          {way.minutes >= 1440 && <small>+{Math.floor(way.minutes / 1440)}d</small>}
+                          {elapsedInput(startMinutes, way.minutes)}
                         </button>
                         {way.fixed ? (
                           <span className="way-fixed" aria-label={`${way.name} は削除できません`}>
@@ -1082,6 +1103,7 @@ export default function App() {
                       data-anchor={pop.anchor}
                       data-target={pop.target}
                       data-value={pop.minutes}
+                      data-base={pop.baseMinutes}
                       data-seq={pop.seq}
                       drawable=""
                     >

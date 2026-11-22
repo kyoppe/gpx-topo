@@ -39,7 +39,7 @@ export type EngineCallbacks = {
   /** A click while placing a waypoint: how far along the route (km) it landed, or null when it missed the route. */
   onRouteClick(km: number | null): void;
   onDetail(request: DetailRequest | null): void;
-  /** A time picker was confirmed: minutes after midnight for `target` ('start' or a waypoint id). */
+  /** A picker was confirmed: clock minutes for `start`, elapsed minutes for a waypoint id. */
   onTimeCommit(target: string, minutes: number): void;
   /** The picker marked `data-seq` finished folding away. */
   onPopClosed(seq: string): void;
@@ -1162,6 +1162,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     piece: Piece;
     kind: string;
     target: string;
+    baseMinutes: number;
     anchor: HTMLElement | null;
     content: Piece | null;
     open: number;
@@ -1176,11 +1177,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let popGone = 0;
   let popGoneFor = '';
   const mod = (a: number, n: number) => ((a % n) + n) % n;
-  const popMinutes = (p: Pop, live = false) => {
+  const popValueMinutes = (p: Pop, live = false) => {
     const [h, m] = p.drums;
     if (!h || !m) return 0;
-    if (live) return mod(h.v, 24) * 60 + mod(m.v, 60);
-    return mod(Math.round(h.vT), 24) * 60 + mod(Math.round(m.vT), 60);
+    const duration = p.target !== 'start';
+    const hours = live ? h.v : h.vT;
+    const minutes = live ? m.v : m.vT;
+    return (duration ? Math.max(0, hours) : mod(hours, 24)) * 60 + mod(minutes, 60);
+  };
+  const popAbsoluteMinutes = (p: Pop, live = false) => {
+    return p.baseMinutes + popValueMinutes(p, live);
   };
 
   /** The app opened, changed or removed the picker: pick up its elements. */
@@ -1209,9 +1215,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const kind = el.dataset.kind ?? 'date';
     const drums: Drum[] = [];
     if (kind === 'time') {
-      const minutes = mod(Math.round(Number(el.dataset.value) || 0), 1440);
+      const duration = el.dataset.target !== 'start';
+      const minutes = duration ? Math.max(0, Math.round(Number(el.dataset.value) || 0)) : mod(Math.round(Number(el.dataset.value) || 0), 1440);
       const spec: [string, number, number][] = [
-        ['h', 24, Math.floor(minutes / 60)],
+        ['h', duration ? 100 : 24, Math.floor(minutes / 60)],
         ['m', 60, minutes % 60],
       ];
       for (const [name, n, v] of spec) {
@@ -1223,12 +1230,26 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     let up = false;
     if (anchor && content) up = content.y + offsetWithin(anchor, content.el)[1] > PH * 0.52;
-    pop = { piece, kind, target: el.dataset.target ?? '', anchor, content, open: 0, ov: 0, openT: 1, up, drums, focus: 0, typed: '' };
+    pop = {
+      piece,
+      kind,
+      target: el.dataset.target ?? '',
+      baseMinutes: Number(el.dataset.base) || 0,
+      anchor,
+      content,
+      open: 0,
+      ov: 0,
+      openT: 1,
+      up,
+      drums,
+      focus: 0,
+      typed: '',
+    };
     need();
   }
   function closePop(commit = false) {
     if (!pop || pop.openT === 0) return;
-    if (commit && pop.kind === 'time') callbacks.onTimeCommit(pop.target, popMinutes(pop));
+    if (commit && pop.kind === 'time') callbacks.onTimeCommit(pop.target, popValueMinutes(pop));
     pop.openT = 0;
     popGone = performance.now();
     popGoneFor = pop.anchor?.id ?? '';
@@ -1381,8 +1402,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     });
     if (pop.kind === 'time' && pop.openT) {
-      const live = popMinutes(pop, true);
-      const settle = popMinutes(pop);
+      const live = popAbsoluteMinutes(pop, true);
+      const settle = popAbsoluteMinutes(pop);
       if (previewMinutes === null || Math.abs(previewMinutes - live) > 0.05 || previewClock !== settle) {
         previewMinutes = live;
         previewClock = settle;
@@ -1425,7 +1446,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const [h, m] = pop.drums;
       const nearest = (dr: Drum, value: number) => Math.round(dr.vT) + ((((value - Math.round(dr.vT)) % dr.n) + dr.n + dr.n / 2) % dr.n) - dr.n / 2;
       if (pop.typed.length >= 2 && pop.typed.length < 4) {
-        h.vT = nearest(h, Math.min(23, Number(pop.typed.slice(0, 2))));
+        h.vT = nearest(h, Math.min(h.n - 1, Number(pop.typed.slice(0, 2))));
         setFocus(1);
       }
       if (pop.typed.length === 4) {
