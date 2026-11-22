@@ -559,7 +559,7 @@ export default function App() {
 
   // a close view: the part in view, drawn again from finer tiles as they come in. It starts from
   // the whole-map picture, and from the last close view where the two overlap.
-  const shownDetail = mapReady && baseMapStyle === 'pale' ? detailWanted : null;
+  const shownDetail = mapReady ? detailWanted : null;
   useLayoutEffect(() => {
     const el = detailRef.current;
     const base = reliefRef.current;
@@ -590,6 +590,8 @@ export default function App() {
     if (keep && last) context.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
     detailDrawn.current = region;
     engineRef.current?.refreshDetail();
+    // Aerial photos keep the fixed base image while the route overlay still adapts to zoom.
+    if (baseMapStyle === 'photo') return;
     const controller = new AbortController();
     let timer = 0;
     const flush = () => {
