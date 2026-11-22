@@ -3,12 +3,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { renderBasemaps, streamRelief, type MapStyle } from './basemap';
 import { gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
-import { calculateStats, parseGpx, type GpxRoute } from './gpx';
+import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
 import { createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
+import { loadGpx, loadPlan, loadStart, saveGpx, savePlan, saveStart, startNow } from './session';
 import { buildTerrain } from './terrain';
 
 const DEFAULT_GPX_URL = '/fixtures/SFMT2026-110km.gpx';
@@ -205,8 +206,9 @@ export default function App() {
   const [native] = useState(supportsHtmlInCanvas);
   const [route, setRoute] = useState<GpxRoute | null>(null);
   const [fileName, setFileName] = useState('SFMT2026-110km.gpx');
-  const [startTime, setStartTime] = useState('06:00');
-  const [date, setDate] = useState(todayIso);
+  // the start set last time carries over; a GPX opened afresh starts now (see onFile)
+  const [startTime, setStartTime] = useState(() => loadStart()?.time ?? '06:00');
+  const [date, setDate] = useState(() => loadStart()?.date ?? todayIso());
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   /** the projection whose whole map has finished drawing */
@@ -225,7 +227,7 @@ export default function App() {
   const [detailWanted, setDetailWanted] = useState<DetailRequest | null>(null);
   const [flyoverPhase, setFlyoverPhase] = useState<FlightPhase | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
-  const [month, setMonth] = useState(() => todayIso().slice(0, 7));
+  const [month, setMonth] = useState(() => date.slice(0, 7));
   const [peek, setPeek] = useState<string | null>(null);
   const popSeq = useRef(0);
 
@@ -353,21 +355,60 @@ export default function App() {
   }, [month, projection, pop?.kind]);
 
   // ---------------------------------------------------------------- data
+  /** the GPX and its plan are in, so changes to them are its own to keep */
+  const planReadyRef = useRef(false);
+  // the GPX opened last time with the plan made on it, or on a first visit the bundled one, which is then the GPX
+  // opened: its plan is kept from then on too
   useEffect(() => {
     let cancelled = false;
-    void fetch(DEFAULT_GPX_URL)
-      .then((response) => {
-        if (!response.ok) throw new Error(`GPX request failed: ${response.status}`);
-        return response.text();
-      })
-      .then((xml) => {
-        if (!cancelled && !touchedRef.current) setRoute(ensureWaypoints(parseGpx(xml)));
-      })
-      .catch(() => setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。'));
+    const fixture = () =>
+      fetch(DEFAULT_GPX_URL)
+        .then((response) => {
+          if (!response.ok) throw new Error(`GPX request failed: ${response.status}`);
+          return response.text();
+        })
+        .then((xml) => {
+          if (cancelled || touchedRef.current) return;
+          const name = DEFAULT_GPX_URL.split('/').pop() ?? 'route.gpx';
+          setRoute(ensureWaypoints(parseGpx(xml)));
+          setFileName(name);
+          planReadyRef.current = true;
+          void saveGpx({ name, xml });
+        })
+        .catch(() => setToast('テスト用 GPX を読み込めませんでした。GPX を開いてください。'));
+    void (async () => {
+      const saved = await loadGpx();
+      if (cancelled || touchedRef.current) return;
+      if (!saved) return fixture();
+      let parsed: GpxRoute;
+      try {
+        parsed = ensureWaypoints(parseGpx(saved.xml));
+      } catch {
+        return fixture();
+      }
+      const plan = await loadPlan<Waypoint>(saved.name);
+      if (cancelled || touchedRef.current) return;
+      setRoute(plan ? { ...parsed, name: plan.title, waypoints: plan.waypoints } : parsed);
+      setOverrides(plan?.overrides ?? {});
+      setFileName(saved.name);
+      planReadyRef.current = true;
+    })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // the plan is kept as it is changed, for the GPX it was made on (once that GPX is in, so as not to write over it)
+  useEffect(() => {
+    if (!planReadyRef.current || !route) return;
+    const timer = window.setTimeout(
+      () => void savePlan<Waypoint>({ file: fileName, title: route.name, waypoints: route.waypoints, overrides }),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [route, overrides, fileName]);
+
+  useEffect(() => saveStart({ date, time: startTime }), [date, startTime]);
 
   useEffect(() => {
     let timer = 0;
@@ -706,12 +747,20 @@ export default function App() {
     if (!file) return;
     touchedRef.current = true;
     try {
-      const next = ensureWaypoints(parseGpx(await file.text()));
+      const xml = await file.text();
+      const next = ensureWaypoints(parseGpx(xml));
       engineRef.current?.together();
       setPop(null);
       setOverrides({});
       setRoute(next);
       setFileName(file.name);
+      // a new GPX starts now, and is what opens next time; the start then stays as it is set for it
+      const now = startNow();
+      setDate(now.date);
+      setMonth(now.date.slice(0, 7));
+      setStartTime(now.time);
+      planReadyRef.current = true;
+      void saveGpx({ name: file.name, xml });
       setToast(`${file.name} を読み込みました (${next.points.length.toLocaleString('ja-JP')} 点)。`);
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'GPX を読み込めませんでした。');
