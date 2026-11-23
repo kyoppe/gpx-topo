@@ -39,6 +39,8 @@ export type DetailRequest = { x: number; y: number; w: number; h: number; densit
 export type PhotoCloseVia = 'button' | 'escape';
 
 export type EngineCallbacks = {
+  /** The first paint event with a successful HTML element texture upload. */
+  onFirstPaint(): void;
   onApartChange(apart: boolean): void;
   /** A click while placing a waypoint: how far along the route (km) it landed, or null when it missed the route. */
   onRouteClick(km: number | null): void;
@@ -3054,6 +3056,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const TS = clamp(window.devicePixelRatio || 1, 1, 2);
   const detailSide = () => Math.min(R.maxTexture, DETAIL_MAX_SIDE * TS);
   let retries = 0;
+  let painted = false;
   const onPaint = (event: Event) => {
     if (disposed) return;
     const wanted = pending;
@@ -3093,6 +3096,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       } catch {
         missing = true;
       }
+    }
+    if (!painted && uploads > before) {
+      painted = true;
+      callbacks.onFirstPaint();
     }
     // no snapshot yet: ask for another paint, a few times at most
     retries = missing ? retries + 1 : 0;

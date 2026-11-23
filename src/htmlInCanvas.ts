@@ -36,3 +36,14 @@ export function supportsHtmlInCanvas() {
     'texElementSubImage2D' in WebGL2RenderingContext.prototype
   );
 }
+
+// Diagnostic context only; browser identity does not determine feature support.
+export function getHtmlInCanvasContext() {
+  const { userAgentData } = navigator as Navigator & {
+    userAgentData?: { brands?: { brand: string; version: string }[] };
+  };
+  return {
+    is_webview: /\bwv\b/.test(navigator.userAgent),
+    ...(userAgentData?.brands ? { user_agent_data_brands: userAgentData.brands } : {}),
+  };
+}
