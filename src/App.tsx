@@ -2,7 +2,16 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 
 import { renderBasemaps, streamNames, streamRelief, type MapStyle } from './basemap';
 import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
-import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
+import {
+  createEngine,
+  FRAME_X,
+  FRAME_Y,
+  type DetailRequest,
+  type Engine,
+  type EngineModel,
+  type FlightPhase,
+  type HudHitArea,
+} from './engine';
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
 import { createCenteredProjection, createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
@@ -110,6 +119,12 @@ type Pop =
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
 
 type LatestMedia = 'photo' | 'video';
+type XHint = {
+  kind: LatestMedia;
+  maxDuration: boolean;
+  seq: number;
+  phase: 'in' | 'out';
+};
 
 type MapBuffer = {
   flat: HTMLCanvasElement;
@@ -277,7 +292,7 @@ export default function App() {
   const [shot, setShot] = useState<{ url: string; blob: Blob; aspect: number } | null>(null);
   const [shotOpen, setShotOpen] = useState(false);
   const [latestMedia, setLatestMedia] = useState<LatestMedia | null>(null);
-  const [xHint, setXHint] = useState<{ kind: LatestMedia; seq: number; phase: 'in' | 'out' } | null>(null);
+  const [xHint, setXHint] = useState<XHint | null>(null);
   const [videoRecording, setVideoRecording] = useState(false);
   const flagRef = useRef<HTMLDivElement>(null);
   const flagTwinRef = useRef<HTMLDivElement>(null);
@@ -295,6 +310,7 @@ export default function App() {
   const popSeq = useRef(0);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const hudHitLayerRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const routeNameRef = useRef<string | null>(null);
@@ -1121,6 +1137,23 @@ export default function App() {
   };
 
   // ---------------------------------------------------------------- engine
+  const syncHudHitAreas = (areas: HudHitArea[]) => {
+    const layer = hudHitLayerRef.current;
+    if (!layer) return;
+    const byKey = new Map(areas.map((area) => [area.key, area]));
+    for (const button of layer.querySelectorAll<HTMLButtonElement>('[data-hud-hit-key]')) {
+      const area = byKey.get(button.dataset.hudHitKey ?? '');
+      if (!area) {
+        button.style.display = 'none';
+        continue;
+      }
+      button.style.display = 'block';
+      button.style.left = `${area.x}px`;
+      button.style.top = `${area.y}px`;
+      button.style.width = `${area.width}px`;
+      button.style.height = `${area.height}px`;
+    }
+  };
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current as HtmlInCanvasElement | null;
@@ -1161,6 +1194,7 @@ export default function App() {
         onXHintExit: (seq) => {
           setXHint((current) => (current && String(current.seq) === seq ? null : current));
         },
+        onHudHitAreas: syncHudHitAreas,
         onTimeCommit: (target, minutes) => {
           addAction('elapsed_time_committed', { target, minutes });
           if (target === 'start') setStartTime(clockInput(minutes));
@@ -1236,6 +1270,10 @@ export default function App() {
     if (viewMode === 'map') setPlacing(false);
     engineRef.current?.refreshHud();
   }, [apart, viewMode]);
+
+  useEffect(() => {
+    engineRef.current?.refreshHud();
+  }, [latestMedia]);
 
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !terrain) return null;
@@ -1470,9 +1508,9 @@ export default function App() {
     }
   };
 
-  const showXHint = (kind: LatestMedia) => {
+  const showXHint = (kind: LatestMedia, reason: 'manual' | 'max_duration' = 'manual') => {
     const seq = ++xHintSeqRef.current;
-    setXHint({ kind, seq, phase: 'in' });
+    setXHint({ kind, maxDuration: kind === 'video' && reason === 'max_duration', seq, phase: 'in' });
     if (xHintTimerRef.current !== null) window.clearTimeout(xHintTimerRef.current);
     if (xHintExitTimerRef.current !== null) window.clearTimeout(xHintExitTimerRef.current);
     const visibleFor = kind === 'video' ? 8000 : 5200;
@@ -1590,7 +1628,7 @@ export default function App() {
         const fileName = videoFileName(outputMimeType, startedAt);
         downloadBlob(blob, fileName);
         setLatestMedia('video');
-        showXHint('video');
+        showXHint('video', reason);
         addAction('video_recording_stopped', {
           reason,
           duration_ms: durationMs,
@@ -2368,6 +2406,7 @@ export default function App() {
               >
                 <div className="card" data-piece="card" drawable="" />
                 <div className="x-hint-content" data-piece="content" drawable="" role="status">
+                  {xHint.maxDuration && <strong>{copy.ui.videoRecordingLimit}</strong>}
                   {xHint.kind === 'photo' ? copy.ui.xHintPhoto : copy.ui.xHintVideo}
                 </div>
               </section>
@@ -2567,6 +2606,88 @@ export default function App() {
           </nav>
         </div>
       </canvas>
+
+      <div ref={hudHitLayerRef} className="hud-hit-layer" data-hud-hit-layer="" aria-hidden="true">
+        <button
+          type="button"
+          data-hud-hit-key="mode"
+          tabIndex={-1}
+          aria-label={viewMode === 'gpx' ? copy.ui.mapMode : copy.ui.gpxMode}
+          disabled={modeTransition !== null}
+          onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
+        />
+        {viewMode === 'gpx' && (
+          <>
+            <button
+              type="button"
+              data-hud-hit-key="open"
+              tabIndex={-1}
+              aria-label={copy.ui.openGpx}
+              onClick={() => {
+                addAction('gpx_file_picker_opened');
+                fileRef.current?.click();
+              }}
+            />
+            <button
+              type="button"
+              data-hud-hit-key="place"
+              tabIndex={-1}
+              aria-label={placing ? copy.ui.clickRouteMode : copy.ui.addWaypoint}
+              onClick={() => {
+                addAction('waypoint_placement_toggled', { enabled: !placing });
+                setPlacing((on) => !on);
+              }}
+            />
+          </>
+        )}
+        <button
+          type="button"
+          data-hud-hit-key="flip"
+          tabIndex={-1}
+          aria-label={apart ? copy.ui.layFlat : copy.ui.raise}
+          onClick={() => {
+            addAction('view_mode_toggled', { target: apart ? 'flat' : 'raised' });
+            engineRef.current?.toggle();
+          }}
+        />
+        {viewMode === 'gpx' && (
+          <>
+            <button
+              type="button"
+              data-hud-hit-key="fly"
+              tabIndex={-1}
+              aria-label={flyoverPlaying ? (flyoverPaused ? copy.ui.flyoverResume : copy.ui.flyoverPause) : copy.ui.flyoverPlay}
+              disabled={flyoverReturning}
+              onClick={() => {
+                addAction('flyover_control', { action: flyoverPlaying ? (flyoverPaused ? 'resume' : 'pause') : 'play' });
+                if (flyoverPlaying) engineRef.current?.toggleFlyoverPause();
+                else engineRef.current?.flyover();
+              }}
+            />
+            {flyoverPlaying && (
+              <button
+                type="button"
+                data-hud-hit-key="stop"
+                tabIndex={-1}
+                aria-label={copy.ui.flyoverStop}
+                onClick={() => {
+                  addAction('flyover_control', { action: 'stop' });
+                  engineRef.current?.flyover();
+                }}
+              />
+            )}
+          </>
+        )}
+        <button type="button" data-hud-hit-key="camera" tabIndex={-1} aria-label={copy.ui.captureImage} onClick={() => void exportPng()} />
+        <button
+          type="button"
+          data-hud-hit-key="video"
+          tabIndex={-1}
+          aria-label={videoRecording ? copy.ui.stopVideoRecording : copy.ui.recordVideo}
+          onClick={() => void startVideoRecording()}
+        />
+        {latestMedia && <button type="button" data-hud-hit-key="x" tabIndex={-1} aria-label={copy.ui.postToX} onClick={postLatestMedia} />}
+      </div>
 
       <div ref={flagTwinRef} className="flag flag-twin" aria-hidden="true">
         <FlagContent brushes={[]} copy={copy} twin />

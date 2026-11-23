@@ -135,6 +135,7 @@ export type Copy = {
     captureImage: string;
     recordVideo: string;
     stopVideoRecording: string;
+    videoRecordingLimit: string;
     xHintPhoto: string;
     xHintVideo: string;
     helpLinks: string;
@@ -280,6 +281,7 @@ function makeCopy(language: Language): Copy {
         captureImage: '画像にする',
         recordVideo: '画面を録画',
         stopVideoRecording: '録画を停止',
+        videoRecordingLimit: '録画は90秒まで可能です。',
         xHintPhoto: '画像をコピーしました。\nXに貼り付けてください。',
         xHintVideo: '動画を添付してXに投稿できます。',
         helpLinks: '使い方とリンク',
@@ -429,6 +431,7 @@ function makeCopy(language: Language): Copy {
       captureImage: 'Capture image',
       recordVideo: 'Record screen',
       stopVideoRecording: 'Stop recording',
+      videoRecordingLimit: 'Recording is limited to 90 seconds.',
       xHintPhoto: 'Photo copied.\nPaste it into your post on X.',
       xHintVideo: 'Attach the video to your post on X.',
       helpLinks: 'Help and links',

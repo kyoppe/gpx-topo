@@ -42,6 +42,14 @@ export type DetailRequest = { x: number; y: number; w: number; h: number; densit
 
 export type PhotoCloseVia = 'button' | 'escape';
 
+export type HudHitArea = {
+  key: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type EngineCallbacks = {
   /** The first paint event with a successful HTML element texture upload. */
   onFirstPaint(): void;
@@ -64,6 +72,8 @@ export type EngineCallbacks = {
   onPhotoChange(open: boolean, via?: PhotoCloseVia): void;
   /** The X hint reached the HUD and can be removed after its exit animation. */
   onXHintExit?(seq: string): void;
+  /** Screen-space rectangles for the transparent HUD input layer. */
+  onHudHitAreas?(areas: HudHitArea[]): void;
 };
 export type FlightPhase = 'intro' | 'run' | 'outro' | 'return' | 'paused';
 type FlightResumePhase = Exclude<FlightPhase, 'return' | 'paused'>;
@@ -2085,7 +2095,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function hudFrame(dt: number, rise: number) {
     const items: DrawItem[] = [];
     let busy = false;
-    if (!bar || noHud) return { items, busy };
+    if (!bar || noHud) {
+      callbacks.onHudHitAreas?.([]);
+      return { items, busy };
+    }
     if (xKeyPiece) {
       const springK = 150;
       const springDamping = 2 * 0.28 * Math.sqrt(springK);
@@ -2100,7 +2113,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     }
     measureHud();
-    if (!bar.w) return { items, busy };
+    if (!bar.w) {
+      callbacks.onHudHitAreas?.([]);
+      return { items, busy };
+    }
     // the wells and the key faces in CSS follow the rise too, in steps so the textures are not redrawn every frame
     const step = Math.round(rise * 20) / 20;
     if (step !== riseStep) {
@@ -2146,6 +2162,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
     const ease = 1 - Math.exp(-dt * 20);
     const turn = 1 - Math.exp(-dt * 6);
+    const hitAreas: HudHitArea[] = [];
     for (const k of keys) {
       const hotT = keyHot === k.name ? 1 : 0;
       const pressT = keyDown === k.name ? 1 : k.name === 'place' && placing ? 0.62 : 0;
@@ -2186,6 +2203,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       // faces share the HUD depth buffer, so drawing both can expose the stale
       // face during the first upload or while the key is settling.
       if (!facing) continue;
+      const screenCorners = cornersOf(k).map(toScreen);
+      if (screenCorners.every((point): point is ScreenPoint => point !== null)) {
+        const x0 = Math.max(0, Math.min(...screenCorners.map((point) => point[0])));
+        const y0 = Math.max(0, Math.min(...screenCorners.map((point) => point[1])));
+        const x1 = Math.min(vw, Math.max(...screenCorners.map((point) => point[0])));
+        const y1 = Math.min(vh, Math.max(...screenCorners.map((point) => point[1])));
+        if (x1 > x0 && y1 > y0) hitAreas.push({ key: k.name, x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
+      }
       const neg = (v: Vec3) => v.map((x) => -x) as Vec3;
       const side = k.side;
       const faceEy = back ? neg(b) : b;
@@ -2230,6 +2255,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         shade: { w: k.w + 2 * m, h: k.h + 2 * m, blur, strength: (0.16 + d * 0.022) * rise },
       });
     }
+    callbacks.onHudHitAreas?.(hitAreas);
     return { items, busy };
   }
 

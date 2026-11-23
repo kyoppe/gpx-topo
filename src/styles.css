@@ -52,6 +52,25 @@ body {
   cursor: crosshair;
 }
 
+.hud-hit-layer {
+  position: fixed;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hud-hit-layer button {
+  position: absolute;
+  display: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: auto;
+  touch-action: none;
+}
+
 .stage {
   position: relative;
   width: 100vw;
@@ -1741,6 +1760,12 @@ main[lang='en'] .bar-hint {
   line-height: 1.35;
   text-align: center;
   white-space: pre-line;
+}
+
+.x-hint-content strong {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 800;
 }
 
 /* ---------------------------------------------------------------- unsupported browsers */
