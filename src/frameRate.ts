@@ -10,6 +10,7 @@ type FrameRateOptions = {
   recoverFrameMs?: number;
   slowSamples?: number;
   recoverSamples?: number;
+  scheduleLeadMs?: number;
 };
 
 export function createAdaptiveFrameRate({
@@ -19,6 +20,7 @@ export function createAdaptiveFrameRate({
   recoverFrameMs = 18,
   slowSamples: slowSampleLimit = 3,
   recoverSamples: recoverSampleLimit = 20,
+  scheduleLeadMs = 3,
 }: FrameRateOptions) {
   let fps = highFps;
   let slowSamples = 0;
@@ -28,8 +30,8 @@ export function createAdaptiveFrameRate({
     get fps() {
       return fps;
     },
-    frameDelayMs(frameWorkMs: number) {
-      return Math.max(0, 1000 / fps - Math.max(0, frameWorkMs));
+    frameDelayMs(elapsedSincePaintMs: number) {
+      return Math.max(0, 1000 / fps - Math.max(0, elapsedSincePaintMs) - scheduleLeadMs);
     },
     observe(frameWorkMs: number): FrameRateChange | null {
       if (frameWorkMs > slowFrameMs) {

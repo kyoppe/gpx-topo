@@ -744,7 +744,7 @@ export default function App() {
     let previous = performance.now();
     const speed = MAP_SUN_SPEEDS[mapSunSpeed];
     const tick = (now: number) => {
-      if (now - previous < 1000 / MAP_SUN_FPS) {
+      if (now - previous < 1000 / MAP_SUN_FPS - 2) {
         frame = requestAnimationFrame(tick);
         return;
       }
