@@ -4,6 +4,7 @@ import { clothVertices, createCloth, layCloth, stepCloth, type Cloth } from './c
 import { createAdaptiveFrameRate } from './frameRate';
 import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
+import { hudDepthPlanes } from './hudDepth';
 import { holdLean } from './lean';
 import {
   MAP_MANEUVERS,
@@ -74,6 +75,14 @@ export type CameraZoom = {
   duration_ms: number;
 };
 
+export type FpvViewState = {
+  x: number;
+  y: number;
+  bearing: number;
+  pitch: number;
+  zoom: number;
+};
+
 export type HudHitArea = {
   key: string;
   x: number;
@@ -104,6 +113,8 @@ export type EngineCallbacks = {
   onPopClosed(seq: string): void;
   onFlightChange(phase: FlightPhase | null): void;
   onMapManeuverChange(state: MapManeuverState | null): void;
+  onFpvSelectionChange?(active: boolean): void;
+  onFpvChange?(state: { phase: 'select' | 'enter' | 'active' | 'return'; view: FpvViewState } | null): void;
   onMapPinSelectionChange?(active: boolean): void;
   onMapPinSelected?(x: number, y: number): void;
   onMapPinRemoved?(): void;
@@ -235,6 +246,23 @@ type MapManeuverFlight = {
     pan: Vec3;
   };
 };
+type CamPose = { eye: Vec3; forward: Vec3; fov: number };
+type FpvFlight = {
+  phase: 'enter' | 'active' | 'return';
+  t: number;
+  x: number;
+  y: number;
+  bearing: number;
+  bearingT: number;
+  pitch: number;
+  pitchT: number;
+  zoom: number;
+  zoomT: number;
+  from: CamPose;
+  home: CamPose;
+  fromE: number;
+  saved: { e: number; yaw: number; tilt: number; zoom: number; pan: Vec3 };
+};
 /** Where a flat piece stands: its corner, its edge directions, its normal, and its size. */
 type Frame = Pick<Piece, 'O' | 'ex' | 'ey' | 'nrm' | 'w' | 'h'>;
 type Cam = { vp: Float32Array; eye: Vec3; r: Vec3; u: Vec3; dir: Vec3; base: Vec3; yaw: number; D: number; fov: number };
@@ -256,6 +284,16 @@ const ZOOM_MIN = 1;
 /** How far the zoom goes on a model without terrain; with terrain it goes in until the camera is ZOOM_NEAR_M away. */
 const ZOOM_MAX = 8;
 const ZOOM_NEAR_M = 400;
+const FPV_EYE_HEIGHT_M = 1.6;
+/** A small DEM safety margin keeps the near clip and rasterized surface from swallowing the camera. */
+const FPV_GROUND_CLEARANCE_M = 0.3;
+const FPV_FOV = 0.78;
+const FPV_ZOOM_MIN = 0.55;
+const FPV_ZOOM_MAX = 4;
+const FPV_PITCH_MIN = (-55 * Math.PI) / 180;
+const FPV_PITCH_MAX = (35 * Math.PI) / 180;
+const FPV_ENTRY_SECONDS = 0.9;
+const FPV_RETURN_SECONDS = 0.6;
 /** The camera tilts down to just above level (rad from straight down). */
 const TILT_MAX = 1.45;
 /**
@@ -402,12 +440,21 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let pending = false;
   let delayedNeed: number | null = null;
   let lastPaintStart = 0;
-  let drag: 'turn' | 'pan' | 'map' | 'drum' | 'runner' | 'maneuver-select' | 'pin-select' | null = null;
+  let drag:
+    | 'turn'
+    | 'pan'
+    | 'map'
+    | 'drum'
+    | 'runner'
+    | 'fpv-turn'
+    | null = null;
   let activeWay: string | null = null;
   let flight: Flight | null = null;
   let mapManeuver: MapManeuverFlight | null = null;
   let mapManeuverSelection: MapManeuverKind | null = null;
   let mapPinSelection = false;
+  let fpvSelection = false;
+  let fpv: FpvFlight | null = null;
   /** the (i) flag: waiting for the map to stand, falling, planted, or being pulled out; and the view to go back to */
   let info: {
     phase: 'wait' | 'drop' | 'stand' | 'pull';
@@ -728,6 +775,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     for (let c = 0; c < 4; c += 1) for (let ri = 0; ri < 4; ri += 1) m[c * 4 + ri] = rows[ri][c];
   }
 
+  /** The camera's view and field of view with near and far planes fitted to the HUD, or undefined to keep the scene's. */
+  function hudProjection(items: readonly DrawItem[], c: Cam): Float32Array | undefined {
+    const planes = hudDepthPlanes(items, c.eye, c.dir);
+    if (!planes) return undefined;
+    const m = new Float32Array(16);
+    viewProjection(m, c.eye, c.r, c.u, c.dir, planes.near, planes.far, c.fov);
+    return m;
+  }
+
   /** How much of the hero tilt is left at a zoom: the camera stands up as it closes in. */
   function standOf(zoom: number) {
     return 1 - ZOOM_STAND * clamp(Math.log(zoom) / Math.log(ZOOM_MAX), 0, 1);
@@ -814,6 +870,144 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     D /= zoom;
     build(D, tx + pan[0], ty + pan[1], tz + pan[2]);
     return { vp: m, eye, r, u, dir, base: [tx, ty, tz], yaw, D, fov: FOV };
+  }
+
+  function fpvFov(zoom: number) {
+    return clamp(FPV_FOV / zoom, 0.28, 1.15);
+  }
+
+  function fpvCam(x: number, y: number, bearing: number, pitch: number, zoom: number): Cam {
+    const p = clamp(pitch, FPV_PITCH_MIN, FPV_PITCH_MAX);
+    const b = bearing;
+    const cp = Math.cos(p);
+    const forward: Vec3 = [cp * Math.sin(b), cp * Math.cos(b), Math.sin(p)];
+    const dir: Vec3 = [-forward[0], -forward[1], -forward[2]];
+    const r: Vec3 = [Math.cos(b), -Math.sin(b), 0];
+    const u: Vec3 = [-Math.sin(p) * Math.sin(b), -Math.sin(p) * Math.cos(b), Math.cos(p)];
+    const ground = groundZ(x, y, 1);
+    const eye: Vec3 = [MAPX + x, MAPY + y, ground + (FPV_EYE_HEIGHT_M + FPV_GROUND_CLEARANCE_M) * perM()];
+    const fov = fpvFov(zoom);
+    const m = new Float32Array(16);
+    viewProjection(m, eye, r, u, dir, Math.max(0.02, perM() * 0.25), Math.max(2000, Math.hypot(PW, PH) * 6), fov);
+    return { vp: m, eye, r, u, dir, base: eye, yaw: b, D: Math.max(1, vh / 2 / Math.tan(fov / 2)), fov };
+  }
+
+  function poseOfCam(c: Cam): CamPose {
+    return { eye: c.eye, forward: [-c.dir[0], -c.dir[1], -c.dir[2]], fov: c.fov };
+  }
+
+  function mixPose(a: CamPose, b: CamPose, amount: number): CamPose {
+    const forward = [
+      lerp(a.forward[0], b.forward[0], amount),
+      lerp(a.forward[1], b.forward[1], amount),
+      lerp(a.forward[2], b.forward[2], amount),
+    ] as Vec3;
+    const length = Math.hypot(...forward) || 1;
+    return {
+      eye: [lerp(a.eye[0], b.eye[0], amount), lerp(a.eye[1], b.eye[1], amount), lerp(a.eye[2], b.eye[2], amount)],
+      forward: forward.map((v) => v / length) as Vec3,
+      fov: lerp(a.fov, b.fov, amount),
+    };
+  }
+
+  function camFromPose(pose: CamPose): Cam {
+    const forward = pose.forward;
+    const horizontal = Math.hypot(forward[0], forward[1]) || 1;
+    const bearing = Math.atan2(forward[0], forward[1]);
+    const pitch = Math.atan2(forward[2], horizontal);
+    const cp = Math.cos(pitch);
+    const dir: Vec3 = [-forward[0], -forward[1], -forward[2]];
+    const r: Vec3 = [Math.cos(bearing), -Math.sin(bearing), 0];
+    const u: Vec3 = [-Math.sin(pitch) * Math.sin(bearing), -Math.sin(pitch) * Math.cos(bearing), cp];
+    const m = new Float32Array(16);
+    viewProjection(m, pose.eye, r, u, dir, Math.max(0.02, perM() * 0.25), Math.max(2000, Math.hypot(PW, PH) * 6), pose.fov);
+    return {
+      vp: m,
+      eye: pose.eye,
+      r,
+      u,
+      dir,
+      base: pose.eye,
+      yaw: bearing,
+      D: Math.max(1, vh / 2 / Math.tan(pose.fov / 2)),
+      fov: pose.fov,
+    };
+  }
+
+  function fpvPose(f: FpvFlight) {
+    return fpvCam(f.x, f.y, f.bearing, f.pitch, f.zoom);
+  }
+
+  function fpvView(f: FpvFlight): FpvViewState {
+    return { x: f.x, y: f.y, bearing: degreesOf(f.bearing), pitch: (f.pitch * 180) / Math.PI, zoom: f.zoom };
+  }
+
+  function reportFpv(f: FpvFlight | null) {
+    callbacks.onFpvChange?.(
+      f
+        ? {
+            phase: f.phase,
+            view: fpvView(f),
+          }
+        : null,
+    );
+  }
+
+  function setFpvSceneHidden(hidden: boolean) {
+    for (const p of pieces) {
+      if ((p.kind === 'card' || p.kind === 'content') && !isXHintPiece(p)) p.hidden = hidden;
+      else if (p.kind === 'flag' || p.kind === 'photo' || p.kind === 'maneuver') p.hidden = hidden;
+    }
+  }
+
+  function advanceFpv(dt: number): Cam | null {
+    if (!fpv) return null;
+    if (fpv.phase === 'enter') {
+      fpv.t = Math.min(FPV_ENTRY_SECONDS, fpv.t + dt);
+      const q = smooth(fpv.t / FPV_ENTRY_SECONDS);
+      st.e = lerp(fpv.fromE, 1, q);
+      st.eT = st.e;
+      const target = fpvPose(fpv);
+      const c = camFromPose(mixPose(fpv.from, poseOfCam(target), q));
+      if (fpv.t >= FPV_ENTRY_SECONDS) {
+        fpv.phase = 'active';
+        st.e = st.eT = 1;
+        reportFpv(fpv);
+      }
+      return c;
+    }
+    if (fpv.phase === 'return') {
+      fpv.t = Math.min(FPV_RETURN_SECONDS, fpv.t + dt);
+      const q = smooth(fpv.t / FPV_RETURN_SECONDS);
+      st.e = lerp(fpv.fromE, fpv.saved.e, q);
+      st.eT = st.e;
+      const c = camFromPose(mixPose(fpv.from, fpv.home, q));
+      if (fpv.t >= FPV_RETURN_SECONDS) {
+        st.e = fpv.saved.e;
+        st.eT = fpv.saved.e;
+        st.yaw = fpv.saved.yaw;
+        st.yawT = fpv.saved.yaw;
+        st.tilt = fpv.saved.tilt;
+        st.tiltT = fpv.saved.tilt;
+        st.zoom = fpv.saved.zoom;
+        st.zoomT = fpv.saved.zoom;
+        st.pan = [...fpv.saved.pan];
+        st.panT = [...fpv.saved.pan];
+        fpv = null;
+        fpvDetailFrozen = false;
+        setFpvSceneHidden(false);
+        callbacks.onApartChange(st.e > 0.5);
+        callbacks.onFpvChange?.(null);
+        return camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
+      }
+      return c;
+    }
+    const ease = 1 - Math.exp(-dt * 14);
+    fpv.bearing = angleStep(fpv.bearing, fpv.bearingT, ease);
+    fpv.pitch = lerp(fpv.pitch, fpv.pitchT, ease);
+    fpv.zoom = lerp(fpv.zoom, fpv.zoomT, ease);
+    st.e = st.eT = 1;
+    return fpvPose(fpv);
   }
 
   const FLYOVER_INTRO = 5;
@@ -1124,7 +1318,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   function mapManeuverStart(kind: MapManeuverKind) {
-    if (!model?.mapMode || mapManeuver || mapManeuverSelection || flight || st.eT < 0.5 || !model.terrain) return;
+    if (!model?.mapMode || mapManeuver || mapManeuverSelection || fpv || fpvSelection || flight || st.eT < 0.5 || !model.terrain) return;
     mapManeuverSelection = kind;
     setManeuverSelecting(true);
     setHover(null);
@@ -1133,7 +1327,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   function mapPinStart() {
-    if (!model?.mapMode || mapPinSelection || mapManeuver || mapManeuverSelection || flight || !model.terrain) return;
+    if (!model?.mapMode || mapPinSelection || mapManeuver || mapManeuverSelection || fpv || fpvSelection || flight || !model.terrain) return;
     mapPinSelection = true;
     setManeuverSelecting(true);
     setHover(null);
@@ -1148,6 +1342,101 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     setHover(null);
     callbacks.onMapPinSelectionChange?.(false);
     need();
+  }
+
+  function fpvStart() {
+    if (!model?.mapMode || st.eT < 0.5 || fpvSelection || fpv || mapPinSelection || mapManeuver || mapManeuverSelection || flight || !model.terrain) return;
+    fpvSelection = true;
+    canvas.classList.add('fpv-selecting');
+    setManeuverSelecting(true);
+    setHover(null);
+    callbacks.onFpvSelectionChange?.(true);
+    need();
+  }
+
+  function fpvCancel() {
+    if (!fpvSelection) return;
+    fpvSelection = false;
+    fpvDetailFrozen = false;
+    canvas.classList.remove('fpv-selecting');
+    setManeuverSelecting(false);
+    setHover(null);
+    callbacks.onFpvSelectionChange?.(false);
+    need();
+  }
+
+  function startFpvAt(P: Vec3, view?: Partial<Pick<FpvViewState, 'bearing' | 'pitch' | 'zoom'>>) {
+    if (!model?.mapMode || fpv || mapManeuver || flight || !model.terrain) return;
+    const x = clamp(P[0] - MAPX, 0, MW);
+    const y = clamp(P[1] - MAPY, 0, MH);
+    const bearing = radiansOf(view?.bearing ?? degreesOf(cam.yaw));
+    const pitch = clamp(radiansOf(view?.pitch ?? 0), FPV_PITCH_MIN, FPV_PITCH_MAX);
+    const zoom = clamp(view?.zoom ?? 1, FPV_ZOOM_MIN, FPV_ZOOM_MAX);
+    const home = poseOfCam(cam);
+    fpv = {
+      phase: 'enter',
+      t: 0,
+      x,
+      y,
+      bearing,
+      bearingT: bearing,
+      pitch,
+      pitchT: pitch,
+      zoom,
+      zoomT: zoom,
+      from: home,
+      home,
+      fromE: st.e,
+      saved: { e: st.e, yaw: st.yaw, tilt: st.tilt, zoom: st.zoom, pan: [...st.pan] },
+    };
+    fpvSelection = false;
+    canvas.classList.remove('fpv-selecting');
+    setManeuverSelecting(false);
+    setFpvSceneHidden(true);
+    setHover(null);
+    panelAlphaT = 0;
+    panelAvoidReady = false;
+    callbacks.onFpvSelectionChange?.(false);
+    callbacks.onApartChange(true);
+    reportFpv(fpv);
+    need();
+  }
+
+  function returnFromFpv() {
+    if (fpvSelection) {
+      fpvCancel();
+      return;
+    }
+    if (!fpv || fpv.phase === 'return') return;
+    fpv.phase = 'return';
+    fpv.t = 0;
+    fpv.from = poseOfCam(fpvPose(fpv));
+    fpv.fromE = st.e;
+    reportFpv(fpv);
+    need();
+  }
+
+  function fpvState(): FpvViewState | null {
+    return fpv ? fpvView(fpv) : null;
+  }
+
+  function startFpvAtMapPoint(
+    x: number,
+    y: number,
+    view?: Partial<Pick<FpvViewState, 'bearing' | 'pitch' | 'zoom'>>,
+    base?: Partial<EngineViewState>,
+  ) {
+    if (base) {
+      setViewState({ ...base, raised: true });
+      st.e = st.eT = 1;
+      st.ev = 0;
+      st.yaw = st.yawT;
+      st.tilt = st.tiltT;
+      st.zoom = st.zoomT;
+      st.pan = [...st.panT];
+      cam = targetCam();
+    }
+    startFpvAt([MAPX + clamp(x, 0, MW), MAPY + clamp(y, 0, MH), groundZ(x, y, 1)], view);
   }
 
   function startMapPinRemoval() {
@@ -2638,7 +2927,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const O = [0, 1, 2].map((i) => B[i] - (ex[i] * bw * 0.5 + ey[i] * bh) * s) as Vec3;
     const at = (x: number, y: number, z: number) => [0, 1, 2].map((i) => O[i] + (ex[i] * x + ey[i] * y + n[i] * z) * s) as Vec3;
     const sc = (v: Vec3, k: number) => v.map((c) => c * k * s) as Vec3;
-
     bar.O = O;
     bar.ex = sc(ex, 1);
     bar.ey = sc(ey, 1);
@@ -3182,10 +3470,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
     const flyPose = advanceFlight(dt);
     const maneuverPose = advanceMapManeuver(dt);
-    if ((flight && flight.phase !== 'paused') || flyPose || maneuverPose) moving = true;
+    const fpvWasMoving =
+      !!fpv &&
+      (fpv.phase !== 'active' ||
+        Math.abs(wrapAngle(fpv.bearing - fpv.bearingT)) > 1e-4 ||
+        Math.abs(fpv.pitch - fpv.pitchT) > 1e-4 ||
+        Math.abs(fpv.zoom - fpv.zoomT) > 1e-4);
+    const fpvPoseNow = advanceFpv(dt);
+    if ((flight && flight.phase !== 'paused') || flyPose || maneuverPose || fpvWasMoving || fpvPoseNow !== null && fpv?.phase === 'return') moving = true;
     const lift = liftOf(st.e);
     const lit = 0.78 * smooth(st.e / 0.4);
-    cam = maneuverPose ? rigCam(maneuverPose) : flyPose ? rigCam(flyPose) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
+    cam = fpvPoseNow ?? (maneuverPose ? rigCam(maneuverPose) : flyPose ? rigCam(flyPose) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan));
     const camRight = cam.r;
     const panelCards = cards.filter((card) => !isXHintPiece(card));
     const xHintPhase = xHintPiece?.el.closest<HTMLElement>('[data-x-hint]')?.dataset.xHintPhase;
@@ -3227,7 +3522,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     // Update the HUD keys before positioning the hint card that is anchored to
     // the X key. This keeps both on the same camera frame while the map turns.
     const H = hudFrame(dt, smooth(st.e / 0.5));
-    const fixedPanel = flight
+    const fixedPanel = flight && !fpv
       ? (() => {
           const gap = 10;
           const totalH = panelCards.reduce((sum, card) => sum + card.h, 0) + gap * Math.max(0, panelCards.length - 1);
@@ -3351,6 +3646,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       order += 1;
       p.ex = [1, 0, 0];
       p.ey = [0, 1, 0];
+      if (
+        fpv &&
+        (((p.kind === 'card' || p.kind === 'content') && !isXHintPiece(p)) ||
+          p.kind === 'flag' ||
+          p.kind === 'photo' ||
+          p.kind === 'maneuver')
+      ) {
+        p.hidden = true;
+        unplace(p);
+        continue;
+      }
       if (p.kind === 'maneuver') {
         const key = keys.find((candidate) => candidate.name === 'maneuver');
         if (!key || !key.w || !key.h || !p.w || !p.h) {
@@ -3768,6 +4074,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const busy = moving || drag !== null;
     size(busy ? qs : 1);
     const hasLand = !!model?.terrain;
+    const hudItems = photoFlying
+      ? [...H.items, ...(noHud ? [] : maneuverHud), ...photoItems, ...xHintHud]
+      : [...H.items, ...(noHud ? [] : maneuverHud), ...xHintHud];
     R.draw({
       night: light.night,
       lamps,
@@ -3796,9 +4105,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       },
       opaque,
       blend,
-      hud: photoFlying
-        ? [...H.items, ...(noHud ? [] : maneuverHud), ...photoItems, ...xHintHud]
-        : [...H.items, ...(noHud ? [] : maneuverHud), ...xHintHud],
+      hud: hudItems,
+      // the first-person camera stands at eye level, where the scene's depth range is too coarse for the HUD
+      hudVp: fpv ? hudProjection(hudItems, cam) : undefined,
       hudLight: lit,
       casters:
         flagCasters || photoCast.length ? { cloth: flagCasters?.cloth, quads: [...(flagCasters?.quads ?? []), ...photoCast] } : null,
@@ -3836,15 +4145,19 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   // ---------------------------------------------------------------- a sharper map where the view is close
   let detailReq: DetailRequest | null = null;
+  /** Keep the first close-view texture stable while FPV rotates around its fixed position. */
+  let fpvDetailFrozen = false;
   let detailTimer = 0;
   function dropDetail() {
     window.clearTimeout(detailTimer);
+    fpvDetailFrozen = false;
     if (!detailReq) return;
     detailReq = null;
     callbacks.onDetail(null);
   }
   function checkDetail() {
     if (disposed || !model || drag || mapManeuver || mapManeuverSelection || st.eT < 1 || st.e < 0.6) return;
+    if (fpv && fpvDetailFrozen) return;
     const lift = liftOf(st.e);
     const toScreen = (x: number, y: number, z: number) => {
       const c = mul([x, y, z, 1]);
@@ -3877,7 +4190,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     }
     if (!Number.isFinite(x0)) return;
-    const pad = 0.06 * Math.max(x1 - x0, y1 - y0) + 4;
+    const pad = (fpv ? 0.12 : 0.06) * Math.max(x1 - x0, y1 - y0) + (fpv ? 8 : 4);
     x0 = clamp(Math.floor(x0 - pad), 0, MW);
     y0 = clamp(Math.floor(y0 - pad), 0, MH);
     x1 = clamp(Math.ceil(x1 + pad), 0, MW);
@@ -3889,8 +4202,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const want = Math.min(rc * TS * 1.1, detailSide() / Math.max(w, h), 12);
     if (want < TS * DETAIL_GAIN) return dropDetail();
     const cur = detailReq;
-    if (cur && cur.x <= x0 && cur.y <= y0 && cur.x + cur.w >= x1 && cur.y + cur.h >= y1 && cur.density >= want * 0.8) return;
+    if (cur && cur.x <= x0 && cur.y <= y0 && cur.x + cur.w >= x1 && cur.y + cur.h >= y1 && cur.density >= want * 0.8) {
+      if (fpv) fpvDetailFrozen = true;
+      return;
+    }
     detailReq = { x: x0, y: y0, w, h, density: +want.toFixed(3), zoom: +st.zoomT.toFixed(3) };
+    if (fpv) fpvDetailFrozen = true;
     callbacks.onDetail(detailReq);
   }
   /** The app drew into the map canvases: upload them again. */
@@ -4152,7 +4469,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   /** Update the ground hover state shared by GPX and Map mode once the model is raised. */
   function updateGroundHover(ev: PointerEvent) {
     const t = ev.target as Element;
-    if (st.eT < 0.5 || st.e < 0.6 || !model?.terrain || !onTerrain(t)) {
+    if (fpv || st.eT < 0.5 || st.e < 0.6 || !model?.terrain || !onTerrain(t)) {
       if (hover) setHover(null);
       return;
     }
@@ -4220,29 +4537,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     const t = ev.target as Element;
     viewInteractionNotified = false;
-    if (mapPinSelection) {
+    if (fpv) {
       if (t !== canvas && (t.closest?.(INTERACTIVE) || t.closest?.('[data-hud]'))) return;
-      if (!onTerrain(t)) return;
       ev.preventDefault();
       moved = 0;
       px = ev.clientX;
       py = ev.clientY;
-      drag = 'pin-select';
+      drag = 'fpv-turn';
       canvas.setPointerCapture(ev.pointerId);
-      updateGroundHover(ev);
-      return;
-    }
-    if (mapManeuverSelection) {
-      if (t.closest?.('[data-key="map-cancel"]')) return;
-      if (t !== canvas && (t.closest?.(INTERACTIVE) || t.closest?.('[data-hud]'))) return;
-      if (!onTerrain(t)) return;
-      ev.preventDefault();
-      moved = 0;
-      px = ev.clientX;
-      py = ev.clientY;
-      drag = 'maneuver-select';
-      canvas.setPointerCapture(ev.pointerId);
-      updateGroundHover(ev);
+      canvas.classList.add('turning');
       return;
     }
     if (mapManeuver) {
@@ -4314,22 +4617,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const onPointerMove = (ev: PointerEvent) => {
     if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
     flagHover = !!(ev.target as Element).closest?.('[data-piece="flag"]');
-    if (mapPinSelection && drag === 'pin-select') {
+    if (fpv && drag === 'fpv-turn') {
       const dx = ev.clientX - px;
       const dy = ev.clientY - py;
       px = ev.clientX;
       py = ev.clientY;
       moved += Math.abs(dx) + Math.abs(dy);
-      updateGroundHover(ev);
-      return;
-    }
-    if (mapManeuverSelection && drag === 'maneuver-select') {
-      const dx = ev.clientX - px;
-      const dy = ev.clientY - py;
-      px = ev.clientX;
-      py = ev.clientY;
-      moved += Math.abs(dx) + Math.abs(dy);
-      updateGroundHover(ev);
+      fpv.bearingT = wrapAngle(fpv.bearingT - dx * 0.0055);
+      fpv.pitchT = clamp(fpv.pitchT + -dy * 0.0045, FPV_PITCH_MIN, FPV_PITCH_MAX);
+      if (moved > 0.5) notifyViewInteraction('fpv_rotate');
+      need();
       return;
     }
     if (!drag) {
@@ -4421,24 +4718,36 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const was = drag;
     drag = null;
     panFrom = null;
-    if (was === 'pin-select') {
-      const [sx, sy] = canvasPoint(ev);
-      const P = pick(cam, sx, sy, liftOf(st.e));
-      mapPinSelection = false;
-      setManeuverSelecting(false);
-      setHover(null);
-      callbacks.onMapPinSelectionChange?.(false);
-      if (moved < 5 && P) {
-        const mx = P[0] - MAPX;
-        const my = P[1] - MAPY;
-        if (mx >= 0 && my >= 0 && mx <= MW && my <= MH) {
-          callbacks.onMapPinSelected?.(mx, my);
-        }
-      }
+    if (was === 'fpv-turn') {
+      canvas.classList.remove('turning');
       need();
       return;
     }
-    if (was === 'map') {
+    const selection = fpvSelection ? 'fpv' : mapPinSelection ? 'pin' : mapManeuverSelection ? 'maneuver' : null;
+    if (selection && ev.type === 'pointerup' && ev.button === 0 && moved < 5) {
+      const [sx, sy] = canvasPoint(ev);
+      const P = pick(cam, sx, sy, liftOf(st.e));
+      if (P) {
+        const mx = P[0] - MAPX;
+        const my = P[1] - MAPY;
+        if (mx >= 0 && my >= 0 && mx <= MW && my <= MH) {
+          if (selection === 'fpv') {
+            notifyViewInteraction('fpv_select');
+            startFpvAt(P);
+          } else if (selection === 'pin') {
+            mapPinSelection = false;
+            setManeuverSelecting(false);
+            setHover(null);
+            callbacks.onMapPinSelectionChange?.(false);
+            callbacks.onMapPinSelected?.(mx, my);
+          } else {
+            notifyViewInteraction('map_maneuver');
+            startMapManeuverAt(P);
+          }
+        }
+      }
+      need();
+    } else if (was === 'map') {
       if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapPan(...mapDragTotal);
       mapDragTotal = [0, 0];
     } else if ((was === 'turn' || was === 'pan') && moved > 0.5) {
@@ -4451,20 +4760,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       else d.vT = boundedDrumValue(pop!, d, Math.round(d.v + clamp(drumDrag.vel, -40, 40) * 0.12));
       if (pop) setFocus(pop.drums.indexOf(d));
       drumDrag = null;
-      need();
-      return;
-    }
-    if (was === 'maneuver-select') {
-      const [sx, sy] = canvasPoint(ev);
-      const P = pick(cam, sx, sy, liftOf(st.e));
-      if (moved < 5 && P) {
-        const mx = P[0] - MAPX;
-        const my = P[1] - MAPY;
-        if (mx >= 0 && my >= 0 && mx <= MW && my <= MH) {
-          notifyViewInteraction('map_maneuver');
-          startMapManeuverAt(P);
-        }
-      }
       need();
       return;
     }
@@ -4516,7 +4811,19 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   const onWheel = (ev: WheelEvent) => {
     const t = ev.target as Element;
-    if (mapManeuver || mapManeuverSelection) {
+    if (fpv) {
+      ev.preventDefault();
+      const dy = ev.deltaMode === 1 ? ev.deltaY * 30 : ev.deltaY;
+      if (!dy || fpv.phase !== 'active') return;
+      const zoom = clamp(fpv.zoomT * Math.exp(-dy * (ev.ctrlKey ? 0.012 : 0.0022)), FPV_ZOOM_MIN, FPV_ZOOM_MAX);
+      if (Math.abs(zoom - fpv.zoomT) > 1e-6) {
+        fpv.zoomT = zoom;
+        notifyViewInteraction('fpv_zoom');
+        need();
+      }
+      return;
+    }
+    if (mapManeuver) {
       ev.preventDefault();
       return;
     }
@@ -4610,6 +4917,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   const onKey = (ev: KeyboardEvent) => {
+    if (fpvSelection) {
+      if (ev.key === 'Escape') fpvCancel();
+      ev.preventDefault();
+      return;
+    }
+    if (fpv) {
+      if (ev.key === 'Escape') returnFromFpv();
+      ev.preventDefault();
+      return;
+    }
     if (mapPinSelection) {
       if (ev.key === 'Escape') mapPinCancel();
       ev.preventDefault();
@@ -4881,6 +5198,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     cancelMapManeuver: returnFromMapManeuver,
     startMapPinPlacement: mapPinStart,
     cancelMapPinPlacement: mapPinCancel,
+    startFpv: fpvStart,
+    startFpvAtMapPoint,
+    cancelFpv: returnFromFpv,
+    getFpvState: fpvState,
     startMapPinDrop,
     startMapPinRemoval,
     toggleInfo,

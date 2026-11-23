@@ -138,6 +138,8 @@ export type Copy = {
     flyoverPause: string;
     flyoverResume: string;
     flyoverStop: string;
+    fpv: string;
+    fpvCancel: string;
     mapManeuver: string;
     mapManeuverMenu: string;
     dronie: string;
@@ -300,6 +302,8 @@ function makeCopy(language: Language): Copy {
         flyoverPause: 'Flyoverを一時停止',
         flyoverResume: 'Flyoverを再開',
         flyoverStop: 'Flyoverを停止',
+        fpv: 'FPV視点を開始',
+        fpvCancel: 'FPV視点を終了',
         mapManeuver: '空撮',
         mapManeuverMenu: '空撮マニューバ',
         dronie: 'ドローニー',
@@ -466,6 +470,8 @@ function makeCopy(language: Language): Copy {
       flyoverPause: 'Pause Flyover',
       flyoverResume: 'Resume Flyover',
       flyoverStop: 'Stop Flyover',
+      fpv: 'Start FPV view',
+      fpvCancel: 'Exit FPV view',
       mapManeuver: 'Aerial shot',
       mapManeuverMenu: 'Aerial shot maneuvers',
       dronie: 'Dronie',

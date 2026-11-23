@@ -41,6 +41,42 @@ describe('parseMapPermalink', () => {
     expect(result?.ignoredParameters).toEqual(expect.arrayContaining(['bearing', 'zoom', 'time']));
   });
 
+  it('detects FPV from the fpv parameters without requiring a view parameter', () => {
+    expect(
+      parseMapPermalink(
+        '?mode=map&lat=35.68&lon=139.76&fpv_lat=35.681236&fpv_lon=139.767125&fpv_bearing=-30&fpv_pitch=12&fpv_zoom=1.8',
+      ),
+    ).toMatchObject({
+      view: 'fpv',
+      fpv: { lat: 35.681236, lon: 139.767125, bearing: 330, pitch: 12, zoom: 1.8 },
+    });
+  });
+
+  it('keeps the underlying 3D camera parameters when FPV is active', () => {
+    expect(
+      parseMapPermalink(
+        '?mode=map&bearing=42&pitch=31&zoom=2.2&pan_x=1&pan_y=-2&pan_z=3&fpv_lat=35.681236&fpv_lon=139.767125&fpv_bearing=90&fpv_pitch=-5&fpv_zoom=1.4',
+      ),
+    ).toMatchObject({
+      view: 'fpv',
+      bearing: 42,
+      pitch: 31,
+      zoom: 2.2,
+      pan: { x: 1, y: -2, z: 3 },
+    });
+  });
+
+  it('accepts the legacy wrapped negative FPV pitch from an existing permalink', () => {
+    expect(
+      parseMapPermalink(
+        '?mode=map&lat=35.68&lon=139.76&fpv_lat=35.681236&fpv_lon=139.767125&fpv_bearing=152.69&fpv_pitch=335.42&fpv_zoom=1',
+      ),
+    ).toMatchObject({
+      view: 'fpv',
+      fpv: { bearing: 152.69, pitch: -24.58, zoom: 1 },
+    });
+  });
+
   it('builds a reproducible 3D permalink without language parameters', () => {
     const url = buildMapPermalink(
       {
@@ -88,6 +124,33 @@ describe('parseMapPermalink', () => {
     );
 
     expect(url).toBe('https://example.test/?mode=map&lat=35.681236&lon=139.767125&style=pale&hillshade=on&view=flat&time=10%3A30');
+  });
+
+  it('builds an FPV permalink without a view parameter', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 35.681236, lon: 139.767125 },
+        view: 'fpv',
+        bearing: 0,
+        pitch: 0,
+        zoom: 1,
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        fpv: { lat: 35.68, lon: 139.76, bearing: 330.1234, pitch: 12.5678, zoom: 1.8 },
+        sunlight: true,
+        sunAuto: false,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/?view=flat',
+    );
+
+    expect(url).toBe(
+      'https://example.test/?mode=map&lat=35.681236&lon=139.767125&style=pale&hillshade=on&bearing=0.00&pitch=0.00&zoom=1.000&fpv_lat=35.680000&fpv_lon=139.760000&fpv_bearing=330.12&fpv_pitch=12.57&fpv_zoom=1.800&time=10%3A30',
+    );
+    expect(url).not.toContain('view=');
   });
 
   it('accepts normal auto sunlight speed and ignores it outside auto mode', () => {

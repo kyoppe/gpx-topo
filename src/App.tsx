@@ -10,6 +10,7 @@ import {
   type Engine,
   type EngineModel,
   type FlightPhase,
+  type FpvViewState,
   type HudHitArea,
 } from './engine';
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
@@ -296,6 +297,9 @@ export default function App() {
   const [mapPin, setMapPin] = useState<MapPermalinkPin | null>(() => permalink?.pin ?? null);
   const [mapPinRemoving, setMapPinRemoving] = useState(false);
   const [mapPinSelecting, setMapPinSelecting] = useState(false);
+  const [fpvSelecting, setFpvSelecting] = useState(false);
+  const [fpvActive, setFpvActive] = useState(false);
+  const [fpvView, setFpvView] = useState<FpvViewState | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   /** the photo of the view: its picture, while it is out of the camera key */
   const [shot, setShot] = useState<{ url: string; blob: Blob; aspect: number } | null>(null);
@@ -386,6 +390,11 @@ export default function App() {
         'pin_lat',
         'pin_lon',
         'pin_label',
+        'fpv_lat',
+        'fpv_lon',
+        'fpv_bearing',
+        'fpv_pitch',
+        'fpv_zoom',
         'sun',
         'time',
       ]) {
@@ -1257,6 +1266,11 @@ export default function App() {
           });
         },
         onMapPinSelectionChange: setMapPinSelecting,
+        onFpvSelectionChange: setFpvSelecting,
+        onFpvChange: (state) => {
+          setFpvActive(state !== null);
+          setFpvView(state?.view ?? null);
+        },
         onMapPinSelected: (x, y) => {
           const projection = mapProjectionRef.current;
           if (!projection) return;
@@ -1387,7 +1401,7 @@ export default function App() {
 
   useEffect(() => {
     engineRef.current?.refreshHud();
-  }, [mapManeuver, mapManeuverMenuOpen, mapPin, mapPinSelecting]);
+  }, [fpvActive, fpvSelecting, mapManeuver, mapManeuverMenuOpen, mapPin, mapPinSelecting]);
 
   useEffect(() => {
     if (viewMode === 'map') setPlacing(false);
@@ -1426,13 +1440,28 @@ export default function App() {
     if (!permalink || permalinkAppliedRef.current || !engine || !model || viewMode !== 'map') return;
     permalinkApplyingRef.current = true;
     try {
-      engine.setViewState({
-        raised: permalink.view === '3d',
-        bearing: permalink.bearing ?? undefined,
-        pitch: permalink.pitch ?? undefined,
-        zoom: permalink.zoom ?? undefined,
-        pan: permalink.pan ?? undefined,
-      });
+      if (permalink.view === 'fpv' && permalink.fpv && mapProjection) {
+        const point = mapProjection.project({ lat: permalink.fpv.lat, lon: permalink.fpv.lon });
+        engine.startFpvAtMapPoint(point.x, point.y, {
+          bearing: permalink.fpv.bearing,
+          pitch: permalink.fpv.pitch,
+          zoom: permalink.fpv.zoom,
+        }, {
+          raised: true,
+          bearing: permalink.bearing ?? 0,
+          pitch: permalink.pitch ?? undefined,
+          zoom: permalink.zoom ?? undefined,
+          pan: permalink.pan ?? undefined,
+        });
+      } else {
+        engine.setViewState({
+          raised: permalink.view === '3d',
+          bearing: permalink.bearing ?? undefined,
+          pitch: permalink.pitch ?? undefined,
+          zoom: permalink.zoom ?? undefined,
+          pan: permalink.pan ?? undefined,
+        });
+      }
       if (permalink.sun === 'auto' && permalink.view === '3d') {
         const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
         if (sun) {
@@ -1455,7 +1484,7 @@ export default function App() {
       date_source: permalink.date ? 'query' : 'today',
       sun: permalink.sun ?? 'default',
     });
-  }, [daylight, model, permalink, viewMode]);
+  }, [daylight, mapProjection, model, permalink, viewMode]);
 
   useEffect(() => {
     engineRef.current?.setPlacing(placing);
@@ -1903,7 +1932,9 @@ export default function App() {
   const flyoverPaused = flyoverPhase === 'paused';
   const flyoverReturning = flyoverPhase === 'return';
   const mapManeuverActive = mapManeuver !== null;
-  const mapManeuverAvailable = viewMode === 'map' && apart && mapReady && !!terrain;
+  const mapManeuverKeyAvailable = viewMode === 'map' && apart && mapReady && !!terrain;
+  const mapManeuverAvailable = mapManeuverKeyAvailable && !fpvActive && !fpvSelecting;
+  const fpvAvailable = viewMode === 'map' && apart && mapReady && !!terrain && !mapManeuverActive;
   const photoRouteOverlay = (baseMapStyle === 'photo' || baseMapStyle === 'photoNames') && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
   const mapStyleLabel =
@@ -1923,6 +1954,18 @@ export default function App() {
     if (!mapManeuverActive) return;
     addAction('map_maneuver_cancelled', { kind: mapManeuver.kind });
     engineRef.current?.cancelMapManeuver();
+  };
+  const toggleFpv = () => {
+    if (!fpvAvailable && !fpvActive && !fpvSelecting) return;
+    if (fpvActive || fpvSelecting) {
+      detachPermalink('fpv_exit');
+      engineRef.current?.cancelFpv();
+      addAction('fpv_cancelled');
+      return;
+    }
+    detachPermalink('fpv_start');
+    engineRef.current?.startFpv();
+    addAction('fpv_selection_started');
   };
   const selectMapStyle = (style: MapStyle) => {
     detachPermalink('map_style');
@@ -2014,12 +2057,15 @@ export default function App() {
     const engine = engineRef.current;
     if (viewMode !== 'map' || !center || !engine) return;
     const view = engine.getViewState();
+    const currentFpv = engine.getFpvState() ?? fpvView;
+    const fpvLocation = currentFpv && mapProjection ? mapProjection.inverse(currentFpv.x, currentFpv.y) : null;
+    const permalinkView = currentFpv ? 'fpv' : view.raised ? '3d' : 'flat';
     const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
     const timeMinutes = Number(sun?.value);
     const url = buildMapPermalink(
       {
         center,
-        view: view.raised ? '3d' : 'flat',
+        view: permalinkView,
         bearing: view.bearing,
         pitch: view.pitch,
         zoom: view.zoom,
@@ -2028,6 +2074,16 @@ export default function App() {
         mapStyle: baseMapStyle,
         hillshade,
         pin: mapPin,
+        fpv:
+          currentFpv && fpvLocation
+            ? {
+                lat: fpvLocation.lat,
+                lon: fpvLocation.lon,
+                bearing: currentFpv.bearing,
+                pitch: currentFpv.pitch,
+                zoom: currentFpv.zoom,
+              }
+            : null,
         sunlight: mapSunlight,
         sunAuto: mapSunAuto,
         sunSpeed: MAP_SUN_SPEED_NAMES[mapSunSpeed] ?? 'normal',
@@ -2047,7 +2103,7 @@ export default function App() {
         if (!document.execCommand('copy')) throw new Error('Clipboard copy failed.');
         input.remove();
       }
-      addAction('map_permalink_copied', { view: view.raised ? '3d' : 'flat', sunlight: mapSunlight, sun_auto: mapSunAuto });
+      addAction('map_permalink_copied', { view: permalinkView, sunlight: mapSunlight, sun_auto: mapSunAuto });
       showXHint('permalink');
     } catch (error) {
       reportWarning('copy_map_permalink', error);
@@ -2058,7 +2114,7 @@ export default function App() {
   return (
     <main
       lang={language}
-      className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}`}
+      className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}`}
     >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <div className="stage">
@@ -2788,7 +2844,8 @@ export default function App() {
               {flyoverPlaying && (
                 <span className="well" data-well="stop" data-appear="" />
               )}
-              {mapManeuverAvailable && !mapManeuverActive && <span className="well" data-well="maneuver" />}
+              {fpvAvailable && <span className="well" data-well="fpv" />}
+              {mapManeuverKeyAvailable && !mapManeuverActive && <span className="well" data-well="maneuver" />}
               {mapManeuverActive && <span className="well" data-well="map-cancel" data-appear="" />}
               <span className="well" data-well="camera" />
               <span className="well" data-well="video" />
@@ -2828,7 +2885,7 @@ export default function App() {
                 data-key="pin"
                 data-latched={mapPinSelecting || mapPin ? '' : undefined}
                 drawable=""
-                disabled={!mapReady}
+                disabled={!mapReady || fpvActive || fpvSelecting}
                 aria-label={mapPinSelecting ? copy.ui.mapPinCancel : copy.ui.mapPin}
                 onClick={toggleMapPin}
               >
@@ -2850,6 +2907,31 @@ export default function App() {
               >
                 <svg className="permalink-icon" viewBox="34 39 96 96" aria-hidden="true" focusable="false">
                   <image href="/permalink-icons.png" width="289" height="161" />
+                </svg>
+              </button>
+            )}
+            {fpvAvailable && (
+              <button
+                type="button"
+                className={`key key-fpv${fpvActive ? ' fpv-active' : ''}${fpvSelecting ? ' fpv-selecting' : ''}`}
+                data-piece="key"
+                data-key="fpv"
+                data-latched={fpvActive || fpvSelecting ? '' : undefined}
+                drawable=""
+                aria-label={fpvActive || fpvSelecting ? copy.ui.fpvCancel : copy.ui.fpv}
+                aria-pressed={fpvActive}
+                disabled={!mapReady || !terrain}
+                onClick={toggleFpv}
+              >
+                <svg className="fpv-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <g className="fpv-outline">
+                    <circle cx="12" cy="4.25" r="3.05" />
+                    <path className="fpv-outline-body" d="M9.3 7.3c.3-.8 1.2-1.3 2.7-1.3s2.4.5 2.7 1.3l.7 6.1c-.5.8-1.6 1.3-3.4 1.3s-2.9-.5-3.4-1.3Z" />
+                    <path className="fpv-outline-limb" d="M9.7 8.1 6.4 12.7M14.3 8.1l3.3 4.6M10.7 14.1 8.5 20M13.3 14.1l2.2 5.9M7.2 20.1h2.7M14.1 20.1h2.7" />
+                  </g>
+                  <path className="fpv-limb" d="M9.7 8.1 6.4 12.7M14.3 8.1l3.3 4.6M10.7 14.1 8.5 20M13.3 14.1l2.2 5.9M7.2 20.1h2.7M14.1 20.1h2.7" />
+                  <path className="fpv-body" d="M9.3 7.3c.3-.8 1.2-1.3 2.7-1.3s2.4.5 2.7 1.3l.7 6.1c-.5.8-1.6 1.3-3.4 1.3s-2.9-.5-3.4-1.3Z" />
+                  <circle className="fpv-head" cx="12" cy="4.25" r="2.25" />
                 </svg>
               </button>
             )}
@@ -2885,7 +2967,7 @@ export default function App() {
             </button>
               </>
             )}
-            {mapManeuverAvailable && !mapManeuverActive && (
+            {mapManeuverKeyAvailable && !mapManeuverActive && (
               <button
                 type="button"
                 className="key key-maneuver"
@@ -2894,7 +2976,7 @@ export default function App() {
                 drawable=""
                 aria-label={copy.ui.mapManeuver}
                 aria-expanded={mapManeuverMenuOpen}
-                disabled={!mapReady || !terrain}
+                disabled={!mapManeuverAvailable}
                 onClick={() => setMapManeuverMenuOpen((open) => !open)}
               >
                 ✦
@@ -2921,6 +3003,7 @@ export default function App() {
               data-key="flip"
               data-face="front"
               drawable=""
+              disabled={fpvActive || fpvSelecting}
               tabIndex={apart ? -1 : 0}
               onClick={() => {
                 detachPermalink('raise');
@@ -2937,6 +3020,7 @@ export default function App() {
               data-key="flip"
               data-face="back"
               drawable=""
+              disabled={fpvActive || fpvSelecting}
               tabIndex={apart ? 0 : -1}
               onClick={() => {
                 detachPermalink('lay_flat');
@@ -3044,10 +3128,13 @@ export default function App() {
               onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
             />
             {viewMode === 'map' && (
-              <button type="button" data-hud-hit="pin" tabIndex={-1} disabled={!mapReady} onClick={toggleMapPin} />
+              <button type="button" data-hud-hit="pin" tabIndex={-1} disabled={!mapReady || fpvActive || fpvSelecting} onClick={toggleMapPin} />
             )}
             {viewMode === 'map' && (
               <button type="button" data-hud-hit="permalink" tabIndex={-1} onClick={() => void copyMapPermalink()} />
+            )}
+            {fpvAvailable && (
+              <button type="button" data-hud-hit="fpv" tabIndex={-1} disabled={!mapReady || !terrain} onClick={toggleFpv} />
             )}
             {viewMode === 'gpx' && (
               <>
@@ -3105,6 +3192,7 @@ export default function App() {
               type="button"
               data-hud-hit="flip"
               tabIndex={-1}
+              disabled={fpvActive || fpvSelecting}
               onClick={() => {
                 addAction('view_mode_toggled', { target: apart ? 'flat' : 'raised' });
                 engineRef.current?.toggle();

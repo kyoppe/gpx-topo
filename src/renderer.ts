@@ -74,6 +74,12 @@ export type Scene = {
   blend: DrawItem[];
   /** drawn last, over everything, with its own depth */
   hud: DrawItem[];
+  /**
+   * The projection the HUD pass is drawn with: the scene's view and field of view, so every HUD point lands on the
+   * same pixel, with near and far planes fitted to the HUD. The scene's own planes may be far apart (a camera at eye
+   * level), which leaves a depth buffer too coarse to order the layers of the HUD. The scene's `vp` when absent.
+   */
+  hudVp?: Float32Array;
   hudLight: number;
   dpr: number;
   /** what casts a shadow from the sun onto everything under it (the flag): a cloth mesh and some quads */
@@ -997,6 +1003,12 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
     if (S.hud.length) {
       gl.clear(gl.DEPTH_BUFFER_BIT);
       common(main, S, S.hudLight, true);
+      if (S.hudVp) {
+        gl.uniformMatrix4fv(main.u.uVP, false, S.hudVp);
+        gl.useProgram(silk.p);
+        gl.uniformMatrix4fv(silk.u.uVP, false, S.hudVp);
+        gl.useProgram(main.p);
+      }
       pass(
         S.hud.filter((it) => !it.shade),
         S.hud.filter((it) => !!it.shade),
