@@ -12,7 +12,7 @@ import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coo
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
 import { detectLanguage, getCopy, type Copy } from './i18n';
-import { addAction, reportError, reportInfo, reportWarning } from './observability';
+import { addAction, reportError, reportInfo, reportWarning, startVital } from './observability';
 import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, saveView, startNow, type MapViewport } from './session';
 import { buildTerrain } from './terrain';
 import { MAX_VIDEO_RECORDING_MS, VIDEO_RECORDING_FRAME_RATE, supportedVideoMimeType, videoFileName } from './video';
@@ -61,6 +61,18 @@ function layoutFor(width: number, height: number): Layout {
 
 function flatElevationGrid(nx: number, ny: number): ElevationGrid {
   return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'gsi-dem' };
+}
+
+function parseGpxWithVital(xml: string, source: 'file' | 'restore' | 'fixture'): GpxRoute {
+  const stop = startVital('gpx_parse', { source });
+  try {
+    const parsed = parseGpx(xml);
+    stop('ok', { point_count: parsed.points.length });
+    return parsed;
+  } catch (error) {
+    stop('error');
+    throw error;
+  }
 }
 
 type DemCache = {
@@ -725,7 +737,7 @@ export default function App() {
         .then((xml) => {
           if (!isCurrent()) return;
           const name = DEFAULT_GPX_URL.split('/').pop() ?? 'route.gpx';
-          const next = ensureWaypoints(parseGpx(xml));
+          const next = ensureWaypoints(parseGpxWithVital(xml, 'fixture'));
           if (!isCurrent()) return;
           setRoute(next);
           setFileName(name);
@@ -755,7 +767,7 @@ export default function App() {
         if (!saved) return fixture();
         let parsed: GpxRoute;
         try {
-          parsed = ensureWaypoints(parseGpx(saved.xml));
+          parsed = ensureWaypoints(parseGpxWithVital(saved.xml, 'restore'));
         } catch {
           return fixture();
         }
@@ -994,11 +1006,14 @@ export default function App() {
     };
     void (async () => {
       const [cx, cy] = lattice(COARSE_DENSITY);
+      const stopCoarse = startVital('dem_load', { phase: 'coarse', nx: cx, ny: cy }, signal);
       try {
         const first = await loadDemGrid(sourceProjection, cx, cy, signal);
+        stopCoarse('ok');
         if (signal.aborted) return;
         setDemGrid({ projection: sourceProjection, grid: first });
       } catch (error) {
+        stopCoarse(signal.aborted ? 'aborted' : 'error');
         if (signal.aborted) return;
         reportWarning('load_dem_coarse', error);
         if (viewMode === 'gpx' && points) {
@@ -1013,10 +1028,13 @@ export default function App() {
         return;
       }
       const [fx, fy] = lattice(FINE_DENSITY);
+      const stopFine = startVital('dem_load', { phase: 'fine', nx: fx, ny: fy }, signal);
       try {
         const fine = await loadDemGrid(sourceProjection, fx, fy, signal);
+        stopFine('ok');
         if (!signal.aborted) setDemGrid({ projection: sourceProjection, grid: fine });
       } catch (error) {
+        stopFine(signal.aborted ? 'aborted' : 'error');
         // the first pass stays
         if (!signal.aborted) reportWarning('load_dem_fine', error);
       }
@@ -1130,9 +1148,14 @@ export default function App() {
     canvas.setAttribute('layoutsubtree', '');
     const htmlInCanvasContext = getHtmlInCanvasContext();
     let engine: Engine;
+    let stopFirstPaint: ReturnType<typeof startVital> | undefined;
+    const stopEngineStart = startVital('html_in_canvas_engine_start', htmlInCanvasContext);
     try {
       engine = createEngine(canvas, page, {
-        onFirstPaint: () => addAction('html_in_canvas_painted', htmlInCanvasContext),
+        onFirstPaint: () => {
+          stopFirstPaint?.('ok');
+          addAction('html_in_canvas_painted', htmlInCanvasContext);
+        },
         onApartChange: setApart,
         onMapDrag: panMapPreview,
         onMapPan: panMap,
@@ -1169,14 +1192,18 @@ export default function App() {
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
       });
     } catch (error) {
+      stopEngineStart('error');
       reportError('create_html_in_canvas_engine', error);
       setToast(error instanceof Error ? error.message : copy.toast.threeDStartFailed);
       return;
     }
+    stopEngineStart('ok');
+    stopFirstPaint = startVital('html_in_canvas_first_paint', htmlInCanvasContext);
     addAction('html_in_canvas_ready', htmlInCanvasContext);
     engineRef.current = engine;
     engine.refreshHud();
     return () => {
+      stopFirstPaint?.('aborted');
       engineRef.current = null;
       engine.dispose();
     };
@@ -1436,7 +1463,7 @@ export default function App() {
     let xml = '';
     try {
       xml = await file.text();
-      const next = ensureWaypoints(parseGpx(xml));
+      const next = ensureWaypoints(parseGpxWithVital(xml, 'file'));
       if (requestId !== fileRequestRef.current) return;
       touchedRef.current = true;
       engineRef.current?.together();
@@ -1561,10 +1588,13 @@ export default function App() {
     videoStartedAtRef.current = performance.now();
     videoStartedAtDateRef.current = new Date();
     videoStopReasonRef.current = 'manual';
+    let stopRecording: ReturnType<typeof startVital> | undefined;
+    let recordingFailed = false;
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) videoChunksRef.current.push(event.data);
     };
     recorder.onerror = () => {
+      recordingFailed = true;
       reportError('video_recording', new Error('MediaRecorder reported an error.'), {
         mime_type: recorder.mimeType || mimeType || 'browser-default',
       });
@@ -1577,6 +1607,11 @@ export default function App() {
       const outputMimeType = recorder.mimeType || mimeType || 'video/webm';
       const startedAt = videoStartedAtDateRef.current ?? new Date();
       const blob = new Blob(chunks, { type: outputMimeType });
+      stopRecording?.(recordingFailed || !blob.size ? 'error' : 'ok', {
+        reason,
+        mime_type: outputMimeType,
+        file_size: blob.size,
+      });
       videoChunksRef.current = [];
       videoStartedAtDateRef.current = null;
       videoRecorderRef.current = null;
@@ -1603,6 +1638,7 @@ export default function App() {
       }
     };
     try {
+      stopRecording = startVital('video_recording', { mime_type: mimeType || 'browser-default', capture_source: 'canvas' });
       recorder.start(1000);
       videoRecordingRef.current = true;
       setVideoRecording(true);
@@ -1626,6 +1662,7 @@ export default function App() {
       videoFrameRafRef.current = requestAnimationFrame(captureNextFrame);
       videoTimerRef.current = window.setTimeout(() => stopVideoRecording('max_duration'), MAX_VIDEO_RECORDING_MS);
     } catch (error) {
+      stopRecording?.('error');
       videoRecorderRef.current = null;
       videoStreamRef.current?.getTracks().forEach((track) => track.stop());
       videoStreamRef.current = null;
