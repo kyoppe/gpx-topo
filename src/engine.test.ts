@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEngine, type Engine, type EngineCallbacks, type EngineModel } from './engine';
 import type { HtmlInCanvasElement } from './htmlInCanvas';
 import { createRenderer } from './renderer';
+import { buildTerrain } from './terrain';
 
 vi.mock('./renderer', () => ({ createRenderer: vi.fn() }));
 
@@ -40,6 +41,7 @@ afterEach(() => {
 function setup(width = 100) {
   const renderer = {
     layer: vi.fn(() => ({ tex: {}, w: 0, h: 0, ready: false })),
+    setTerrain: vi.fn(),
     deleteLayer: vi.fn(), setMesh: vi.fn(), clearTerrain: vi.fn(),
     upload: vi.fn(), draw: vi.fn(), dispose: vi.fn(), maxTexture: 4096,
   };
@@ -93,6 +95,24 @@ function cameraSetup(pose: { e?: number; yaw?: number; tilt?: number; zoom?: num
   debug.pose(pose);
   scene.paint();
   return { ...scene, debug };
+}
+
+function fpvSetup() {
+  const scene = setup();
+  scene.engine.setModel({
+    ...model,
+    mapMode: true,
+    terrain: buildTerrain(
+      { nx: 1, ny: 1, values: new Float32Array([100, 100, 100, 100]), source: 'gsi-dem' },
+      model.mapWidth,
+      model.mapHeight,
+      1,
+    ),
+  });
+  scene.engine.apart(1);
+  scene.engine.startFpvAtMapPoint(model.mapWidth / 2, model.mapHeight / 2);
+  vi.advanceTimersByTime(1000);
+  return scene;
 }
 
 describe('camera gesture completion', () => {
@@ -217,6 +237,27 @@ describe('camera gesture completion', () => {
     pointer(canvas, 'pointermove', 620);
     pointer(canvas, 'pointerup');
     expect(callbacks.onCameraRotate).toHaveBeenCalledOnce();
+  });
+
+  it.each(['pointercancel', 'lostpointercapture'])('discards an FPV drag on %s and resets for the next one', (end) => {
+    const { canvas, engine } = fpvSetup();
+    pointer(canvas, 'pointerdown');
+    pointer(canvas, 'pointermove', 620);
+    vi.advanceTimersByTime(100);
+    expect(canvas.classList.contains('turning')).toBe(true);
+    pointer(canvas, end);
+    expect(canvas.classList.contains('turning')).toBe(false);
+    const afterCancel = engine.getFpvState()!;
+
+    pointer(canvas, 'pointermove', 700);
+    vi.advanceTimersByTime(100);
+    expect(engine.getFpvState()!).toEqual(afterCancel);
+
+    pointer(canvas, 'pointerdown');
+    expect(canvas.classList.contains('turning')).toBe(true);
+    pointer(canvas, 'pointermove', 620);
+    pointer(canvas, 'pointerup');
+    expect(canvas.classList.contains('turning')).toBe(false);
   });
 
   it.each([{ button: 0 }, { button: 2 }])('recovers an unfinished drag on a new press from the same pointer (%o)', (options) => {

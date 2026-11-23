@@ -1772,13 +1772,6 @@ main[lang='en'] .bar-hint {
   color: #3e2b0b;
 }
 
-.key-fpv.fpv-active {
-  --side: #2f7c5b;
-  --top: #65bd8d;
-  --bottom: #42956d;
-  color: #123b2a;
-}
-
 /* every part is yellow; .fpv-outline is a dark underlay (about 1px) that rims the whole silhouette */
 .fpv-icon {
   display: block;

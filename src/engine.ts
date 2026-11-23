@@ -4501,6 +4501,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let downOnMap = false;
   let mapDragTotal: [number, number] = [0, 0];
   let panFrom: { cam: Cam; P: Vec3; pan: Vec3 } | null = null;
+  let fpvDragPointerId: number | null = null;
   let cameraDrag: ({ pointerId: number; startedAt: number } & (
     | { kind: 'rotate'; change: Omit<CameraRotation, 'duration_ms'> }
     | { kind: 'pan'; change: Omit<CameraPan, 'duration_ms'> }
@@ -4535,6 +4536,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       panFrom = null;
       canvas.classList.remove('turning');
     }
+    if (fpvDragPointerId !== null) {
+      if (fpvDragPointerId !== ev.pointerId) return;
+      fpvDragPointerId = null;
+      drag = null;
+      panFrom = null;
+      canvas.classList.remove('turning');
+    }
     const t = ev.target as Element;
     viewInteractionNotified = false;
     if (fpv) {
@@ -4544,6 +4552,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       px = ev.clientX;
       py = ev.clientY;
       drag = 'fpv-turn';
+      fpvDragPointerId = ev.pointerId;
       canvas.setPointerCapture(ev.pointerId);
       canvas.classList.add('turning');
       return;
@@ -4616,8 +4625,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   };
   const onPointerMove = (ev: PointerEvent) => {
     if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
+    if (fpvDragPointerId !== null && fpvDragPointerId !== ev.pointerId) return;
     flagHover = !!(ev.target as Element).closest?.('[data-piece="flag"]');
     if (fpv && drag === 'fpv-turn') {
+      if (ev.buttons === 0) {
+        fpvDragPointerId = null;
+        drag = null;
+        panFrom = null;
+        canvas.classList.remove('turning');
+        need();
+        return;
+      }
       const dx = ev.clientX - px;
       const dy = ev.clientY - py;
       px = ev.clientX;
@@ -4713,12 +4731,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   };
   const onPointerUp = (ev: PointerEvent) => {
     if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
+    if (fpvDragPointerId !== null && fpvDragPointerId !== ev.pointerId) return;
     if (!drag) return;
     finishCameraDrag(ev.type === 'pointerup');
     const was = drag;
     drag = null;
     panFrom = null;
     if (was === 'fpv-turn') {
+      fpvDragPointerId = null;
       canvas.classList.remove('turning');
       need();
       return;
@@ -4780,6 +4800,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   };
   const onCameraCaptureLost = (ev: PointerEvent) => {
     if (cameraDrag?.pointerId === ev.pointerId) onPointerUp(ev);
+    else if (fpvDragPointerId === ev.pointerId) onPointerUp(ev);
   };
   // the right button moves the model, so the browser's menu stays shut except over a field being typed in
   // The wheel raises the flat page into the model as far as it is turned, and a page left part way up
@@ -5143,6 +5164,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function dispose() {
     disposed = true;
     cameraDrag = null;
+    fpvDragPointerId = null;
     cameraZoom = null;
     window.clearTimeout(cameraZoomTimer);
     window.clearTimeout(detailTimer);

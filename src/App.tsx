@@ -506,7 +506,7 @@ export default function App() {
 
   const switchViewMode = useCallback(
     (next: ViewMode) => {
-      if (apart || modeTransition || next === viewMode || !engineRef.current?.isFlat()) return;
+      if (fpvActive || fpvSelecting || apart || modeTransition || next === viewMode || !engineRef.current?.isFlat()) return;
       detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
@@ -534,10 +534,11 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, detachPermalink, gpxProjection, modeTransition, viewMode],
+    [apart, detachPermalink, fpvActive, fpvSelecting, gpxProjection, modeTransition, viewMode],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
+      if (fpvActive || fpvSelecting) return;
       const engine = engineRef.current;
       if (!apart && engine?.isFlat()) {
         switchViewMode(next);
@@ -547,7 +548,7 @@ export default function App() {
       addAction('view_mode_switch_deferred', { mode: next });
       engine?.together();
     },
-    [apart, switchViewMode],
+    [apart, fpvActive, fpvSelecting, switchViewMode],
   );
 
   useEffect(() => {
@@ -1934,7 +1935,12 @@ export default function App() {
   const mapManeuverActive = mapManeuver !== null;
   const mapManeuverKeyAvailable = viewMode === 'map' && apart && mapReady && !!terrain;
   const mapManeuverAvailable = mapManeuverKeyAvailable && !fpvActive && !fpvSelecting;
-  const fpvAvailable = viewMode === 'map' && apart && mapReady && !!terrain && !mapManeuverActive;
+  const fpvAvailable =
+    viewMode === 'map' &&
+    mapReady &&
+    !!terrain &&
+    !mapManeuverActive &&
+    (apart || fpvActive || fpvSelecting);
   const photoRouteOverlay = (baseMapStyle === 'photo' || baseMapStyle === 'photoNames') && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
   const mapStyleLabel =
@@ -2862,7 +2868,7 @@ export default function App() {
               data-piece="key"
               data-key="mode"
               drawable=""
-              disabled={modeTransition !== null}
+              disabled={modeTransition !== null || fpvActive || fpvSelecting}
               aria-label={viewMode === 'gpx' ? copy.ui.mapMode : copy.ui.gpxMode}
               onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
             >
