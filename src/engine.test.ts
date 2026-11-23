@@ -219,6 +219,50 @@ describe('camera gesture completion', () => {
     expect(callbacks.onCameraRotate).toHaveBeenCalledOnce();
   });
 
+  it.each([{ button: 0 }, { button: 2 }])('recovers an unfinished drag on a new press from the same pointer (%o)', (options) => {
+    const { canvas, callbacks } = cameraSetup();
+    pointer(canvas, 'pointerdown', 600, 400, options);
+    vi.advanceTimersByTime(100);
+    pointer(canvas, 'pointermove', 700, 420);
+    vi.advanceTimersByTime(100);
+
+    // No release, cancellation, or lost capture arrives for the first drag.
+    pointer(canvas, 'pointerdown');
+    expect(callbacks.onCameraRotate).not.toHaveBeenCalled();
+    expect(callbacks.onCameraPan).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(30);
+    pointer(canvas, 'pointermove', 620, 410);
+    vi.advanceTimersByTime(20);
+    pointer(canvas, 'pointerup', 620, 410);
+
+    expect(callbacks.onCameraRotate).toHaveBeenCalledOnce();
+    const [change] = vi.mocked(callbacks.onCameraRotate).mock.calls[0];
+    expect(change.delta_heading_deg).toBeCloseTo(-0.11 * 180 / Math.PI);
+    expect(change.delta_pitch_deg).toBeCloseTo(-0.045 * 180 / Math.PI);
+    expect(change.total_heading_deg).toBeCloseTo(0.11 * 180 / Math.PI);
+    expect(change.total_pitch_deg).toBeCloseTo(0.045 * 180 / Math.PI);
+    expect(change.duration_ms).toBe(50);
+    expect(callbacks.onCameraPan).not.toHaveBeenCalled();
+  });
+
+  it('clears an unfinished camera drag before handling a control press', () => {
+    const { canvas, callbacks, debug } = cameraSetup();
+    pointer(canvas, 'pointerdown');
+    pointer(canvas, 'pointermove', 700, 420);
+    const heading = debug.st.yawT;
+
+    const button = document.createElement('button');
+    canvas.append(button);
+    pointer(button, 'pointerdown');
+    pointer(canvas, 'pointermove', 720, 430);
+    pointer(canvas, 'pointerup', 720, 430);
+
+    expect(debug.st.yawT).toBe(heading);
+    expect(canvas.classList.contains('turning')).toBe(false);
+    expect(callbacks.onCameraRotate).not.toHaveBeenCalled();
+    expect(callbacks.onCameraPan).not.toHaveBeenCalled();
+  });
+
   it('ignores another pointer while a camera drag is active', () => {
     const { canvas, callbacks } = cameraSetup();
     pointer(canvas, 'pointerdown');

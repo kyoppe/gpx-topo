@@ -4180,7 +4180,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onViewInteraction?.(reason);
   };
   const onPointerDown = (ev: PointerEvent) => {
-    if (cameraDrag) return;
+    if (cameraDrag) {
+      if (cameraDrag.pointerId !== ev.pointerId) return;
+      // A new press from the same pointer means its previous release was missed.
+      finishCameraDrag(false);
+      drag = null;
+      panFrom = null;
+      canvas.classList.remove('turning');
+    }
     const t = ev.target as Element;
     viewInteractionNotified = false;
     if (mapPinSelection) {

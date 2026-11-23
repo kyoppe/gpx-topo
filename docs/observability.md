@@ -142,6 +142,9 @@ changed the camera target. Cancelled drags, lost pointer capture, clicks,
 hover, and engine disposal do not emit completion actions. A drag that raises
 the flat GPX view and turns it counts as rotation. The existing 2D
 `map_pan_completed` action and its screen-pixel attributes are unchanged.
+If a release event is missed, the next press from the same pointer discards
+the unfinished camera gesture and starts a fresh interaction; the abandoned
+gesture emits no action and contributes no movement or duration to the new one.
 
 Zoom wheel events are grouped until a 200 ms pause, matching the engine's
 existing wheel gesture boundary. Browser/trackpad pinch events use the same
