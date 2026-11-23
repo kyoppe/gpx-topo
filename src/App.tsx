@@ -15,6 +15,7 @@ import { detectLanguage, getCopy, type Copy } from './i18n';
 import { addAction, reportError, reportInfo, reportWarning } from './observability';
 import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, saveView, startNow, type MapViewport } from './session';
 import { buildTerrain } from './terrain';
+import { MAX_VIDEO_RECORDING_MS, VIDEO_RECORDING_FRAME_RATE, supportedVideoMimeType, videoFileName } from './video';
 
 const DEFAULT_GPX_URL = '/fixtures/SFMT2026-110km.gpx';
 const PANEL_WIDTH = 400;
@@ -107,6 +108,8 @@ function elapsedInput(startMinutes: number, targetMinutes: number) {
 type Pop =
   | { seq: number; kind: 'date'; anchor: string }
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
+
+type LatestMedia = 'photo' | 'video';
 
 type MapBuffer = {
   flat: HTMLCanvasElement;
@@ -273,6 +276,9 @@ export default function App() {
   /** the photo of the view: its picture, while it is out of the camera key */
   const [shot, setShot] = useState<{ url: string; blob: Blob; aspect: number } | null>(null);
   const [shotOpen, setShotOpen] = useState(false);
+  const [latestMedia, setLatestMedia] = useState<LatestMedia | null>(null);
+  const [xHint, setXHint] = useState<{ kind: LatestMedia; seq: number; phase: 'in' | 'out' } | null>(null);
+  const [videoRecording, setVideoRecording] = useState(false);
   const flagRef = useRef<HTMLDivElement>(null);
   const flagTwinRef = useRef<HTMLDivElement>(null);
   const flagBrushes = useFlagBrushes(flagRef, flagTwinRef);
@@ -292,6 +298,20 @@ export default function App() {
   const pageRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const routeNameRef = useRef<string | null>(null);
+  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+  const videoStreamRef = useRef<MediaStream | null>(null);
+  const videoChunksRef = useRef<Blob[]>([]);
+  const videoRecordingRef = useRef(false);
+  const videoTimerRef = useRef<number | null>(null);
+  const videoFrameRafRef = useRef<number | null>(null);
+  const videoCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoLastFrameRef = useRef(0);
+  const videoStartedAtRef = useRef(0);
+  const videoStartedAtDateRef = useRef<Date | null>(null);
+  const videoStopReasonRef = useRef<'manual' | 'max_duration'>('manual');
+  const xHintTimerRef = useRef<number | null>(null);
+  const xHintExitTimerRef = useRef<number | null>(null);
+  const xHintSeqRef = useRef(0);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const flatRef = useRef<HTMLCanvasElement | null>(null);
   const reliefRef = useRef<HTMLCanvasElement | null>(null);
@@ -305,6 +325,9 @@ export default function App() {
   const mapDragOffsetRef = useRef<[number, number]>([0, 0]);
   const apartRef = useRef(false);
   const pendingViewModeRef = useRef<ViewMode | null>(null);
+  const [modeTransition, setModeTransition] = useState<ViewMode | null>(null);
+  const modeTransitionTimerRef = useRef<number | null>(null);
+  const modeTransitionSeqRef = useRef(0);
   const viewRestoredRef = useRef(false);
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
@@ -392,21 +415,34 @@ export default function App() {
 
   const switchViewMode = useCallback(
     (next: ViewMode) => {
-      if (apart || next === viewMode || !engineRef.current?.isFlat()) return;
+      if (apart || modeTransition || next === viewMode || !engineRef.current?.isFlat()) return;
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
       if (target === 'map') {
         if (!gpxProjection) return;
         setMapViewport((current) => current ?? { lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
       }
+      const engine = engineRef.current;
+      const transitionSeq = ++modeTransitionSeqRef.current;
+      if (modeTransitionTimerRef.current !== null) window.clearTimeout(modeTransitionTimerRef.current);
       setMapSearchResults([]);
       setMapSearchLocation(null);
       setMapSearchError(null);
       setPop(null);
-      setViewMode(target);
-      addAction('view_mode_changed', { mode: target });
+      setModeTransition(target);
+      engine?.transitionPanels(false);
+      modeTransitionTimerRef.current = window.setTimeout(() => {
+        if (modeTransitionSeqRef.current !== transitionSeq) return;
+        modeTransitionTimerRef.current = null;
+        setViewMode(target);
+        setModeTransition(null);
+        addAction('view_mode_changed', { mode: target });
+        window.requestAnimationFrame(() => {
+          if (modeTransitionSeqRef.current === transitionSeq) engineRef.current?.transitionPanels(true);
+        });
+      }, 260);
     },
-    [apart, gpxProjection, viewMode],
+    [apart, gpxProjection, modeTransition, viewMode],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
@@ -1122,6 +1158,9 @@ export default function App() {
               return null;
             });
         },
+        onXHintExit: (seq) => {
+          setXHint((current) => (current && String(current.seq) === seq ? null : current));
+        },
         onTimeCommit: (target, minutes) => {
           addAction('elapsed_time_committed', { target, minutes });
           if (target === 'start') setStartTime(clockInput(minutes));
@@ -1184,7 +1223,7 @@ export default function App() {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ['aria-hidden', 'class', 'data-piece', 'data-x', 'data-y', 'data-w', 'data-h', 'data-density', 'style'],
+      attributeFilter: ['aria-hidden', 'class', 'data-piece', 'data-x', 'data-y', 'data-w', 'data-h', 'data-density', 'data-x-hint-phase', 'style'],
     });
     return () => observer.disconnect();
   }, [native]);
@@ -1431,8 +1470,23 @@ export default function App() {
     }
   };
 
-  // the camera key takes a photo of the view; it comes out as a print floating over the map (see the engine's photo),
-  // with buttons to save, copy, or post it
+  const showXHint = (kind: LatestMedia) => {
+    const seq = ++xHintSeqRef.current;
+    setXHint({ kind, seq, phase: 'in' });
+    if (xHintTimerRef.current !== null) window.clearTimeout(xHintTimerRef.current);
+    if (xHintExitTimerRef.current !== null) window.clearTimeout(xHintExitTimerRef.current);
+    const visibleFor = kind === 'video' ? 8000 : 5200;
+    xHintTimerRef.current = window.setTimeout(() => {
+      xHintTimerRef.current = null;
+      setXHint((current) => (current?.seq === seq ? { ...current, phase: 'out' } : current));
+      xHintExitTimerRef.current = window.setTimeout(() => {
+        xHintExitTimerRef.current = null;
+        setXHint((current) => (current?.seq === seq ? null : current));
+      }, 1100);
+    }, visibleFor);
+  };
+
+  // the camera key takes a photo of the view; it comes out as a print floating over the map
   const exportPng = async () => {
     const engine = engineRef.current;
     // one photo at a time: while one is out, the key takes no other
@@ -1458,6 +1512,139 @@ export default function App() {
       setToast(copy.toast.pngExportFailed);
     }
   };
+  const stopVideoRecording = (reason: 'manual' | 'max_duration' = 'manual') => {
+    const recorder = videoRecorderRef.current;
+    if (!recorder) return;
+    videoStopReasonRef.current = reason;
+    if (videoTimerRef.current !== null) {
+      window.clearTimeout(videoTimerRef.current);
+      videoTimerRef.current = null;
+    }
+    if (videoFrameRafRef.current !== null) {
+      cancelAnimationFrame(videoFrameRafRef.current);
+      videoFrameRafRef.current = null;
+    }
+    if (recorder.state !== 'inactive') recorder.stop();
+  };
+  const startVideoRecording = () => {
+    if (videoRecordingRef.current) {
+      stopVideoRecording();
+      return;
+    }
+    const engine = engineRef.current;
+    if (!engine || typeof MediaRecorder === 'undefined') {
+      reportWarning('start_video_recording', 'Video recording is not supported by this browser.');
+      addAction('video_recording_unavailable');
+      setToast(copy.toast.videoRecordingUnsupported);
+      return;
+    }
+    const recordingCanvas = document.createElement('canvas');
+    const mimeType = supportedVideoMimeType((type) => MediaRecorder.isTypeSupported(type));
+    let stream: MediaStream | null = null;
+    let recorder: MediaRecorder;
+    try {
+      engine.captureFrame(recordingCanvas);
+      if (typeof recordingCanvas.captureStream !== 'function') throw new Error('Canvas recording is not supported by this browser.');
+      stream = recordingCanvas.captureStream(VIDEO_RECORDING_FRAME_RATE);
+      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      reportError('start_video_recording', error, { mime_type: mimeType || 'browser-default' });
+      setToast(copy.toast.videoRecordingFailed);
+      return;
+    }
+    if (!stream) return;
+    videoStreamRef.current = stream;
+    videoRecorderRef.current = recorder;
+    videoCanvasRef.current = recordingCanvas;
+    videoChunksRef.current = [];
+    videoStartedAtRef.current = performance.now();
+    videoStartedAtDateRef.current = new Date();
+    videoStopReasonRef.current = 'manual';
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) videoChunksRef.current.push(event.data);
+    };
+    recorder.onerror = () => {
+      reportError('video_recording', new Error('MediaRecorder reported an error.'), {
+        mime_type: recorder.mimeType || mimeType || 'browser-default',
+      });
+      setToast(copy.toast.videoRecordingFailed);
+    };
+    recorder.onstop = () => {
+      const durationMs = Math.round(performance.now() - videoStartedAtRef.current);
+      const reason = videoStopReasonRef.current;
+      const chunks = videoChunksRef.current;
+      const outputMimeType = recorder.mimeType || mimeType || 'video/webm';
+      const startedAt = videoStartedAtDateRef.current ?? new Date();
+      const blob = new Blob(chunks, { type: outputMimeType });
+      videoChunksRef.current = [];
+      videoStartedAtDateRef.current = null;
+      videoRecorderRef.current = null;
+      videoStreamRef.current?.getTracks().forEach((track) => track.stop());
+      videoStreamRef.current = null;
+      videoCanvasRef.current = null;
+      videoRecordingRef.current = false;
+      setVideoRecording(false);
+      try {
+        if (!blob.size) throw new Error('Video recording returned an empty blob.');
+        const fileName = videoFileName(outputMimeType, startedAt);
+        downloadBlob(blob, fileName);
+        setLatestMedia('video');
+        showXHint('video');
+        addAction('video_recording_stopped', {
+          reason,
+          duration_ms: durationMs,
+          file_size: blob.size,
+          mime_type: blob.type,
+        });
+      } catch (error) {
+        reportError('save_video_recording', error, { reason, duration_ms: durationMs });
+        setToast(copy.toast.videoRecordingFailed);
+      }
+    };
+    try {
+      recorder.start(1000);
+      videoRecordingRef.current = true;
+      setVideoRecording(true);
+      addAction('video_recording_started', {
+        route_name: routeNameRef.current || 'gpx-topo',
+        max_duration_ms: MAX_VIDEO_RECORDING_MS,
+        capture_source: 'canvas',
+        hud: 'excluded',
+        cursor: 'excluded',
+        mime_type: mimeType || 'browser-default',
+      });
+      videoLastFrameRef.current = performance.now();
+      const captureNextFrame = (now: number) => {
+        if (!videoRecordingRef.current || videoCanvasRef.current !== recordingCanvas) return;
+        if (now - videoLastFrameRef.current >= 1000 / VIDEO_RECORDING_FRAME_RATE) {
+          engineRef.current?.captureFrame(recordingCanvas);
+          videoLastFrameRef.current = now;
+        }
+        videoFrameRafRef.current = requestAnimationFrame(captureNextFrame);
+      };
+      videoFrameRafRef.current = requestAnimationFrame(captureNextFrame);
+      videoTimerRef.current = window.setTimeout(() => stopVideoRecording('max_duration'), MAX_VIDEO_RECORDING_MS);
+    } catch (error) {
+      videoRecorderRef.current = null;
+      videoStreamRef.current?.getTracks().forEach((track) => track.stop());
+      videoStreamRef.current = null;
+      videoCanvasRef.current = null;
+      reportError('start_video_recording', error, { mime_type: mimeType || 'browser-default' });
+      setToast(copy.toast.videoRecordingFailed);
+    }
+  };
+  useEffect(() => () => {
+    if (videoTimerRef.current !== null) window.clearTimeout(videoTimerRef.current);
+    if (videoFrameRafRef.current !== null) cancelAnimationFrame(videoFrameRafRef.current);
+    if (xHintTimerRef.current !== null) window.clearTimeout(xHintTimerRef.current);
+    if (xHintExitTimerRef.current !== null) window.clearTimeout(xHintExitTimerRef.current);
+    if (modeTransitionTimerRef.current !== null) window.clearTimeout(modeTransitionTimerRef.current);
+    const recorder = videoRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    videoStreamRef.current?.getTracks().forEach((track) => track.stop());
+    videoCanvasRef.current = null;
+  }, []);
   const shotName = () => `${route?.name || 'gpx-topo'}.png`;
   const saveShot = () => {
     if (!shot) return;
@@ -1474,6 +1661,8 @@ export default function App() {
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': shot.blob })]);
       addAction('photo_copied', { route_name: route?.name || 'gpx-topo' });
+      setLatestMedia('photo');
+      showXHint('photo');
       return true;
     } catch (error) {
       reportWarning('copy_png', error);
@@ -1482,12 +1671,14 @@ export default function App() {
     }
   };
   const SHARE_TEXT = copy.shareText;
-  const postShot = async () => {
-    // X takes no picture from here: it goes on the clipboard, to paste into the post
-    const copied = await copyShot();
+  const postLatestMedia = () => {
+    if (!latestMedia) return;
     const postWindow = window.open(`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}`, '_blank', 'noopener');
-    if (postWindow) addAction('photo_post_opened', { route_name: route?.name || 'gpx-topo' });
-    if (copied) setToast(copy.toast.imageCopiedWithPaste);
+    if (!postWindow) {
+      setToast(copy.toast.xPostFailed);
+      return;
+    }
+    if (latestMedia === 'photo') addAction('photo_post_opened', { route_name: route?.name || 'gpx-topo' });
   };
 
   if (!native) return <Fallback copy={copy} />;
@@ -2148,9 +2339,6 @@ export default function App() {
                   >
                     {copy.ui.copyImage}
                   </button>
-                  <button type="button" className="photo-post" onClick={() => void postShot()}>
-                    {copy.ui.postToX}
-                  </button>
                   <button type="button" onClick={() => engineRef.current?.hidePhoto('button')}>
                     {copy.ui.close}
                   </button>
@@ -2168,6 +2356,22 @@ export default function App() {
             <div ref={flagRef} className="flag" data-piece="flag" drawable="" role="dialog" aria-label={`${copy.appName} ${copy.about}`} aria-hidden={!infoOpen}>
               <FlagContent brushes={flagBrushes} copy={copy} />
             </div>
+            {xHint && (
+              <section
+                key={xHint.seq}
+                className="x-hint"
+                data-x-hint=""
+                data-x-hint-kind={xHint.kind}
+                data-x-hint-seq={xHint.seq}
+                data-x-hint-phase={xHint.phase}
+                aria-live="polite"
+              >
+                <div className="card" data-piece="card" drawable="" />
+                <div className="x-hint-content" data-piece="content" drawable="" role="status">
+                  {xHint.kind === 'photo' ? copy.ui.xHintPhoto : copy.ui.xHintVideo}
+                </div>
+              </section>
+            )}
           </div>
 
           {/* the bar: each button is drawn as a key on a slab in front of the camera, and still is the button */}
@@ -2186,6 +2390,8 @@ export default function App() {
                 <span className="well" data-well="stop" data-appear="" />
               )}
               <span className="well" data-well="camera" />
+              <span className="well" data-well="video" />
+              {latestMedia && <span className="well" data-well="x" data-appear="" />}
               <span className="bar-hint">
                 {copy.ui.dragHint}
                 <br />
@@ -2198,6 +2404,7 @@ export default function App() {
               data-piece="key"
               data-key="mode"
               drawable=""
+              disabled={modeTransition !== null}
               aria-label={viewMode === 'gpx' ? copy.ui.mapMode : copy.ui.gpxMode}
               onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
             >
@@ -2319,6 +2526,44 @@ export default function App() {
                 <circle cx="12" cy="12.5" r="3.5" />
               </svg>
             </button>
+            <button
+              type="button"
+              className="key key-video"
+              data-piece="key"
+              data-key="video"
+              data-recording={videoRecording ? '' : undefined}
+              drawable=""
+              aria-label={videoRecording ? copy.ui.stopVideoRecording : copy.ui.recordVideo}
+              aria-pressed={videoRecording}
+              onClick={() => void startVideoRecording()}
+            >
+              <svg className="video-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                {videoRecording ? (
+                  <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                ) : (
+                  <>
+                    <rect x="2.5" y="6" width="13.5" height="12" rx="2" />
+                    <path d="m16 10 5-3v10l-5-3Z" />
+                  </>
+                )}
+              </svg>
+            </button>
+            {latestMedia && (
+              <button
+                type="button"
+                className="key key-x"
+                data-piece="key"
+                data-key="x"
+                data-appear=""
+                drawable=""
+                aria-label={copy.ui.postToX}
+                onClick={postLatestMedia}
+              >
+                <svg className="x-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M17.8 3h3.1l-6.8 7.7 8 10.3h-6.2l-4.9-6.3L5.4 21H2.3l7.3-8.3L2 3h6.4l4.4 5.8L17.8 3Zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5Z" />
+                </svg>
+              </button>
+            )}
           </nav>
         </div>
       </canvas>

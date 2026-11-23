@@ -62,6 +62,8 @@ export type EngineCallbacks = {
   onInfoChange(open: boolean): void;
   /** The photo of the view came out of the camera key, or went back into it. */
   onPhotoChange(open: boolean, via?: PhotoCloseVia): void;
+  /** The X hint reached the HUD and can be removed after its exit animation. */
+  onXHintExit?(seq: string): void;
 };
 export type FlightPhase = 'intro' | 'run' | 'outro' | 'return' | 'paused';
 type FlightResumePhase = Exclude<FlightPhase, 'return' | 'paused'>;
@@ -214,6 +216,7 @@ const FLAG_VIEW_PAN = 0.12;
 const FLAG_VIEW_LIFT = 0.42;
 const CARD_RADIUS = 12;
 const CARD_THICKNESS = 3.2;
+const X_HINT_EXIT = 0.58;
 const PANEL_CONTACT_MARGIN = 4;
 const PANEL_AVOID_TILT = 0.72;
 const PIN_GAP = 6;
@@ -331,6 +334,19 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let photoCloseVia: PhotoCloseVia | null = null;
   /** the middle of the camera key's face, as the bar was last drawn (world px) */
   let cameraKeyAt: Vec3 | null = null;
+  /** A short-lived hint that pops above the X key after a shareable media operation succeeds. */
+  let xHintPiece: Piece | null = null;
+  let xHintProgress = 1;
+  let xHintVelocity = 0;
+  let xHintExitT = 0;
+  let xHintExitReported = false;
+  let xHintPhaseSeen: string | undefined;
+  /** The hint's screen-space anchor, captured once so map rotation cannot drag it around. */
+  let xHintAnchor: { sx: number; sy: number; depth: number } | null = null;
+  /** The X key itself is introduced with the same damped hop as its hint card. */
+  let xKeyPiece: Piece | null = null;
+  let xKeyProgress = 1;
+  let xKeyVelocity = 0;
   let flagPlaced = false;
   let flagSteady = false;
   /** how wide the cloth is drawn (world px), fitted to the window */
@@ -553,7 +569,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function behindCard(P: Vec3) {
     const e = cam.eye;
     const d = [P[0] - e[0], P[1] - e[1], P[2] - e[2]];
-    for (const c of cards) {
+    for (const c of cards.filter((card) => !isXHintPiece(card))) {
       if (!c.w) continue;
       const n = c.nrm;
       const den = d[0] * n[0] + d[1] * n[1] + d[2] * n[2];
@@ -1767,6 +1783,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     flip: 0,
     dodge: [0, 0],
   });
+  const isXHintPiece = (p: Piece) => p.el.closest('[data-x-hint]') !== null;
 
   function collect() {
     const els = Array.from(stage.querySelectorAll<HTMLElement>('[data-piece]'));
@@ -1855,6 +1872,22 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       p.face = el.dataset.face ?? '';
       return p;
     });
+    const nextXKeyPiece = keys.find((p) => p.name === 'x') ?? null;
+    if (nextXKeyPiece !== xKeyPiece) {
+      xKeyPiece = nextXKeyPiece;
+      xKeyProgress = nextXKeyPiece ? 0 : 1;
+      xKeyVelocity = nextXKeyPiece ? 3.2 : 0;
+    }
+    const nextXHintPiece = cards.find((p) => isXHintPiece(p)) ?? null;
+    if (nextXHintPiece !== xHintPiece) {
+      xHintPiece = nextXHintPiece;
+      xHintProgress = nextXHintPiece ? 0 : 1;
+      xHintVelocity = nextXHintPiece ? 3.2 : 0;
+      xHintExitT = 0;
+      xHintExitReported = false;
+      xHintPhaseSeen = undefined;
+      xHintAnchor = null;
+    }
     const pops = of('pop').map((el) => get(el, 'pop'));
     const rows = of('row').map((el) => {
       const p = get(el, 'row');
@@ -2053,6 +2086,19 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const items: DrawItem[] = [];
     let busy = false;
     if (!bar || noHud) return { items, busy };
+    if (xKeyPiece) {
+      const springK = 150;
+      const springDamping = 2 * 0.28 * Math.sqrt(springK);
+      const acceleration = (1 - xKeyProgress) * springK - xKeyVelocity * springDamping;
+      xKeyVelocity += acceleration * dt;
+      xKeyProgress += xKeyVelocity * dt;
+      if (Math.abs(1 - xKeyProgress) < 0.002 && Math.abs(xKeyVelocity) < 0.002) {
+        xKeyProgress = 1;
+        xKeyVelocity = 0;
+      } else {
+        busy = true;
+      }
+    }
     measureHud();
     if (!bar.w) return { items, busy };
     // the wells and the key faces in CSS follow the rise too, in steps so the textures are not redrawn every frame
@@ -2115,7 +2161,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
       const [wx, wy, ww, wh] = k.well;
       // flat, a key keeps half a px off the slab so its face does not fight the slab's
-      const d = Math.max(0.5, rise * Math.max(1.8, 9 + 2 * k.hot - 6.8 * k.press));
+      const appearance = k.name === 'x' ? clamp(xKeyProgress, 0.08, 1.18) : 1;
+      const d = Math.max(0.5, rise * Math.max(1.8, 9 + 2 * k.hot - 6.8 * k.press) * appearance);
       const th = k.flip;
       // a flipping key rises out of its well so it never cuts into the slab
       const up = (k.h / 2) * Math.abs(Math.sin(th)) + 2 * Math.sin(th / 2) ** 2;
@@ -2597,12 +2644,52 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const lit = 0.78 * smooth(st.e / 0.4);
     cam = flyPose ? rigCam(flyPose) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
     const camRight = cam.r;
+    const panelCards = cards.filter((card) => !isXHintPiece(card));
+    const xHintPhase = xHintPiece?.el.closest<HTMLElement>('[data-x-hint]')?.dataset.xHintPhase;
+    if (xHintPiece) {
+      const target = xHintPhase === 'out' ? 0 : 1;
+      if (xHintPhase !== xHintPhaseSeen) {
+        xHintPhaseSeen = xHintPhase;
+        if (xHintPhase === 'out') {
+          xHintExitT = 0;
+          xHintExitReported = false;
+        }
+      }
+      if (xHintPhase === 'out') {
+        const previous = xHintProgress;
+        xHintExitT = Math.min(X_HINT_EXIT, xHintExitT + Math.min(dt, 0.05));
+        const q = clamp(xHintExitT / X_HINT_EXIT, 0, 1);
+        xHintProgress = 1 - smooth(q);
+        xHintVelocity = dt > 0 ? (xHintProgress - previous) / dt : 0;
+        moving = true;
+        if (q >= 1 && !xHintExitReported) {
+          xHintExitReported = true;
+          const seq = xHintPiece.el.closest<HTMLElement>('[data-x-hint]')?.dataset.xHintSeq;
+          if (seq) callbacks.onXHintExit?.(seq);
+        }
+      } else {
+        const springK = 150;
+        const springDamping = 2 * 0.28 * Math.sqrt(springK);
+        const acceleration = (target - xHintProgress) * springK - xHintVelocity * springDamping;
+        xHintVelocity += acceleration * dt;
+        xHintProgress += xHintVelocity * dt;
+        if (Math.abs(target - xHintProgress) < 0.002 && Math.abs(xHintVelocity) < 0.002) {
+          xHintProgress = target;
+          xHintVelocity = 0;
+        } else {
+          moving = true;
+        }
+      }
+    }
+    // Update the HUD keys before positioning the hint card that is anchored to
+    // the X key. This keeps both on the same camera frame while the map turns.
+    const H = hudFrame(dt, smooth(st.e / 0.5));
     const fixedPanel = flight
       ? (() => {
           const gap = 10;
-          const totalH = cards.reduce((sum, card) => sum + card.h, 0) + gap * Math.max(0, cards.length - 1);
-          const fit = Math.min(1, Math.max(0.45, (vh - 36 - gap * Math.max(0, cards.length - 1)) / Math.max(1, totalH)));
-          const width = Math.max(1, ...cards.map((card) => card.w * fit));
+          const totalH = panelCards.reduce((sum, card) => sum + card.h, 0) + gap * Math.max(0, panelCards.length - 1);
+          const fit = Math.min(1, Math.max(0.45, (vh - 36 - gap * Math.max(0, panelCards.length - 1)) / Math.max(1, totalH)));
+          const width = Math.max(1, ...panelCards.map((card) => card.w * fit));
           const left = vw - 18 - width;
           const top = 18;
           const bottom = top + totalH * fit;
@@ -2700,8 +2787,55 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       p.ex = [1, 0, 0];
       p.ey = [0, 1, 0];
       if (p.kind === 'card') {
+        if (isXHintPiece(p)) {
+          const key = keys.find((candidate) => candidate.name === 'x');
+          if (!key || !key.w || !key.h || !p.w || !p.h) {
+            p.O = [0, 0, 0.2];
+            continue;
+          }
+          const keyCenter = [0, 1, 2].map(
+            (i) => key.O[i] + key.ex[i] * key.w * 0.5 + key.ey[i] * key.h * 0.5,
+          ) as Vec3;
+          if (!xHintAnchor) {
+            const screen = toScreen(keyCenter);
+            const depth = [0, 1, 2].reduce((sum, i) => sum + (keyCenter[i] - cam.eye[i]) * -cam.dir[i], 0);
+            if (screen && depth > 0) xHintAnchor = { sx: screen[0], sy: screen[1], depth };
+          }
+          const anchoredKeyCenter = xHintAnchor
+            ? (() => {
+                const viewRay = ray(cam, xHintAnchor.sx, xHintAnchor.sy);
+                const facing = Math.max(1e-6, -(viewRay.d[0] * cam.dir[0] + viewRay.d[1] * cam.dir[1] + viewRay.d[2] * cam.dir[2]));
+                const distance = xHintAnchor.depth / facing;
+                return [0, 1, 2].map((i) => viewRay.o[i] + viewRay.d[i] * distance) as Vec3;
+              })()
+            : keyCenter;
+          const gap = 12;
+          const angle = clamp(xHintVelocity * 0.025, -0.16, 0.16);
+          const ca = Math.cos(angle);
+          const sa = Math.sin(angle);
+          const exitEase = xHintPhase === 'out' ? clamp(1 - xHintProgress, 0, 1) : 0;
+          const scale = lerp(1, 0.04, smooth(exitEase));
+          const towardExtent = ((p.h * Math.abs(ca) + p.w * Math.abs(sa)) * scale) / 2;
+          const safeExtent = (p.h + p.w * Math.sin(0.16)) / 2 + 4;
+          const safeDistance = key.h * 0.5 + gap + safeExtent;
+          const contactDistance = key.h * 0.5 + towardExtent;
+          const distance = xHintPhase === 'out' ? lerp(safeDistance, contactDistance, smooth(exitEase)) : safeDistance;
+          const rise = xHintPhase === 'out' ? 0 : -(1 - clamp(xHintProgress, 0, 1)) * 28;
+          const center = [0, 1, 2].map((i) => anchoredKeyCenter[i] - key.ey[i] * distance + key.ey[i] * rise) as Vec3;
+          p.ex = [0, 1, 2].map((i) => (key.ex[i] * ca + key.ey[i] * sa) * scale) as Vec3;
+          p.ey = [0, 1, 2].map((i) => (key.ey[i] * ca - key.ex[i] * sa) * scale) as Vec3;
+          p.nrm = [...cam.dir];
+          p.O = [0, 1, 2].map((i) => center[i] - (p.ex[i] * p.w) / 2 - (p.ey[i] * p.h) / 2) as Vec3;
+          p.z = 0;
+          p.topZ = 0;
+          continue;
+        }
         if (fixedPanel) {
-          const top = 18 + cards.slice(0, p.order).reduce((sum, card) => sum + card.h * fixedPanel.fit, 0) + fixedPanel.gap * p.order;
+          const panelIndex = panelCards.indexOf(p);
+          const top =
+            18 +
+            panelCards.slice(0, panelIndex).reduce((sum, card) => sum + card.h * fixedPanel.fit, 0) +
+            fixedPanel.gap * panelIndex;
           const left = vw - 18 - p.w * fixedPanel.fit;
           const center = fixedPanel.plane.map(
             (v, i) => v + fixedPanel.r[i] * (left + (p.w * fixedPanel.fit) / 2 - vw / 2) * fixedPanel.unit + fixedPanel.u[i] * (vh / 2 - top - (p.h * fixedPanel.fit) / 2) * fixedPanel.unit,
@@ -2721,15 +2855,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         const sa = Math.sin(al);
         const ca = Math.cos(al);
         let seat = 0;
-        for (const c of cards) if (c.order > p.order) seat += c.h * sa * 0.94;
+        for (const c of panelCards) if (c.order > p.order) seat += c.h * sa * 0.94;
         p.z = 12 * smooth((st.e / 0.4) * 1.4 - (0.4 * p.order) / 3) + seat + EPS * (20 + order);
         p.topZ = p.z + p.h * sa;
         const home = cardHome(p);
         seatCard(p, home, cardSwivel(home) * k, sa, ca);
-        if (p === cards[cards.length - 1]) {
+        if (p === panelCards[panelCards.length - 1]) {
           // where they step to is worked out from their seats alone; each then turns to face the view from there
           if (dodgeCards(dt, k, sa, ca)) moving = true;
-          for (const c of cards) {
+          for (const c of panelCards) {
             const at = cardHome(c).map((v, i) => v + cam.r[i] * c.dodge[0] + cam.u[i] * c.dodge[1]) as Vec3;
             seatCard(c, at, cardSwivel(at) * k, sa, ca);
           }
@@ -2737,6 +2871,20 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         continue;
       }
       if (p.kind === 'content') {
+        if (isXHintPiece(p)) {
+          const c = p.card;
+          if (!c) {
+            p.O = [p.x, p.y, 0.2];
+            continue;
+          }
+          const dx = p.x - c.x;
+          const dy = p.y - c.y;
+          p.ex = c.ex;
+          p.ey = c.ey;
+          p.z = c.z;
+          p.O = [0, 1, 2].map((i) => c.O[i] + c.ex[i] * dx + c.ey[i] * dy + c.nrm[i] * EPS) as Vec3;
+          continue;
+        }
         if (p.el.hasAttribute('data-map-control')) {
           const x0 = clamp(p.x - MAPX, 0, MW);
           const x1 = clamp(p.x + p.w - MAPX, 0, MW);
@@ -2817,7 +2965,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     placeFlag();
     placePhoto();
-    const H = hudFrame(dt, smooth(st.e / 0.5));
     const PF = popFrame(dt);
     // keys rising under the pointer and pickers turning keep the frames coming, but are drawn sharp: their words are
     // what is being read
@@ -2872,7 +3019,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         });
       }
     }
-    const blend = contents.map((c) => q(c));
+    const blend = contents.filter((c) => !isXHintPiece(c)).map((c) => q(c));
+    const xHintHud = xHintPiece ? [q(xHintPiece, { unlit: true })] : [];
+    const xHintContent = contents.find((content) => isXHintPiece(content));
+    if (xHintContent) xHintHud.push(q(xHintContent));
     // the flag's shadows are laid over the ground
     blend.push(...flagBlend);
     const dist = (p: Piece) => (p.anchor[0] - cam.eye[0]) ** 2 + (p.anchor[1] - cam.eye[1]) ** 2;
@@ -2900,7 +3050,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       light: lit,
       map: [MAPX, MAPY, MW, MH],
       page: [0, 0, PW, PH],
-      rects: cards.map((c) => ({
+      rects: cards.filter((c) => !isXHintPiece(c)).map((c) => ({
         r: [c.x, c.y + c.h - c.h * Math.abs(c.ey[1]), c.x + c.w, c.y + c.h] as [number, number, number, number],
         z: (c.z + (c.topZ || c.z)) / 2,
       })),
@@ -2916,7 +3066,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       },
       opaque,
       blend,
-      hud: photoFlying ? [...H.items, ...photoItems] : H.items,
+      hud: photoFlying ? [...H.items, ...photoItems, ...xHintHud] : [...H.items, ...xHintHud],
       hudLight: lit,
       casters:
         flagCasters || photoCast.length ? { cloth: flagCasters?.cloth, quads: [...(flagCasters?.quads ?? []), ...photoCast] } : null,
@@ -3012,6 +3162,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     collect();
     measure();
     for (const p of pieces) p.stale = true;
+    need();
+  }
+  /** Move the side cards out of the way before replacing their HTML, then bring the new set back. */
+  function transitionPanels(show: boolean) {
+    panelAlphaT = show ? 1 : 0;
     need();
   }
   /** The app moved or drew into the detail picture: measure it again and upload it once it has painted. */
@@ -3160,6 +3315,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const box = entries[0].devicePixelContentBoxSize?.[0] ?? null;
     vw = canvas.clientWidth;
     vh = canvas.clientHeight;
+    xHintAnchor = null;
     const s = Math.min(window.devicePixelRatio || 1, 2);
     const exact =
       box && s === window.devicePixelRatio && Math.abs(box.inlineSize - vw * s) < 2 && Math.abs(box.blockSize - vh * s) < 2;
@@ -3584,19 +3740,29 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   // the picture without the bar, and without the strip at the bottom the bar stands in
-  function capture() {
-    noHud = true;
-    frame(performance.now(), 0);
-    noHud = false;
-    // copied out at once, while the drawing is still in the canvas
+  function captureFrame(target: HTMLCanvasElement) {
     const scale = canvas.width / Math.max(1, vw);
     const cut = Math.round((bar ? bar.h + 18 + 10 : 0) * scale);
+    noHud = true;
+    try {
+      frame(performance.now(), 0);
+      const width = canvas.width;
+      const height = Math.max(1, canvas.height - cut);
+      if (target.width !== width || target.height !== height) {
+        target.width = width;
+        target.height = height;
+      }
+      target.getContext('2d')?.drawImage(canvas, 0, 0, width, height, 0, 0, width, height);
+    } finally {
+      noHud = false;
+      frame(performance.now(), 0);
+    }
+  }
+
+  function capture() {
     const out = document.createElement('canvas');
-    out.width = canvas.width;
-    out.height = Math.max(1, canvas.height - cut);
-    out.getContext('2d')?.drawImage(canvas, 0, 0, out.width, out.height, 0, 0, out.width, out.height);
+    captureFrame(out);
     const done = new Promise<Blob | null>((resolve) => out.toBlob(resolve, 'image/png'));
-    need();
     return done;
   }
 
@@ -3735,7 +3901,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     focusWay,
     setPlacing,
     capture,
+    captureFrame,
     refreshHud,
+    transitionPanels,
     dispose,
     need,
   };

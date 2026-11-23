@@ -1503,6 +1503,14 @@ main[lang='en'] .pop-foot small {
   width: 72px;
 }
 
+.well[data-well='video'] {
+  width: 72px;
+}
+
+.well[data-well='x'] {
+  width: 72px;
+}
+
 .well[data-well='stop'] {
   width: 48px;
 }
@@ -1625,6 +1633,21 @@ main[lang='en'] .bar-hint {
   width: 62px;
 }
 
+.key-video {
+  width: 62px;
+}
+
+.key-x {
+  width: 62px;
+}
+
+.key-video[data-recording] {
+  --side: #a32b36;
+  --top: #e04a59;
+  --bottom: #c73545;
+  color: #fff;
+}
+
 .key-stop[data-appear],
 .well[data-well='stop'][data-appear] {
   animation: key-stop-split 320ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
@@ -1653,6 +1676,26 @@ main[lang='en'] .bar-hint {
   stroke-width: 1.8;
 }
 
+.video-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.x-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: auto;
+  fill: currentColor;
+}
+
 .key[data-latched] {
   --side: #0a0e15;
   --top: #273140;
@@ -1672,6 +1715,32 @@ main[lang='en'] .bar-hint {
   color: #fff;
   font-size: 13px;
   transform: translateX(-50%);
+}
+
+.x-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(300px, calc(100vw - 48px));
+  pointer-events: none;
+  user-select: none;
+}
+
+.x-hint .card,
+.x-hint-content {
+  pointer-events: none;
+}
+
+.x-hint-content {
+  position: relative;
+  box-sizing: border-box;
+  min-height: 48px;
+  padding: 13px 16px;
+  color: #1c2129;
+  font: 600 12px var(--sans);
+  line-height: 1.35;
+  text-align: center;
+  white-space: pre-line;
 }
 
 /* ---------------------------------------------------------------- unsupported browsers */
