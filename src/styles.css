@@ -1685,7 +1685,8 @@ main[lang='en'] .pop-foot small {
 }
 
 .well[data-well='maneuver'],
-.well[data-well='map-cancel'] {
+.well[data-well='map-cancel'],
+.well[data-well='fpv'] {
   width: 48px;
 }
 
@@ -1761,6 +1762,67 @@ main[lang='en'] .bar-hint {
 
 .key-pin {
   width: 38px;
+}
+
+.key-fpv {
+  --side: #a97828;
+  --top: #f7c95d;
+  --bottom: #dca63f;
+  width: 38px;
+  color: #3e2b0b;
+}
+
+/* every part is yellow; .fpv-outline is a dark underlay (about 1px) that rims the whole silhouette */
+.fpv-icon {
+  display: block;
+  width: 30px;
+  height: 30px;
+  margin: auto;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fpv-icon .fpv-outline {
+  fill: #202020;
+  stroke: #202020;
+}
+
+.fpv-icon .fpv-outline circle {
+  stroke: none;
+}
+
+.fpv-icon .fpv-outline-body {
+  stroke-width: 1.6;
+}
+
+.fpv-icon .fpv-outline-limb {
+  fill: none;
+  stroke-width: 4.4;
+}
+
+.fpv-icon .fpv-head {
+  fill: #ffe0a6;
+  stroke: none;
+}
+
+.fpv-icon .fpv-body {
+  fill: #f4bd2f;
+  stroke: none;
+}
+
+.fpv-icon .fpv-limb {
+  fill: none;
+  stroke: #f4bd2f;
+  stroke-width: 2.8;
+}
+
+/* on the dark latched key the silhouette needs no rim */
+.key[data-latched].key-fpv .fpv-icon .fpv-outline {
+  display: none;
+}
+
+.key[data-latched].key-fpv .fpv-icon .fpv-head {
+  fill: #fff0c4;
 }
 
 .map-icon {
@@ -1902,6 +1964,28 @@ main[lang='en'] .bar-hint {
 }
 
 .map-pin-selecting .hud-hit-layer button:not([data-hud-hit='pin']) {
+  pointer-events: none;
+}
+
+.fpv-selecting .side,
+.fpv-selecting .map,
+.fpv-selecting .pop-layer,
+.fpv-selecting .photo,
+.fpv-selecting .flag {
+  pointer-events: none;
+}
+
+.fpv-selecting .hud .key:not([data-key='fpv']) {
+  pointer-events: none;
+  cursor: default;
+  opacity: 0.45;
+}
+
+.fpv-selecting .hud .key[data-key='fpv'] {
+  pointer-events: auto;
+}
+
+.fpv-selecting .hud-hit-layer button:not([data-hud-hit='fpv']) {
   pointer-events: none;
 }
 

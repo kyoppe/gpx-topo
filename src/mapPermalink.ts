@@ -1,10 +1,11 @@
 import type { MapStyle } from './basemap';
 
-export type MapPermalinkView = 'flat' | '3d';
+export type MapPermalinkView = 'flat' | '3d' | 'fpv';
 export type MapPermalinkSun = 'auto' | 'off' | 'time' | null;
 export type MapPermalinkSunSpeed = 'slow' | 'normal' | 'fast';
 export type MapPermalinkPin = { lat: number; lon: number; label: string };
 export type MapPermalinkPan = { x: number; y: number; z: number };
+export type MapPermalinkFpv = { lat: number; lon: number; bearing: number; pitch: number; zoom: number };
 
 export type MapPermalink = {
   center: { lat: number; lon: number } | null;
@@ -17,6 +18,7 @@ export type MapPermalink = {
   mapStyle: MapStyle | null;
   hillshade: boolean | null;
   pin: MapPermalinkPin | null;
+  fpv: MapPermalinkFpv | null;
   sun: MapPermalinkSun;
   sunSpeed: MapPermalinkSunSpeed;
   timeMinutes: number | null;
@@ -35,6 +37,7 @@ export type MapPermalinkBuildState = {
   mapStyle: MapStyle;
   hillshade: boolean;
   pin: MapPermalinkPin | null;
+  fpv?: MapPermalinkFpv | null;
   sunlight: boolean;
   sunAuto: boolean;
   sunSpeed: MapPermalinkSunSpeed;
@@ -60,6 +63,11 @@ const KNOWN_PARAMETERS = new Set([
   'pin_lat',
   'pin_lon',
   'pin_label',
+  'fpv_lat',
+  'fpv_lon',
+  'fpv_bearing',
+  'fpv_pitch',
+  'fpv_zoom',
   'sun',
   'sun_speed',
   'time',
@@ -92,6 +100,10 @@ function degrees(value: number) {
   return ((value % 360) + 360) % 360;
 }
 
+function signedDegrees(value: number) {
+  return fixed(((value + 180) % 360 + 360) % 360 - 180, 6);
+}
+
 function fixed(value: number, digits: number) {
   return Number(value.toFixed(digits));
 }
@@ -120,8 +132,39 @@ export function parseMapPermalink(search: string): MapPermalink | null {
   if (params.has('lon') && lon === undefined) ignoredParameters.push('lon');
   if (center) usedParameters.push('lat', 'lon');
 
+  const fpvLatValue = numberParameter(params, 'fpv_lat', -85.05112878, 85.05112878);
+  const fpvLonValue = numberParameter(params, 'fpv_lon', -180, 180);
+  const fpvBearingValue = numberParameter(params, 'fpv_bearing', -1_000_000, 1_000_000);
+  const fpvPitchValue = numberParameter(params, 'fpv_pitch', -360, 360);
+  const fpvPitch = fpvPitchValue === null || fpvPitchValue === undefined ? fpvPitchValue : signedDegrees(fpvPitchValue);
+  const fpvZoomValue = numberParameter(params, 'fpv_zoom', 0.01, 64);
+  const fpv =
+    fpvLatValue !== null &&
+    fpvLatValue !== undefined &&
+    fpvLonValue !== null &&
+    fpvLonValue !== undefined &&
+    fpvBearingValue !== null &&
+    fpvBearingValue !== undefined &&
+    fpvPitch !== null &&
+    fpvPitch !== undefined &&
+    fpvPitch >= -89.9 &&
+    fpvPitch <= 89.9 &&
+    fpvZoomValue !== null &&
+    fpvZoomValue !== undefined
+      ? {
+          lat: fpvLatValue,
+          lon: fpvLonValue,
+          bearing: fixed(degrees(fpvBearingValue), 6),
+          pitch: fpvPitch,
+          zoom: fpvZoomValue,
+        }
+      : null;
+  const fpvParameters = ['fpv_lat', 'fpv_lon', 'fpv_bearing', 'fpv_pitch', 'fpv_zoom'];
+  if (fpv) usedParameters.push(...fpvParameters);
+  else for (const name of fpvParameters) if (params.has(name)) ignoredParameters.push(name);
+
   const viewValue = params.get('view');
-  const view: MapPermalinkView = viewValue === '3d' ? '3d' : 'flat';
+  const view: MapPermalinkView = fpv ? 'fpv' : viewValue === '3d' ? '3d' : 'flat';
   if (viewValue === 'flat' || viewValue === '3d') usedParameters.push('view');
   else if (viewValue !== null) ignoredParameters.push('view');
 
@@ -131,7 +174,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
   const bearing = bearingValue === null || bearingValue === undefined ? null : degrees(bearingValue);
   const pitch = pitchValue === null || pitchValue === undefined ? null : pitchValue;
   const zoom = zoomValue === null || zoomValue === undefined ? null : zoomValue;
-  if (view === '3d') {
+  if (view === '3d' || view === 'fpv') {
     if (bearing !== null) usedParameters.push('bearing');
     if (pitch !== null) usedParameters.push('pitch');
     if (zoom !== null) usedParameters.push('zoom');
@@ -140,7 +183,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     if (params.has('pitch')) ignoredParameters.push('pitch');
     if (params.has('zoom')) ignoredParameters.push('zoom');
   }
-  if (view === '3d') {
+  if (view === '3d' || view === 'fpv') {
     if (params.has('bearing') && bearingValue === undefined) ignoredParameters.push('bearing');
     if (params.has('pitch') && pitchValue === undefined) ignoredParameters.push('pitch');
     if (params.has('zoom') && zoomValue === undefined) ignoredParameters.push('zoom');
@@ -149,7 +192,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
   const panYValue = numberParameter(params, 'pan_y', -100_000, 100_000);
   const panZValue = numberParameter(params, 'pan_z', -100_000, 100_000);
   const pan =
-    view === '3d' &&
+    (view === '3d' || view === 'fpv') &&
     panXValue !== null &&
     panXValue !== undefined &&
     panYValue !== null &&
@@ -159,7 +202,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
       ? { x: panXValue, y: panYValue, z: panZValue }
       : null;
   if (pan) usedParameters.push('pan_x', 'pan_y', 'pan_z');
-  else if (view === '3d') {
+  else if (view === '3d' || view === 'fpv') {
     if (params.has('pan_x')) ignoredParameters.push('pan_x');
     if (params.has('pan_y')) ignoredParameters.push('pan_y');
     if (params.has('pan_z')) ignoredParameters.push('pan_z');
@@ -251,6 +294,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     mapStyle,
     hillshade,
     pin,
+    fpv,
     sun,
     sunSpeed,
     timeMinutes: time,
@@ -271,13 +315,13 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
     hillshade: state.hillshade ? 'on' : 'off',
   });
   if (state.date) params.set('date', state.date);
-  params.set('view', state.view);
+  if (state.view !== 'fpv') params.set('view', state.view);
   if (state.pin) {
     params.set('pin_lat', state.pin.lat.toFixed(6));
     params.set('pin_lon', state.pin.lon.toFixed(6));
     if (state.pin.label.trim()) params.set('pin_label', state.pin.label.trim());
   }
-  if (state.view === '3d') {
+  if (state.view === '3d' || state.view === 'fpv') {
     params.set('bearing', fixed(degrees(state.bearing), 2).toFixed(2));
     params.set('pitch', fixed(Math.max(0, Math.min(89.9, state.pitch)), 2).toFixed(2));
     params.set('zoom', fixed(Math.max(0.01, state.zoom), 3).toFixed(3));
@@ -286,6 +330,13 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
       params.set('pan_y', fixed(state.pan.y, 3).toFixed(3));
       params.set('pan_z', fixed(state.pan.z, 3).toFixed(3));
     }
+  }
+  if (state.view === 'fpv' && state.fpv) {
+    params.set('fpv_lat', state.fpv.lat.toFixed(6));
+    params.set('fpv_lon', state.fpv.lon.toFixed(6));
+    params.set('fpv_bearing', fixed(degrees(state.fpv.bearing), 2).toFixed(2));
+    params.set('fpv_pitch', fixed(state.fpv.pitch, 2).toFixed(2));
+    params.set('fpv_zoom', fixed(Math.max(0.01, state.fpv.zoom), 3).toFixed(3));
   }
   if (!state.sunlight) params.set('sun', 'off');
   else if (state.sunAuto) {
