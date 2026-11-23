@@ -85,7 +85,7 @@ Wrangler:
 ```bash
 npx wrangler login
 npx wrangler whoami
-export CF_PAGES_COMMIT_SHA="$(git rev-parse HEAD)"
+export CF_PAGES_COMMIT_SHA="$(git rev-parse --short=7 HEAD)"
 npm ci
 npm run build
 npx wrangler pages deploy dist \
@@ -95,9 +95,9 @@ npx wrangler pages deploy dist \
   --commit-message "$(git log -1 --format=%s)"
 ```
 
-`CF_PAGES_COMMIT_SHA` is injected into the build as the Datadog `version`.
-Use the full commit SHA so the deployed RUM and Browser Logs can be matched
-to the source commit. Check recent deployments with:
+`CF_PAGES_COMMIT_SHA` is injected into the build as the 7-character Datadog
+`version`. The Cloudflare deployment can still use the full commit SHA for
+deployment metadata if needed. Check recent deployments with:
 
 ```bash
 npx wrangler pages deployment list --project-name gpx-topo

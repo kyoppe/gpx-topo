@@ -7,9 +7,9 @@ import { loadMunicipalityNames, normalizeGsiSearchResults } from './src/gsiSearc
 
 function commitVersion() {
   const injected = process.env.CF_PAGES_COMMIT_SHA || process.env.GITHUB_SHA;
-  if (injected) return injected;
+  if (injected) return injected.slice(0, 7);
   try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() || 'unknown';
+    return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], { encoding: 'utf8' }).trim() || 'unknown';
   } catch {
     return 'unknown';
   }
