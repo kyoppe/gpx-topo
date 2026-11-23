@@ -12,8 +12,9 @@ const HILLSHADE_MAX_ZOOM = 16;
 const HILLSHADE_OPACITY = 0.35;
 const PAPER = '#f2f1ee';
 const TILE = 256;
+const PHOTO_NAMES_OPACITY = 0.42;
 
-export type MapStyle = 'pale' | 'photo';
+export type MapStyle = 'std' | 'pale' | 'photo' | 'photoNames';
 
 type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -228,19 +229,26 @@ function prepare(canvas: HTMLCanvasElement, width: number, height: number) {
 export async function renderBasemaps(
   projection: MapProjection,
   density: number,
-  targets: { flat: HTMLCanvasElement; relief: HTMLCanvasElement },
+  targets: { flat: HTMLCanvasElement; relief: HTMLCanvasElement; photo?: HTMLCanvasElement },
   signal: AbortSignal,
   onProgress: () => void,
   style: MapStyle = 'pale',
+  hillshade = true,
 ) {
   const region: MapRegion = { x: 0, y: 0, w: projection.width, h: projection.height };
   const width = Math.max(1, Math.round(region.w * density));
   const height = Math.max(1, Math.round(region.h * density));
   const flat = prepare(targets.flat, width, height);
   const relief = prepare(targets.relief, width, height);
+  const photo =
+    style === 'photo' || style === 'photoNames'
+      ? targets.photo
+        ? prepare(targets.photo, width, height)
+        : null
+      : null;
   const strip = stripper();
   const zoom = Math.min(PALE_MAX_ZOOM, projection.zoomFor(density, 5, PALE_MAX_ZOOM) + INITIAL_ZOOM_BONUS);
-  const layer = style === 'photo' ? 'seamlessphoto' : 'pale';
+  const layer = style === 'std' || style === 'pale' ? style : 'seamlessphoto';
   let loaded = 0;
   await Promise.all(
     tilesIn(projection, zoom, region).map(async (tile) => {
@@ -249,13 +257,29 @@ export async function renderBasemaps(
       if (signal.aborted) return image.close();
       loaded += 1;
       placeTile(flat, image, tile, region, density);
-      placeTile(relief, style === 'photo' ? image : strip(image), tile, region, density);
+      if (photo) placeTile(photo, image, tile, region, density);
+      placeTile(relief, style === 'std' || style === 'pale' ? strip(image) : image, tile, region, density);
       image.close();
       onProgress();
     }),
   );
   if (loaded === 0) throw new Error('GSI map tiles are unavailable.');
-  if (style === 'pale') {
+  if (style === 'photoNames') {
+    const nameTiles = tilesIn(projection, zoom, region);
+    const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile), signal)));
+    if (signal.aborted) return;
+    flat.globalAlpha = PHOTO_NAMES_OPACITY;
+    relief.globalAlpha = PHOTO_NAMES_OPACITY;
+    names.forEach((image, index) => {
+      if (!image) return;
+      placeTile(flat, image, nameTiles[index], region, density);
+      placeTile(relief, image, nameTiles[index], region, density);
+      image.close();
+    });
+    flat.globalAlpha = 1;
+    relief.globalAlpha = 1;
+  }
+  if (hillshade && (style === 'std' || style === 'pale')) {
     const hillTiles = tilesIn(projection, Math.min(zoom, HILLSHADE_MAX_ZOOM), region);
     const shades = await Promise.all(hillTiles.map((tile) => loadTile(tileUrl('hillshademap', tile), signal)));
     if (signal.aborted) return;
@@ -285,7 +309,7 @@ export async function streamRelief(
 ) {
   const strip = stripper();
   const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
-  const layer = style === 'photo' ? 'seamlessphoto' : 'pale';
+  const layer = style === 'std' || style === 'pale' ? style : 'seamlessphoto';
   const fetchRegion: MapRegion = {
     x: Math.max(0, region.x - region.w * DETAIL_HALO),
     y: Math.max(0, region.y - region.h * DETAIL_HALO),
@@ -303,9 +327,59 @@ export async function streamRelief(
       const image = await loadTile(tileUrl(layer, tile), signal);
       if (!image) return;
       if (signal.aborted) return image.close();
-      placeTile(context, style === 'photo' ? image : strip(image), tile, region, density);
+      placeTile(context, style === 'std' || style === 'pale' ? strip(image) : image, tile, region, density);
       image.close();
       onTile();
     }),
   );
+  if (style === 'photoNames') {
+    const nameTiles = tilesIn(projection, zoom, fetchRegion);
+    const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile), signal)));
+    if (signal.aborted) return;
+    names.forEach((image, index) => {
+      if (!image) return;
+      const contextAlpha = context.globalAlpha;
+      context.globalAlpha = PHOTO_NAMES_OPACITY;
+      placeTile(context, image, nameTiles[index], region, density);
+      context.globalAlpha = contextAlpha;
+      image.close();
+    });
+  }
+}
+
+/** Draws only the standard-map name layer over an existing aerial-photo detail texture. */
+export async function streamNames(
+  projection: MapProjection,
+  density: number,
+  region: MapRegion,
+  context: CanvasRenderingContext2D,
+  signal: AbortSignal,
+  onTile: () => void,
+) {
+  const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
+  const fetchRegion: MapRegion = {
+    x: Math.max(0, region.x - region.w * DETAIL_HALO),
+    y: Math.max(0, region.y - region.h * DETAIL_HALO),
+    w: Math.min(projection.width, region.w * (1 + 2 * DETAIL_HALO)),
+    h: Math.min(projection.height, region.h * (1 + 2 * DETAIL_HALO)),
+  };
+  fetchRegion.w = Math.min(projection.width - fetchRegion.x, fetchRegion.w);
+  fetchRegion.h = Math.min(projection.height - fetchRegion.y, fetchRegion.h);
+  const tiles = tilesIn(projection, zoom, fetchRegion);
+  let loaded = 0;
+  await Promise.all(
+    tiles.map(async (tile) => {
+      const image = await loadTile(tileUrl('std', tile), signal);
+      if (!image) return;
+      if (signal.aborted) return image.close();
+      const contextAlpha = context.globalAlpha;
+      context.globalAlpha = PHOTO_NAMES_OPACITY;
+      placeTile(context, image, tile, region, density);
+      context.globalAlpha = contextAlpha;
+      image.close();
+      loaded += 1;
+      onTile();
+    }),
+  );
+  if (!signal.aborted && loaded === 0) throw new Error('GSI name tiles are unavailable.');
 }

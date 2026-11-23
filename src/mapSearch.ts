@@ -3,12 +3,9 @@ export type Coordinates = {
   lon: number;
 };
 
-export type SearchLocation = Coordinates & { label: string };
+export type SearchLocation = Coordinates & { label: string; detail?: string };
 
-type GsiFeature = {
-  geometry?: { coordinates?: [number, number] };
-  properties?: { address?: string; title?: string };
-};
+export const MAX_SEARCH_RESULTS = 50;
 
 export function normalizeSearchResponse(body: unknown): SearchLocation[] {
   const source = Array.isArray(body) ? body : (body as { results?: unknown } | null)?.results;
@@ -16,16 +13,25 @@ export function normalizeSearchResponse(body: unknown): SearchLocation[] {
   return source
     .map((item) => {
       if (typeof item === 'object' && item !== null && 'label' in item) {
-        const result = item as { label?: unknown; lat?: unknown; lon?: unknown };
-        return { label: String(result.label ?? ''), lat: Number(result.lat), lon: Number(result.lon) };
+        const result = item as { label?: unknown; detail?: unknown; lat?: unknown; lon?: unknown };
+        const detail = typeof result.detail === 'string' ? result.detail.trim() : '';
+        return {
+          label: String(result.label ?? ''),
+          ...(detail ? { detail } : {}),
+          lat: Number(result.lat),
+          lon: Number(result.lon),
+        };
       }
-      const feature = item as GsiFeature;
+      const feature = item as {
+        geometry?: { coordinates?: [number, number] };
+        properties?: { address?: string; title?: string };
+      };
       const coordinates = feature.geometry?.coordinates;
-      const label = feature.properties?.address ?? feature.properties?.title ?? '';
+      const label = feature.properties?.title ?? feature.properties?.address ?? '';
       return { label, lat: Number(coordinates?.[1]), lon: Number(coordinates?.[0]) };
     })
     .filter((item) => item.label && Number.isFinite(item.lat) && Number.isFinite(item.lon))
-    .slice(0, 12);
+    .slice(0, MAX_SEARCH_RESULTS);
 }
 
 function validCoordinates(lat: number, lon: number): Coordinates | null {
@@ -74,6 +80,34 @@ export function isGoogleMapsUrl(value: string) {
   }
 }
 
+export function formatCoordinates(coordinates: Coordinates) {
+  return `${coordinates.lat.toFixed(6)}, ${coordinates.lon.toFixed(6)}`;
+}
+
+function decodedLabel(value: string | null) {
+  if (!value) return null;
+  try {
+    const label = decodeURIComponent(value.replace(/\+/g, ' ')).trim();
+    if (!label || coordinatePair(label)) return null;
+    return label;
+  } catch {
+    return null;
+  }
+}
+
+/** Gets the human-readable place segment when a Google Maps URL happens to contain one. */
+export function googleMapsLabel(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (!isGoogleMapsHost(url.hostname.toLowerCase())) return null;
+  const path = /\/maps\/(?:place|search)\/([^/?#]+)/.exec(url.pathname);
+  return decodedLabel(path?.[1] ?? url.searchParams.get('query') ?? url.searchParams.get('q'));
+}
+
 export function parseGoogleMapsUrl(value: string): Coordinates | null {
   let url: URL;
   try {
@@ -100,9 +134,10 @@ export function parseMapSearchInput(value: string): Coordinates | null {
   return coordinatePair(value) ?? parseGoogleMapsUrl(value);
 }
 
-export async function resolveGoogleMapsUrl(value: string, fetcher: typeof fetch = fetch): Promise<Coordinates | null> {
+export async function resolveGoogleMapsLocation(value: string, fetcher: typeof fetch = fetch): Promise<SearchLocation | null> {
   const direct = parseGoogleMapsUrl(value);
-  if (direct) return direct;
+  const directLabel = googleMapsLabel(value);
+  if (direct) return { ...direct, label: directLabel ?? formatCoordinates(direct) };
   let url: URL;
   try {
     url = new URL(value.trim());
@@ -111,5 +146,11 @@ export async function resolveGoogleMapsUrl(value: string, fetcher: typeof fetch 
   }
   if (!isGoogleMapsHost(url.hostname.toLowerCase())) return null;
   const response = await fetcher(url.href, { redirect: 'follow' });
-  return parseGoogleMapsUrl(response.url);
+  const resolved = parseGoogleMapsUrl(response.url);
+  return resolved ? { ...resolved, label: googleMapsLabel(response.url) ?? formatCoordinates(resolved) } : null;
+}
+
+export async function resolveGoogleMapsUrl(value: string, fetcher: typeof fetch = fetch): Promise<Coordinates | null> {
+  const location = await resolveGoogleMapsLocation(value, fetcher);
+  return location ? { lat: location.lat, lon: location.lon } : null;
 }

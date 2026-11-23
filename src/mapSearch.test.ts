@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { isGoogleMapsUrl, normalizeSearchResponse, parseGoogleMapsUrl, parseMapSearchInput, resolveGoogleMapsUrl } from './mapSearch';
+import {
+  googleMapsLabel,
+  isGoogleMapsUrl,
+  normalizeSearchResponse,
+  parseGoogleMapsUrl,
+  parseMapSearchInput,
+  resolveGoogleMapsLocation,
+  resolveGoogleMapsUrl,
+} from './mapSearch';
 
 describe('map search coordinates', () => {
   it('parses plain latitude and longitude', () => {
@@ -34,9 +42,21 @@ describe('map search coordinates', () => {
 
   it('resolves a Google Maps short URL from its final redirect URL', async () => {
     const coordinates = await resolveGoogleMapsUrl('https://maps.app.goo.gl/example', async () => ({
-      url: 'https://www.google.co.jp/maps/search/35.548554,+139.435962',
+      url: 'https://www.google.co.jp/maps/place/%E9%AB%98%E5%B0%BE%E5%B1%B1/@35.548554,139.435962,15z',
     }) as Response);
     expect(coordinates).toEqual({ lat: 35.548554, lon: 139.435962 });
+  });
+
+  it('extracts a place name from a Google Maps place URL', () => {
+    expect(googleMapsLabel('https://www.google.co.jp/maps/place/%E9%AB%98%E5%B0%BE%E5%B1%B1/@35.548554,139.435962,15z')).toBe('高尾山');
+    expect(googleMapsLabel('https://www.google.co.jp/maps/@35.548554,139.435962,15z')).toBeNull();
+  });
+
+  it('keeps a place name when resolving a short URL', async () => {
+    const location = await resolveGoogleMapsLocation('https://maps.app.goo.gl/example', async () => ({
+      url: 'https://www.google.co.jp/maps/place/%E9%AB%98%E5%B0%BE%E5%B1%B1/@35.548554,139.435962,15z',
+    }) as Response);
+    expect(location).toEqual({ label: '高尾山', lat: 35.548554, lon: 139.435962 });
   });
 
   it('recognizes Google Maps links before their short-link redirect is resolved', () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
-import { renderBasemaps, streamRelief, type MapStyle } from './basemap';
+import { renderBasemaps, streamNames, streamRelief, type MapStyle } from './basemap';
 import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
@@ -31,6 +31,8 @@ const MAP_PAN_BUFFER = 512;
 const DEM_PREFETCH = MAP_PAN_BUFFER * 2;
 const PROFILE_WIDTH = PANEL_WIDTH - 36;
 const PROFILE_HEIGHT = 84;
+const MAP_SUN_SPEEDS = [12, 24, 72] as const;
+const MAP_SUNRISE_OFFSET = 60;
 
 type Layout = {
   pageWidth: number;
@@ -252,12 +254,19 @@ export default function App() {
   /** the projection whose whole map has finished drawing */
   const [basemap, setBasemap] = useState<MapProjection | null>(null);
   const [baseMapStyle, setBaseMapStyle] = useState<MapStyle>(() => savedView?.baseMapStyle ?? 'pale');
+  const [hillshade, setHillshade] = useState(() => savedView?.hillshade ?? true);
+  const [mapSunlight, setMapSunlight] = useState(() => savedView?.mapSunlight ?? true);
+  const [mapSunAuto, setMapSunAuto] = useState(false);
+  const [mapSunSpeed, setMapSunSpeed] = useState(1);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => savedView?.viewMode ?? 'gpx');
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => savedView?.mapViewport ?? null);
   const [mapSearch, setMapSearch] = useState('');
   const [mapSearchResults, setMapSearchResults] = useState<SearchLocation[]>([]);
+  const [mapSearchLocation, setMapSearchLocation] = useState<SearchLocation | null>(null);
   const [mapSearchBusy, setMapSearchBusy] = useState(false);
   const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -272,6 +281,7 @@ export default function App() {
   const [addKm, setAddKm] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [detailWanted, setDetailWanted] = useState<DetailRequest | null>(null);
+  const [detailShown, setDetailShown] = useState<DetailRequest | null>(null);
   const [flyoverPhase, setFlyoverPhase] = useState<FlightPhase | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
   const [month, setMonth] = useState(() => date.slice(0, 7));
@@ -285,6 +295,7 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const flatRef = useRef<HTMLCanvasElement | null>(null);
   const reliefRef = useRef<HTMLCanvasElement | null>(null);
+  const photoRef = useRef<HTMLCanvasElement | null>(null);
   const detailRef = useRef<HTMLCanvasElement | null>(null);
   /** the part of the map the detail canvas holds now */
   const detailDrawn = useRef<DetailRequest | null>(null);
@@ -296,6 +307,7 @@ export default function App() {
   const pendingViewModeRef = useRef<ViewMode | null>(null);
   const viewRestoredRef = useRef(false);
   const mapSearchRequestRef = useRef(0);
+  const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
   const fileRequestRef = useRef(0);
   const statsCacheRef = useRef<{ points: GpxRoute['points']; stats: ReturnType<typeof calculateStats> } | null>(null);
@@ -388,6 +400,7 @@ export default function App() {
         setMapViewport((current) => current ?? { lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
       }
       setMapSearchResults([]);
+      setMapSearchLocation(null);
       setMapSearchError(null);
       setPop(null);
       setViewMode(target);
@@ -482,7 +495,7 @@ export default function App() {
     });
   }, []);
   const centerMap = useCallback(
-    (center: Coordinates, source: string) => {
+    (center: Coordinates, source: string, location?: SearchLocation) => {
       if (apartRef.current) return;
       setMapViewport((viewportState) => ({
         lat: center.lat,
@@ -490,6 +503,7 @@ export default function App() {
         scale: viewportState?.scale ?? gpxProjection?.scale ?? 1,
       }));
       setMapSearchResults([]);
+      setMapSearchLocation(location ?? null);
       setMapSearchError(null);
       addAction('map_search_selected', { source });
     },
@@ -501,16 +515,17 @@ export default function App() {
       if (apartRef.current) return;
       const query = mapSearch.trim();
       if (!query) return;
+      const googleMapsUrl = isGoogleMapsUrl(query);
       const coordinates = parseMapSearchInput(query);
-      if (coordinates) {
+      if (coordinates && !googleMapsUrl) {
         centerMap(coordinates, 'coordinates');
         return;
       }
-      const googleMapsUrl = isGoogleMapsUrl(query);
       const request = ++mapSearchRequestRef.current;
       setMapSearchBusy(true);
       setMapSearchError(null);
       setMapSearchResults([]);
+      setMapSearchLocation(null);
       try {
         const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         if (!response.ok) throw new Error(`Search failed: ${response.status}`);
@@ -518,12 +533,12 @@ export default function App() {
         if (request !== mapSearchRequestRef.current) return;
         const results = normalizeSearchResponse(body);
         if (googleMapsUrl && results.length > 0) {
-          centerMap(results[0], 'google_maps_url');
+          centerMap(results[0], 'google_maps_url', results[0]);
         } else {
           setMapSearchResults(results);
         }
         if (!results.length) setMapSearchError(copy.ui.mapSearchNoResults);
-        addAction('map_search_requested', { source: 'gsi', result_count: results.length });
+        addAction('map_search_requested', { source: googleMapsUrl ? 'google_maps_url' : 'gsi', result_count: results.length });
       } catch (error) {
         if (request === mapSearchRequestRef.current) {
           setMapSearchError(copy.ui.mapSearchFailed);
@@ -595,6 +610,37 @@ export default function App() {
     const bounded = Number.isFinite(current) ? Math.max(sunRange.min, Math.min(sunRange.max, current)) : 630;
     if (current !== bounded) sun.value = String(Math.round(bounded));
   }, [sunRange]);
+  useEffect(() => {
+    if (viewMode !== 'map' || !apart || !mapSunAuto || !mapSunlight) return;
+    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    if (!sun) return;
+    let frame = 0;
+    let previous = performance.now();
+    const speed = MAP_SUN_SPEEDS[mapSunSpeed];
+    const tick = (now: number) => {
+      const elapsed = Math.min(0.1, Math.max(0, (now - previous) / 1000));
+      previous = now;
+      const current = Number(sun.value);
+      const next = ((Number.isFinite(current) ? current : 0) + elapsed * speed) % 1440;
+      autoSunDispatchRef.current = true;
+      sun.value = String(next);
+      sun.dispatchEvent(new Event('input', { bubbles: true }));
+      autoSunDispatchRef.current = false;
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [apart, mapSunAuto, mapSunlight, mapSunSpeed, viewMode]);
+  useEffect(() => {
+    if (viewMode !== 'map' || !apart || !mapSunlight) setMapSunAuto(false);
+  }, [apart, mapSunlight, viewMode]);
+  useEffect(() => {
+    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    if (!sun) return;
+    autoSunDispatchRef.current = true;
+    sun.dispatchEvent(new Event('input', { bubbles: true }));
+    autoSunDispatchRef.current = false;
+  }, [mapSunAuto, mapSunSpeed]);
   const daylight = useMemo(
     () => (projection ? sunTimes(date, projection.centerLat, projection.centerLon) : null),
     [date, projection],
@@ -722,11 +768,11 @@ export default function App() {
   useEffect(() => {
     if (!viewRestoredRef.current) return;
     const timer = window.setTimeout(
-      () => saveView({ viewMode, mapViewport, baseMapStyle }),
+      () => saveView({ viewMode, mapViewport, baseMapStyle, hillshade, mapSunlight }),
       100,
     );
     return () => window.clearTimeout(timer);
-  }, [baseMapStyle, mapViewport, viewMode]);
+  }, [baseMapStyle, hillshade, mapSunlight, mapViewport, viewMode]);
 
   // the plan is kept as it is changed, for the GPX it was made on (once that GPX is in, so as not to write over it)
   useEffect(() => {
@@ -756,8 +802,13 @@ export default function App() {
   useEffect(() => {
     const flat = flatRef.current;
     const relief = reliefRef.current;
-    if (!projection || !flat || !relief) return;
+    const photo = photoRef.current;
+    if (!projection || !flat || !relief || !photo) {
+      setMapLoading(false);
+      return;
+    }
     const controller = new AbortController();
+    setMapLoading(true);
     const density = Math.min(2, window.devicePixelRatio || 1);
     const pad = flatMapMode ? MAP_PAN_BUFFER : 0;
     const renderProjection = pad
@@ -773,8 +824,10 @@ export default function App() {
     };
     const previousFlat = basemapRef.current ? snapshot(flat) : null;
     const previousRelief = basemapRef.current ? snapshot(relief) : null;
+    const previousPhoto = basemapRef.current ? snapshot(photo) : null;
     const nextFlat = document.createElement('canvas');
     const nextRelief = document.createElement('canvas');
+    const nextPhoto = document.createElement('canvas');
     let animation = 0;
     const drawTransition = (alpha: number) => {
       const targetWidth = Math.max(1, Math.round(projection.width * density));
@@ -786,6 +839,10 @@ export default function App() {
       if (relief.width !== targetWidth || relief.height !== targetHeight) {
         relief.width = targetWidth;
         relief.height = targetHeight;
+      }
+      if (photo.width !== targetWidth || photo.height !== targetHeight) {
+        photo.width = targetWidth;
+        photo.height = targetHeight;
       }
       const sourceX = Math.round(pad * density);
       const sourceY = sourceX;
@@ -807,6 +864,19 @@ export default function App() {
         context.drawImage(source, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, target.width, target.height);
         context.globalAlpha = 1;
       }
+      const photoContext = photo.getContext('2d');
+      if (photoContext) {
+        photoContext.clearRect(0, 0, photo.width, photo.height);
+        if (previousPhoto) {
+          photoContext.globalAlpha = 1 - alpha;
+          photoContext.drawImage(previousPhoto, 0, 0);
+        }
+        if (nextPhoto.width > 1 && nextPhoto.height > 1) {
+          photoContext.globalAlpha = alpha;
+          photoContext.drawImage(nextPhoto, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, photo.width, photo.height);
+        }
+        photoContext.globalAlpha = 1;
+      }
       engineRef.current?.refreshMap();
     };
     const commit = () => {
@@ -818,9 +888,10 @@ export default function App() {
       }
       setBasemap(projection);
     };
-    void renderBasemaps(renderProjection, density, { flat: nextFlat, relief: nextRelief }, controller.signal, () => {}, baseMapStyle)
+    void renderBasemaps(renderProjection, density, { flat: nextFlat, relief: nextRelief, photo: nextPhoto }, controller.signal, () => {}, baseMapStyle, hillshade)
       .then(() => {
         if (controller.signal.aborted) return;
+        setMapLoading(false);
         if (!previousFlat || !previousRelief) {
           drawTransition(1);
           commit();
@@ -841,6 +912,7 @@ export default function App() {
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
+          setMapLoading(false);
           reportError('load_basemap', error, { map_style: baseMapStyle });
           setToast(copy.toast.mapTilesFailed);
         }
@@ -849,7 +921,7 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [baseMapStyle, flatMapMode, projection, viewMode]);
+  }, [baseMapStyle, flatMapMode, hillshade, projection, viewMode]);
 
   useEffect(() => {
     if (!projection) return;
@@ -1074,6 +1146,8 @@ export default function App() {
     let cancelled = false;
     let firstFrame = 0;
     let secondFrame = 0;
+    let lateRefresh = 0;
+    let finalRefresh = 0;
     const refreshHud = () => {
       if (!cancelled) engineRef.current?.refreshHud();
     };
@@ -1081,6 +1155,8 @@ export default function App() {
       refreshHud();
       secondFrame = requestAnimationFrame(refreshHud);
     });
+    lateRefresh = window.setTimeout(refreshHud, 250);
+    finalRefresh = window.setTimeout(refreshHud, 1000);
     window.addEventListener('load', refreshHud, { once: true });
     const fontsReady = document.fonts?.ready;
     if (fontsReady) void fontsReady.then(refreshHud);
@@ -1088,6 +1164,8 @@ export default function App() {
       cancelled = true;
       cancelAnimationFrame(firstFrame);
       cancelAnimationFrame(secondFrame);
+      window.clearTimeout(lateRefresh);
+      window.clearTimeout(finalRefresh);
       window.removeEventListener('load', refreshHud);
     };
   }, [native]);
@@ -1133,10 +1211,11 @@ export default function App() {
       lon: projection.centerLon,
       mapStyle: baseMapStyle,
       mapMode: viewMode === 'map',
+      sunlightEnabled: viewMode !== 'map' || mapSunlight,
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [baseMapStyle, date, high, layout, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [baseMapStyle, date, high, layout, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
@@ -1148,11 +1227,14 @@ export default function App() {
 
   // A close view: keep the current picture visible while a padded, sharper picture is prepared,
   // then crossfade once the new tiles are ready.
-  const shownDetail = mapReady ? detailWanted : null;
+  useLayoutEffect(() => {
+    if (detailWanted) setDetailShown(detailWanted);
+  }, [detailWanted]);
+  const shownDetail = mapReady ? detailShown : null;
   useLayoutEffect(() => {
     const el = detailRef.current;
     const base = reliefRef.current;
-    if (!el || !base || !projection || !shownDetail) {
+    if (!el || !base || !projection) {
       if (el && el.width > 1) {
         el.width = 1;
         el.height = 1;
@@ -1161,12 +1243,44 @@ export default function App() {
       engineRef.current?.refreshDetail();
       return;
     }
+    if (!shownDetail) {
+      detailDrawn.current = null;
+      engineRef.current?.refreshDetail();
+      return;
+    }
+    if (!detailWanted) {
+      const fading = new OffscreenCanvas(el.width, el.height);
+      fading.getContext('2d')?.drawImage(el, 0, 0);
+      const context = el.getContext('2d');
+      if (!context) return;
+      let animation = 0;
+      const started = performance.now();
+      const fade = (now: number) => {
+        const progress = Math.min(1, (now - started) / 220);
+        context.clearRect(0, 0, el.width, el.height);
+        context.globalAlpha = 1 - progress;
+        context.drawImage(fading, 0, 0);
+        context.globalAlpha = 1;
+        engineRef.current?.refreshDetail();
+        if (progress < 1) {
+          animation = requestAnimationFrame(fade);
+        } else {
+          detailDrawn.current = null;
+          setDetailShown(null);
+        }
+      };
+      animation = requestAnimationFrame(fade);
+      return () => cancelAnimationFrame(animation);
+    }
     const region = shownDetail;
     const s = region.density;
     const last = detailDrawn.current;
-    const photoRouteOnly = baseMapStyle === 'photo';
+    const photoOnly = baseMapStyle === 'photo';
+    const namesOnly = baseMapStyle === 'photoNames';
+    const photoBase = photoRef.current;
+    if (namesOnly && !photoBase) return;
     let keep: OffscreenCanvas | null = null;
-    if (!photoRouteOnly && last && el.width > 1) {
+    if (!photoOnly && last && el.width > 1) {
       keep = new OffscreenCanvas(el.width, el.height);
       keep.getContext('2d')?.drawImage(el, 0, 0);
     }
@@ -1175,25 +1289,31 @@ export default function App() {
     const context = el.getContext('2d');
     if (!context) return;
     context.imageSmoothingQuality = 'high';
-    if (photoRouteOnly) {
+    if (photoOnly) {
       context.clearRect(0, 0, el.width, el.height);
       detailDrawn.current = region;
       engineRef.current?.refreshDetail();
       return;
     }
     const k = base.width / projection.width;
-    context.drawImage(base, region.x * k, region.y * k, region.w * k, region.h * k, 0, 0, el.width, el.height);
-    if (keep && last) context.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
+    const drawStart = (target: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D) => {
+      target.clearRect(0, 0, el.width, el.height);
+      target.drawImage(base, region.x * k, region.y * k, region.w * k, region.h * k, 0, 0, el.width, el.height);
+      if (keep && last) target.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
+    };
+    drawStart(context);
     const start = new OffscreenCanvas(el.width, el.height);
-    start.getContext('2d')?.drawImage(el, 0, 0);
+    start.getContext('2d')?.drawImage(context.canvas, 0, 0);
     const next = document.createElement('canvas');
     next.width = el.width;
     next.height = el.height;
     const nextContext = next.getContext('2d');
     if (!nextContext) return;
     nextContext.imageSmoothingQuality = 'high';
-    nextContext.drawImage(base, region.x * k, region.y * k, region.w * k, region.h * k, 0, 0, next.width, next.height);
-    if (keep && last) nextContext.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
+    nextContext.clearRect(0, 0, next.width, next.height);
+    const nextBase = namesOnly ? photoBase ?? base : base;
+    nextContext.drawImage(nextBase, region.x * k, region.y * k, region.w * k, region.h * k, 0, 0, next.width, next.height);
+    if (!namesOnly && keep && last) nextContext.drawImage(keep, (last.x - region.x) * s, (last.y - region.y) * s, last.w * s, last.h * s);
     detailDrawn.current = region;
     engineRef.current?.refreshDetail();
     const controller = new AbortController();
@@ -1201,7 +1321,10 @@ export default function App() {
     const flush = () => {
       engineRef.current?.refreshDetail();
     };
-    void streamRelief(projection, s, region, nextContext, controller.signal, () => {})
+    const stream = namesOnly
+      ? streamNames(projection, s, region, nextContext, controller.signal, () => {})
+      : streamRelief(projection, s, region, nextContext, controller.signal, () => {}, baseMapStyle);
+    void stream
       .then(() => {
         if (controller.signal.aborted) return;
         const started = performance.now();
@@ -1220,13 +1343,13 @@ export default function App() {
         animation = requestAnimationFrame(crossfade);
       })
       .catch((error) => {
-        if (!controller.signal.aborted) reportWarning('load_detail_relief', error);
+        if (!controller.signal.aborted) reportWarning(namesOnly ? 'load_detail_names' : 'load_detail_relief', error);
       });
     return () => {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [shownDetail, projection, baseMapStyle]);
+  }, [detailWanted, shownDetail, projection, baseMapStyle]);
 
   useLayoutEffect(() => {
     engineRef.current?.refreshPop();
@@ -1373,8 +1496,58 @@ export default function App() {
   const flyoverRunning = flyoverPhase === 'intro' || flyoverPhase === 'run' || flyoverPhase === 'outro';
   const flyoverPaused = flyoverPhase === 'paused';
   const flyoverReturning = flyoverPhase === 'return';
-  const photoRouteOverlay = baseMapStyle === 'photo' && apart && !!shownDetail;
+  const photoRouteOverlay = (baseMapStyle === 'photo' || baseMapStyle === 'photoNames') && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
+  const mapStyleLabel =
+    baseMapStyle === 'std'
+      ? copy.ui.standardMap
+      : baseMapStyle === 'pale'
+        ? copy.ui.paleMap
+        : baseMapStyle === 'photo'
+          ? copy.ui.aerial
+          : copy.ui.photoNames;
+  const selectMapStyle = (style: MapStyle) => {
+    addAction('map_style_changed', { style });
+    setBaseMapStyle(style);
+    setMapSwitchOpen(false);
+  };
+  const toggleHillshade = () => {
+    const next = !hillshade;
+    addAction('map_hillshade_changed', { enabled: next });
+    setHillshade(next);
+    setMapSwitchOpen(false);
+  };
+  const toggleMapSunlight = () => {
+    const next = !mapSunlight;
+    addAction('map_sunlight_changed', { enabled: next });
+    setMapSunlight(next);
+    if (!next) setMapSunAuto(false);
+  };
+  const toggleMapSunAuto = () => {
+    if (!apart || !mapSunlight) return;
+    const next = !mapSunAuto;
+    if (next) {
+      const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+      if (sun) {
+        const start = daylight?.rise == null ? 0 : Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET);
+        autoSunDispatchRef.current = true;
+        sun.value = String(start);
+        sun.dispatchEvent(new Event('input', { bubbles: true }));
+        autoSunDispatchRef.current = false;
+      }
+    }
+    addAction('map_sun_auto_changed', {
+      enabled: next,
+      speed: mapSunSpeed,
+      start_minutes: next && daylight?.rise != null ? Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET) : 0,
+    });
+    setMapSunAuto(next);
+  };
+  const selectMapSunSpeed = (speed: number) => {
+    if (speed < 0 || speed >= MAP_SUN_SPEEDS.length) return;
+    setMapSunSpeed(speed);
+    addAction('map_sun_auto_speed_changed', { speed });
+  };
 
   return (
     <main lang={language} className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}`}>
@@ -1396,6 +1569,7 @@ export default function App() {
                 {!terrain && <span className="terrain-status">{route ? copy.ui.loadingTerrain : copy.ui.loadingGpx}</span>}
               </div>
             ))}
+            <canvas ref={photoRef} aria-hidden="true" style={{ display: 'none' }} />
 
             <div
               className="detail"
@@ -1428,30 +1602,57 @@ export default function App() {
             </div>
 
             <div className="map" data-map="" style={mapStyle}>
-              <div className="map-switch" data-piece="content" data-map-control="" drawable="" role="group" aria-label={copy.ui.mapType}>
-                <span>{copy.ui.map}</span>
+              <div
+                className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
+                data-piece="content"
+                data-map-control=""
+                drawable=""
+                role="group"
+                aria-label={copy.ui.mapType}
+              >
                 <button
                   type="button"
-                  className="map-switch-option"
-                  aria-pressed={baseMapStyle === 'pale'}
-                  onClick={() => {
-                    addAction('map_style_changed', { style: 'pale' });
-                    setBaseMapStyle('pale');
-                  }}
+                  className="map-switch-toggle"
+                  aria-expanded={mapSwitchOpen}
+                  onClick={() => setMapSwitchOpen((open) => !open)}
                 >
-                  {copy.ui.paleMap}
+                  <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
+                  {mapLoading && (
+                    <span className="map-switch-loading" role="status" aria-live="polite">
+                      <i className="map-spinner" aria-hidden="true" />
+                      {copy.ui.mapLoading}
+                    </span>
+                  )}
+                  <b className="map-switch-chevron" aria-hidden="true">
+                    {mapSwitchOpen ? '⌃' : '⌄'}
+                  </b>
                 </button>
-                <button
-                  type="button"
-                  className="map-switch-option"
-                  aria-pressed={baseMapStyle === 'photo'}
-                  onClick={() => {
-                    addAction('map_style_changed', { style: 'photo' });
-                    setBaseMapStyle('photo');
-                  }}
-                >
-                  {copy.ui.aerial}
-                </button>
+                {mapSwitchOpen && (
+                  <>
+                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
+                      {copy.ui.standardMap}
+                    </button>
+                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
+                      {copy.ui.paleMap}
+                    </button>
+                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
+                      {copy.ui.aerial}
+                    </button>
+                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
+                      {copy.ui.photoNames}
+                    </button>
+                    <span className="map-switch-divider" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="map-switch-option"
+                      aria-pressed={hillshade}
+                      disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
+                      onClick={toggleHillshade}
+                    >
+                      {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
+                    </button>
+                  </>
+                )}
               </div>
               {viewMode === 'gpx' && ways.map((way, index) => (
                 <button
@@ -1485,58 +1686,71 @@ export default function App() {
             </div>
 
             <aside className="side" style={{ left: layout.sideX, top: PAD, width: PANEL_WIDTH, height: layout.pageHeight - PAD * 2 }}>
-              <section className="slot">
-                <div className="card" data-piece="card" drawable="" />
-                {viewMode === 'gpx' ? (
-                  <div className="in in-title" data-piece="content" drawable="">
-                    <div className="brand">
-                      <img className="brand-mark" src="/gpx-topo-logo.png" alt="" aria-hidden="true" />
-                      <span>{copy.appName}</span>
-                    </div>
-                    <input
-                      className="route-name"
-                      value={route?.name ?? ''}
-                      spellCheck={false}
-                      aria-label={copy.ui.routeName}
-                      onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
-                    />
-                    <small className="file-name" data-selectable="">
-                      {fileName}
-                    </small>
-                  </div>
-                ) : !apart ? (
-                  <div className="in in-map-search" data-piece="content" drawable="">
-                    <div className="row">
-                      <span className="label">{copy.ui.map}</span>
-                      {mapSearchBusy && <small data-selectable="">{copy.ui.mapSearchBusy}</small>}
-                    </div>
-                    <form className="map-search-form" onSubmit={(event) => void searchMap(event)}>
+              {(viewMode === 'gpx' || !apart) && (
+                <section className="slot">
+                  <div className="card" data-piece="card" drawable="" />
+                  {viewMode === 'gpx' ? (
+                    <div className="in in-title" data-piece="content" drawable="">
+                      <div className="brand">
+                        <img className="brand-mark" src="/gpx-topo-logo.png" alt="" aria-hidden="true" />
+                        <span>{copy.appName}</span>
+                      </div>
                       <input
-                        value={mapSearch}
-                        onChange={(event) => setMapSearch(event.target.value)}
-                        placeholder={copy.ui.mapSearchPlaceholder}
-                        aria-label={copy.ui.mapSearchPlaceholder}
+                        className="route-name"
+                        value={route?.name ?? ''}
                         spellCheck={false}
+                        aria-label={copy.ui.routeName}
+                        onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
                       />
-                      <button type="submit" className="field" disabled={mapSearchBusy}>
-                        {copy.ui.mapSearchSubmit}
-                      </button>
-                    </form>
-                    {mapSearchError && <p className="map-search-error" data-selectable="">{mapSearchError}</p>}
-                    {mapSearchResults.length > 0 && (
-                      <ol className="map-search-results" data-scroll="">
-                        {mapSearchResults.map((result) => (
-                          <li key={`${result.lat}:${result.lon}:${result.label}`}>
-                            <button type="button" onClick={() => centerMap(result, 'result')}>
-                              {result.label}
-                            </button>
-                          </li>
-                        ))}
-                      </ol>
-                    )}
-                  </div>
-                ) : null}
-              </section>
+                      <small className="file-name" data-selectable="">
+                        {fileName}
+                      </small>
+                    </div>
+                  ) : (
+                    <div className="in in-map-search" data-piece="content" drawable="">
+                      <div className="row">
+                        <span className="label">{copy.ui.map}</span>
+                      </div>
+                      <form className="map-search-form" onSubmit={(event) => void searchMap(event)}>
+                        <input
+                          value={mapSearch}
+                          onChange={(event) => setMapSearch(event.target.value)}
+                          placeholder={copy.ui.mapSearchPlaceholder}
+                          aria-label={copy.ui.mapSearchPlaceholder}
+                          spellCheck={false}
+                        />
+                        <button type="submit" className="field" disabled={mapSearchBusy}>
+                          {copy.ui.mapSearchSubmit}
+                        </button>
+                      </form>
+                      {mapSearchBusy && (
+                        <div className="map-search-busy" role="status" aria-live="polite">
+                          <i className="map-spinner" aria-hidden="true" />
+                          <span>{copy.ui.mapSearchBusy}</span>
+                        </div>
+                      )}
+                      {mapSearchLocation && (
+                        <div className="map-search-location" data-selectable="">
+                          {mapSearchLocation.label}
+                        </div>
+                      )}
+                      {mapSearchError && <p className="map-search-error" data-selectable="">{mapSearchError}</p>}
+                      {mapSearchResults.length > 0 && (
+                        <ol className="map-search-results" data-scroll="">
+                          {mapSearchResults.map((result) => (
+                            <li key={`${result.lat}:${result.lon}:${result.label}`}>
+                              <button type="button" onClick={() => centerMap(result, 'result', result)}>
+                              <span className="map-search-result-label">{result.label}</span>
+                              {result.detail && <small className="map-search-result-detail">{result.detail}</small>}
+                              </button>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
 
               {viewMode === 'gpx' && (
                 <section className="slot">
@@ -1600,6 +1814,11 @@ export default function App() {
                     <output className="clock" data-clock="" data-selectable="">
                       {formatClock(initialSun)}
                     </output>
+                    {viewMode === 'map' && (
+                      <button type="button" className="field sunlight-toggle" aria-pressed={mapSunlight} onClick={toggleMapSunlight}>
+                        {mapSunlight ? copy.ui.sunlightOn : copy.ui.sunlightOff}
+                      </button>
+                    )}
                   </div>
                   <input
                     className="sun"
@@ -1610,8 +1829,39 @@ export default function App() {
                     step={1}
                     defaultValue={initialSun}
                     aria-label={copy.ui.time}
+                    disabled={viewMode === 'map' && !mapSunlight}
+                    onInput={() => {
+                      if (!autoSunDispatchRef.current && mapSunAuto) setMapSunAuto(false);
+                    }}
                     style={{ ['--track' as string]: sunTrack }}
                   />
+                  {viewMode === 'map' && apart && (
+                    <div className="sun-auto" data-selectable="">
+                      <button
+                        type="button"
+                        className={`field sunlight-auto-toggle${mapSunAuto ? ' is-active' : ''}`}
+                        aria-pressed={mapSunAuto}
+                        disabled={!mapSunlight}
+                        onClick={toggleMapSunAuto}
+                      >
+                        {mapSunAuto ? copy.ui.sunAutoStop : copy.ui.sunAuto}
+                      </button>
+                      <div className="sun-auto-speed" role="group" aria-label={copy.ui.sunAutoSpeed}>
+                        {copy.ui.sunAutoSpeedLabels.map((label, index) => (
+                          <button
+                            key={label}
+                            type="button"
+                            className={mapSunSpeed === index ? 'is-selected' : ''}
+                            aria-pressed={mapSunSpeed === index}
+                            disabled={!mapSunlight}
+                            onClick={() => selectMapSunSpeed(index)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className={`row row-inputs${viewMode === 'map' ? ' map-sun-inputs' : ''}`}>
                     {viewMode === 'gpx' && (
                       <label>

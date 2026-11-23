@@ -24,12 +24,16 @@ describe('session', () => {
     saveView({
       viewMode: 'map',
       mapViewport: { lat: 38.0123, lon: 138.1234, scale: 1.75 },
-      baseMapStyle: 'photo',
+      baseMapStyle: 'photoNames',
+      hillshade: false,
+      mapSunlight: false,
     });
     expect(loadView()).toEqual({
       viewMode: 'map',
       mapViewport: { lat: 38.0123, lon: 138.1234, scale: 1.75 },
-      baseMapStyle: 'photo',
+      baseMapStyle: 'photoNames',
+      hillshade: false,
+      mapSunlight: false,
     });
   });
 
@@ -41,5 +45,19 @@ describe('session', () => {
     expect(loadView()).toBeNull();
     localStorage.setItem('gpx-topo:view', 'not json');
     expect(loadView()).toBeNull();
+  });
+
+  it('defaults hillshade on for an older saved view', () => {
+    localStorage.setItem(
+      'gpx-topo:view',
+      JSON.stringify({ viewMode: 'gpx', mapViewport: null, baseMapStyle: 'pale' }),
+    );
+    expect(loadView()).toEqual({
+      viewMode: 'gpx',
+      mapViewport: null,
+      baseMapStyle: 'pale',
+      hillshade: true,
+      mapSunlight: true,
+    });
   });
 });

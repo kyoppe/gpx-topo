@@ -10,6 +10,14 @@ describe('googleMapsLocation', () => {
       lon: 139.435962,
     });
   });
+
+  it('keeps a place name when one was found in the URL', () => {
+    expect(googleMapsLocation({ label: '高尾山', lat: 35.548554, lon: 139.435962 })).toEqual({
+      label: '高尾山',
+      lat: 35.548554,
+      lon: 139.435962,
+    });
+  });
 });
 
 describe('normalizeSearchResults', () => {

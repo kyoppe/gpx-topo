@@ -1,4 +1,5 @@
 import { nearestTurn } from './angle';
+import type { MapStyle } from './basemap';
 import { clothVertices, createCloth, layCloth, stepCloth, type Cloth } from './cloth';
 import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
@@ -26,8 +27,10 @@ export type EngineModel = {
   date: string;
   lat: number;
   lon: number;
-  mapStyle: 'pale' | 'photo';
+  mapStyle: MapStyle;
   mapMode: boolean;
+  /** Whether date/time-driven sunlight should light the raised model. */
+  sunlightEnabled: boolean;
   /** Where a distance along the route sits on the elevation profile drawing. */
   profilePoint(km: number): [number, number];
   /** The distance along the route (km) at an x on the elevation profile drawing. */
@@ -230,6 +233,15 @@ const EDITABLE = 'input:not([type=range]):not([type=button]):not([type=submit]),
 const ROUTE_REACH = 12;
 
 export type Engine = ReturnType<typeof createEngine>;
+
+const NO_SUN_LIGHT: Light = {
+  dir: [0, 0, 1],
+  col: [0, 0, 0],
+  amb: [1, 1, 1],
+  expo: 1,
+  night: 0,
+  elevation: 45,
+};
 
 export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks) {
   const R = createRenderer(canvas);
@@ -2006,11 +2018,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (!model || !sunEl) return;
     const minutes = Number(sunEl.value);
     // a picker shows the light it would give while it is open
-    light = lightAt(previewDay ?? model.date, previewMinutes ?? minutes, model.lat, model.lon);
+    light = model.sunlightEnabled ? lightAt(previewDay ?? model.date, previewMinutes ?? minutes, model.lat, model.lon) : NO_SUN_LIGHT;
     if (clockEl) clockEl.textContent = formatClock(previewClock ?? minutes);
     const warm = smooth((light.elevation + 2) / 14);
     const glow = light.night > 0.5 ? 'rgb(64,78,128)' : `rgb(255,${Math.round(lerp(150, 236, warm))},${Math.round(lerp(96, 180, warm))})`;
-    sunEl.style.setProperty('--thumb', glow);
+    sunEl.style.setProperty('--thumb', model.sunlightEnabled ? glow : 'rgb(150,160,170)');
     st.kmT = kmAt(minutes);
     need();
   }

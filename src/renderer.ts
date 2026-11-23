@@ -313,7 +313,7 @@ void main(){
         vec4 d=texture(uDet,q,-0.5);
         vec2 e=min(q,1.0-q)*(uDetR.zw-uDetR.xy)*uMapPx;
         float edge=smoothstep(0.0,6.0,min(e.x,e.y));
-        if(d.a>0.01) alb=mix(alb,d.rgb/d.a,edge);
+        if(d.a>0.01) alb=mix(alb,d.rgb/d.a,clamp(d.a*edge,0.0,1.0));
       }
     }
     alb=mix(alb,flatAlb,uFlat);

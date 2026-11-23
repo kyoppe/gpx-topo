@@ -1,30 +1,16 @@
-import { resolveGoogleMapsUrl, type Coordinates } from '../../src/mapSearch';
+import { formatCoordinates, MAX_SEARCH_RESULTS, resolveGoogleMapsLocation, type Coordinates } from '../../src/mapSearch';
+import { loadMunicipalityNames, normalizeGsiSearchResults } from '../../src/gsiSearch';
 
-type SearchResult = {
-  geometry?: { coordinates?: [number, number] };
-  properties?: { address?: string; title?: string };
-};
-
-export function googleMapsLocation(coordinates: Coordinates) {
+export function googleMapsLocation(coordinates: Coordinates & { label?: string }) {
   return {
-    label: `${coordinates.lat.toFixed(6)}, ${coordinates.lon.toFixed(6)}`,
+    label: coordinates.label ?? formatCoordinates(coordinates),
     lat: coordinates.lat,
     lon: coordinates.lon,
   };
 }
 
-export function normalizeSearchResults(source: SearchResult[]) {
-  return source
-    .map((item) => {
-      const coordinates = item.geometry?.coordinates;
-      return {
-        label: item.properties?.address ?? item.properties?.title ?? '',
-        lat: Number(coordinates?.[1]),
-        lon: Number(coordinates?.[0]),
-      };
-    })
-    .filter((item) => item.label && Number.isFinite(item.lat) && Number.isFinite(item.lon))
-    .slice(0, 12);
+export function normalizeSearchResults(source: unknown[], query = '') {
+  return normalizeGsiSearchResults(source, query).slice(0, MAX_SEARCH_RESULTS);
 }
 
 export async function onRequest(context: { request: Request }) {
@@ -33,9 +19,9 @@ export async function onRequest(context: { request: Request }) {
     return Response.json({ results: [] }, { status: 400 });
   }
   try {
-    const coordinates = await resolveGoogleMapsUrl(query);
-    if (coordinates) {
-      return Response.json({ results: [googleMapsLocation(coordinates)] }, { headers: { 'cache-control': 'public, max-age=3600' } });
+    const location = await resolveGoogleMapsLocation(query);
+    if (location) {
+      return Response.json({ results: [googleMapsLocation(location)] }, { headers: { 'cache-control': 'public, max-age=3600' } });
     }
   } catch {
     // Fall through to the normal address search if a Google Maps redirect cannot be resolved.
@@ -46,6 +32,10 @@ export async function onRequest(context: { request: Request }) {
   if (!upstream.ok) {
     return new Response('GSI search unavailable.', { status: upstream.status });
   }
-  const source = (await upstream.json()) as SearchResult[];
-  return Response.json({ results: normalizeSearchResults(source) }, { headers: { 'cache-control': 'public, max-age=3600' } });
+  const source = (await upstream.json()) as unknown[];
+  const municipalityNames = await loadMunicipalityNames();
+  return Response.json(
+    { results: normalizeGsiSearchResults(source, query, municipalityNames).slice(0, MAX_SEARCH_RESULTS) },
+    { headers: { 'cache-control': 'public, max-age=3600' } },
+  );
 }

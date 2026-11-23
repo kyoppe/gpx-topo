@@ -57,8 +57,13 @@ export type Copy = {
   ui: {
     mapType: string;
     map: string;
+    standardMap: string;
     paleMap: string;
     aerial: string;
+    photoNames: string;
+    hillshadeOn: string;
+    hillshadeOff: string;
+    mapLoading: string;
     highestPoint(elevation: number): string;
     highestPointLabel: string;
     positionAtTime: string;
@@ -67,6 +72,12 @@ export type Copy = {
     elevationGain: string;
     elevationProfile: string;
     sunlight: string;
+    sunlightOn: string;
+    sunlightOff: string;
+    sunAuto: string;
+    sunAutoStop: string;
+    sunAutoSpeed: string;
+    sunAutoSpeedLabels: readonly [string, string, string];
     time: string;
     start: string;
     startTime: string;
@@ -185,8 +196,13 @@ function makeCopy(language: Language): Copy {
       ui: {
         mapType: '地図の種類',
         map: '地図',
-        paleMap: '淡色地図',
-        aerial: '航空写真',
+        standardMap: '標準',
+        paleMap: '淡色',
+        aerial: '写真',
+        photoNames: '写真+地名',
+        hillshadeOn: '陰影あり',
+        hillshadeOff: '陰影なし',
+        mapLoading: '地図を読み込み中',
         highestPoint: (elevation) => `最高点 ${Math.round(elevation)} m`,
         highestPointLabel: '最高点',
         positionAtTime: 'この時刻の位置',
@@ -195,6 +211,12 @@ function makeCopy(language: Language): Copy {
         elevationGain: '累積標高',
         elevationProfile: '標高プロファイル',
         sunlight: '日照',
+        sunlightOn: '日照あり',
+        sunlightOff: '日照なし',
+        sunAuto: '自動',
+        sunAutoStop: '停止',
+        sunAutoSpeed: '自動日照の速度',
+        sunAutoSpeedLabels: ['ゆっくり', '標準', '速い'],
         time: '時刻',
         start: 'スタート',
         startTime: 'スタート時刻',
@@ -317,8 +339,13 @@ function makeCopy(language: Language): Copy {
     ui: {
       mapType: 'Map type',
       map: 'Map',
-      paleMap: 'Pale map',
-      aerial: 'Aerial imagery',
+      standardMap: 'Standard',
+      paleMap: 'Pale',
+      aerial: 'Aerial',
+      photoNames: 'Aerial + names',
+      hillshadeOn: 'Hillshade on',
+      hillshadeOff: 'Hillshade off',
+      mapLoading: 'Loading map',
       highestPoint: (elevation) => `Highest point ${Math.round(elevation)} m`,
       highestPointLabel: 'Highest point',
       positionAtTime: 'Position at this time',
@@ -327,6 +354,12 @@ function makeCopy(language: Language): Copy {
       elevationGain: 'Elevation gain',
       elevationProfile: 'Elevation profile',
       sunlight: 'Sunlight',
+      sunlightOn: 'Sunlight on',
+      sunlightOff: 'Sunlight off',
+      sunAuto: 'Auto',
+      sunAutoStop: 'Stop',
+      sunAutoSpeed: 'Auto sunlight speed',
+      sunAutoSpeedLabels: ['Slow', 'Normal', 'Fast'],
       time: 'Time',
       start: 'Start',
       startTime: 'Start time',

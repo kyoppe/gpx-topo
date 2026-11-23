@@ -1,3 +1,4 @@
+import type { MapStyle } from './basemap';
 import type { ViewMode } from './mapMode';
 
 // What carries over to the next visit: the GPX last opened, the plan made on it (its waypoints, their target times,
@@ -12,7 +13,9 @@ export type MapViewport = { lat: number; lon: number; scale: number };
 export type SavedView = {
   viewMode: ViewMode;
   mapViewport: MapViewport | null;
-  baseMapStyle: 'pale' | 'photo';
+  baseMapStyle: MapStyle;
+  hillshade: boolean;
+  mapSunlight: boolean;
 };
 /** The plan made on a GPX: which file it belongs to, and what was changed on it. */
 export type SavedPlan<W> = { file: string; title: string; waypoints: W[]; overrides: Record<string, number> };
@@ -69,12 +72,16 @@ export function loadView(): SavedView | null {
     if (!raw) return null;
     const value = JSON.parse(raw) as Partial<SavedView>;
     if (value.viewMode !== 'gpx' && value.viewMode !== 'map') return null;
-    if (value.baseMapStyle !== 'pale' && value.baseMapStyle !== 'photo') return null;
+    if (value.baseMapStyle !== 'std' && value.baseMapStyle !== 'pale' && value.baseMapStyle !== 'photo' && value.baseMapStyle !== 'photoNames') return null;
     if (value.mapViewport !== null && !validMapViewport(value.mapViewport)) return null;
+    if (value.hillshade !== undefined && typeof value.hillshade !== 'boolean') return null;
+    if (value.mapSunlight !== undefined && typeof value.mapSunlight !== 'boolean') return null;
     return {
       viewMode: value.viewMode,
       mapViewport: value.mapViewport,
       baseMapStyle: value.baseMapStyle,
+      hillshade: value.hillshade ?? true,
+      mapSunlight: value.mapSunlight ?? true,
     };
   } catch {
     return null;
