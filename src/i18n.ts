@@ -52,7 +52,9 @@ export type Copy = {
     imageSavedFailed: string;
     imageCopiedFailed: string;
     imageCopied: string;
-    imageCopiedWithPaste: string;
+    videoRecordingUnsupported: string;
+    videoRecordingFailed: string;
+    xPostFailed: string;
   };
   ui: {
     mapType: string;
@@ -131,6 +133,10 @@ export type Copy = {
     flyoverResume: string;
     flyoverStop: string;
     captureImage: string;
+    recordVideo: string;
+    stopVideoRecording: string;
+    xHintPhoto: string;
+    xHintVideo: string;
     helpLinks: string;
   };
   flag: {
@@ -191,7 +197,9 @@ function makeCopy(language: Language): Copy {
         imageSavedFailed: '画像を保存できませんでした。',
         imageCopiedFailed: '画像をコピーできませんでした。',
         imageCopied: '画像をコピーしました。',
-        imageCopiedWithPaste: '画像をコピーしました。投稿画面で ⌘V（Ctrl+V）で貼り付けてください。',
+        videoRecordingUnsupported: 'このブラウザでは動画を録画できません。',
+        videoRecordingFailed: '動画を録画できませんでした。',
+        xPostFailed: 'Xの投稿画面を開けませんでした。',
       },
       ui: {
         mapType: '地図の種類',
@@ -270,6 +278,10 @@ function makeCopy(language: Language): Copy {
         flyoverResume: 'Flyoverを再開',
         flyoverStop: 'Flyoverを停止',
         captureImage: '画像にする',
+        recordVideo: '画面を録画',
+        stopVideoRecording: '録画を停止',
+        xHintPhoto: '画像をコピーしました。\nXに貼り付けてください。',
+        xHintVideo: '動画を添付してXに投稿できます。',
         helpLinks: '使い方とリンク',
       },
       flag: {
@@ -334,7 +346,9 @@ function makeCopy(language: Language): Copy {
       imageSavedFailed: 'Could not save the image.',
       imageCopiedFailed: 'Could not copy the image.',
       imageCopied: 'Image copied.',
-      imageCopiedWithPaste: 'Image copied. Paste it into the post composer with ⌘V (Ctrl+V).',
+      videoRecordingUnsupported: 'Video recording is not supported by this browser.',
+      videoRecordingFailed: 'Could not record the video.',
+      xPostFailed: 'Could not open the X post composer.',
     },
     ui: {
       mapType: 'Map type',
@@ -413,6 +427,10 @@ function makeCopy(language: Language): Copy {
       flyoverResume: 'Resume Flyover',
       flyoverStop: 'Stop Flyover',
       captureImage: 'Capture image',
+      recordVideo: 'Record screen',
+      stopVideoRecording: 'Stop recording',
+      xHintPhoto: 'Photo copied.\nPaste it into your post on X.',
+      xHintVideo: 'Attach the video to your post on X.',
       helpLinks: 'Help and links',
     },
     flag: {

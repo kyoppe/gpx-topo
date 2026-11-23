@@ -56,6 +56,37 @@ User-entered values are not masked. Waypoint names, GPX file names, and GPX
 content may be included in RUM context or Browser Logs when they are relevant
 to the operation being recorded.
 
+## Time between user interactions
+
+RUM view context includes `engaged_ms`: the time in milliseconds between the
+first and most recent user interaction within that view. It excludes time
+before the first and after the last interaction, but includes any idle gaps
+between interactions. It is not a sum of active intervals.
+
+The tracker starts after RUM initialization, once for the lifetime of the page.
+It observes `pointerdown`, pressed `pointermove`, `pointerup`, `keydown`,
+`wheel`, and `click` in the capture phase with passive listeners. This covers
+map drags, touch pinches, trackpad zoom, and controls that stop propagation,
+without treating pointer hover or animations as interaction.
+
+The first interaction writes zero; views with no interactions have no value.
+Subsequent writes are throttled to once per second, with a trailing update
+using the last interaction's timestamp. Pending updates are flushed when the
+page becomes hidden or receives `pagehide`, so background time is not added.
+These lifecycle flushes can bypass the throttle. A change in
+`datadogRum.getInternalContext()?.view?.id` resets the timestamps and pending
+update before recording another interaction, including after session renewal
+or a future route change. The app currently has only the `/` route.
+
+In Datadog, register `@context.engaged_ms` as a numeric measure with millisecond
+units. Filter to `@type:view service:gpx-topo-web` and SUM the measure grouped by
+user to obtain each user's total across views. Datadog retains the latest
+version of each view event; do not sum the same context from action events.
+
+After deployment, verify the ingested view context against a known sequence
+of interactions, including session renewal, and confirm that it stops growing
+after the last interaction.
+
 ## Custom RUM actions
 
 Automatic interaction tracking records ordinary button and link clicks. Add a

@@ -5,6 +5,7 @@ import { datadogRum } from '@datadog/browser-rum';
 
 import { supportsHtmlInCanvas } from './htmlInCanvas';
 import { enrichBrowserLog } from './observability';
+import { startViewEngagement } from './viewEngagement';
 
 vi.mock('@datadog/browser-rum', () => ({
   datadogRum: { init: vi.fn(), setGlobalContextProperty: vi.fn() },
@@ -14,6 +15,7 @@ vi.mock('@datadog/browser-logs', () => ({
 }));
 vi.mock('@datadog/browser-rum-react', () => ({ reactPlugin: vi.fn() }));
 vi.mock('./htmlInCanvas', () => ({ supportsHtmlInCanvas: vi.fn() }));
+vi.mock('./viewEngagement', () => ({ startViewEngagement: vi.fn() }));
 
 function log(overrides: Partial<LogsEvent> = {}): LogsEvent {
   return {
@@ -66,5 +68,18 @@ describe('startObservability', () => {
     expect(vi.mocked(datadogRum.init).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(datadogRum.setGlobalContextProperty).mock.invocationCallOrder[0],
     );
+  });
+
+  it('starts view engagement once, after RUM initialization', async () => {
+    const { startObservability } = await import('./observability');
+    vi.mocked(datadogRum.init).mockImplementationOnce(() => {
+      expect(startViewEngagement).not.toHaveBeenCalled();
+    });
+
+    startObservability();
+    startObservability();
+
+    expect(datadogRum.init).toHaveBeenCalledOnce();
+    expect(startViewEngagement).toHaveBeenCalledOnce();
   });
 });

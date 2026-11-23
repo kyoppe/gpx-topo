@@ -3,6 +3,7 @@ import { datadogRum } from '@datadog/browser-rum';
 import { reactPlugin } from '@datadog/browser-rum-react';
 
 import { supportsHtmlInCanvas } from './htmlInCanvas';
+import { startViewEngagement } from './viewEngagement';
 
 const APPLICATION_ID = 'd5807eba-5947-4933-b5e1-b25c996dfe32';
 const CLIENT_TOKEN = 'pubd8fe53f9f169d37ec0ca3bf772e6ee88';
@@ -54,6 +55,7 @@ export function startObservability(): void {
       plugins: [reactPlugin()],
     });
     datadogRum.setGlobalContextProperty('html_in_canvas_supported', supportsHtmlInCanvas());
+    startViewEngagement();
   } catch (error) {
     console.error('gpx_topo_rum_init_failed', error);
     datadogLogs.logger.error('gpx-topo RUM initialization failed', {
