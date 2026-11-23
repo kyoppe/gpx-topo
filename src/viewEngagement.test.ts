@@ -27,7 +27,9 @@ describe('view engagement', () => {
     vi.mocked(datadogRum.setViewContextProperty).mockClear();
     viewId = 'view-1';
     vi.mocked(datadogRum.getInternalContext).mockImplementation(() =>
-      viewId ? { application_id: 'app', session_id: 'session', view: { id: viewId } } : undefined,
+      viewId
+        ? { application_id: 'app', session_id: 'session', view: { id: viewId, url: 'https://example.test/', referrer: '' } }
+        : undefined,
     );
     stop = startViewEngagement();
   });
