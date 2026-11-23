@@ -120,6 +120,22 @@ export function FlagContent({ brushes, copy, twin = false }: { brushes: Brush[];
                 <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.4-1.8-9-1a.6.6 0 1 1-.3-1.2c3.9-.9 7.2-.5 9.9 1.1.3.2.4.6.3.9Zm1.2-2.7a.8.8 0 0 1-1.1.3c-2.7-1.7-6.9-2.2-10.1-1.2a.8.8 0 1 1-.5-1.5c3.7-1.1 8.3-.6 11.4 1.3.4.2.5.7.3 1.1Zm.1-2.8C14.7 9 9.4 8.8 6.3 9.7a.9.9 0 1 1-.5-1.8c3.5-1.1 9.4-.9 13.1 1.3a.9.9 0 1 1-.9 1.6Z" />
               </svg>
             </a>
+            <a
+              className="flag-icon"
+              href="https://www.amazon.co.jp/hz/wishlist/ls/1DP92J2BSDP0O"
+              target="_blank"
+              rel="noreferrer"
+              aria-label={copy.flag.wishlist}
+              title={copy.flag.wishlist}
+              onClick={() => {
+                if (!twin) addAction('info_link_clicked', { destination: 'amazon_wishlist' });
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5.5 5.5h7.2a3.3 3.3 0 0 1 3.3 3.3v5.7a3.3 3.3 0 0 1-3.3 3.3H9l-3.5 2v-2.7a3.3 3.3 0 0 1-3.3-3.3V8.8a3.3 3.3 0 0 1 3.3-3.3Z" />
+                <path d="m7.4 10.8 1.4 1.5 2.7-3M18 7.4h3M18 11h3M18 14.6h3" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+              </svg>
+            </a>
           </p>
           <div>
             <h3>{copy.flag.otherApps}</h3>

@@ -135,6 +135,7 @@ export type Copy = {
     waypointsAndTimesItems: readonly [string, string, string, string, string];
     madeBy: string;
     otherApps: string;
+    wishlist: string;
     gpxWallpaper: string;
     raceTime: string;
   };
@@ -268,6 +269,7 @@ function makeCopy(language: Language): Copy {
         ],
         madeBy: '作った人：キョウヘイ',
         otherApps: 'その他のアプリ',
+        wishlist: 'Amazonほしい物リスト',
         gpxWallpaper: 'GPX壁紙なんちゃら',
         raceTime: 'レース中に開くなんちゃら',
       },
@@ -399,6 +401,7 @@ function makeCopy(language: Language): Copy {
       ],
       madeBy: 'Made by Kyouhei',
       otherApps: 'Other apps',
+      wishlist: 'Amazon Wishlist',
       gpxWallpaper: 'GPX Wallpaper Whratever',
       raceTime: 'Race-Time Whatever',
     },

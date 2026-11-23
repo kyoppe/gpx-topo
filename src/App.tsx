@@ -293,6 +293,7 @@ export default function App() {
   const mapBufferRef = useRef<MapBuffer | null>(null);
   const mapDragOffsetRef = useRef<[number, number]>([0, 0]);
   const apartRef = useRef(false);
+  const pendingViewModeRef = useRef<ViewMode | null>(null);
   const viewRestoredRef = useRef(false);
   const mapSearchRequestRef = useRef(0);
   const touchedRef = useRef(false);
@@ -391,6 +392,38 @@ export default function App() {
     },
     [apart, gpxProjection, viewMode],
   );
+  const requestViewMode = useCallback(
+    (next: ViewMode) => {
+      const engine = engineRef.current;
+      if (!apart && engine?.isFlat()) {
+        switchViewMode(next);
+        return;
+      }
+      pendingViewModeRef.current = next;
+      addAction('view_mode_switch_deferred', { mode: next });
+      engine?.together();
+    },
+    [apart, switchViewMode],
+  );
+
+  useEffect(() => {
+    if (!pendingViewModeRef.current) return;
+    let frame = 0;
+    const settle = () => {
+      const engine = engineRef.current;
+      if (!engine) return;
+      if (!engine.isFlat()) {
+        frame = requestAnimationFrame(settle);
+        return;
+      }
+      const next = pendingViewModeRef.current;
+      pendingViewModeRef.current = null;
+      if (next) switchViewMode(next);
+    };
+    frame = requestAnimationFrame(settle);
+    return () => cancelAnimationFrame(frame);
+  }, [apart, switchViewMode]);
+
   const drawMapBuffer = useCallback((offset: [number, number]) => {
     const buffer = mapBufferRef.current;
     const flat = flatRef.current;
@@ -1016,9 +1049,33 @@ export default function App() {
     }
     addAction('html_in_canvas_ready');
     engineRef.current = engine;
+    engine.refreshHud();
     return () => {
       engineRef.current = null;
       engine.dispose();
+    };
+  }, [native]);
+
+  useEffect(() => {
+    if (!native) return;
+    let cancelled = false;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    const refreshHud = () => {
+      if (!cancelled) engineRef.current?.refreshHud();
+    };
+    firstFrame = requestAnimationFrame(() => {
+      refreshHud();
+      secondFrame = requestAnimationFrame(refreshHud);
+    });
+    window.addEventListener('load', refreshHud, { once: true });
+    const fontsReady = document.fonts?.ready;
+    if (fontsReady) void fontsReady.then(refreshHud);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+      window.removeEventListener('load', refreshHud);
     };
   }, [native]);
 
@@ -1864,8 +1921,7 @@ export default function App() {
               data-key="mode"
               drawable=""
               aria-label={viewMode === 'gpx' ? copy.ui.mapMode : copy.ui.gpxMode}
-              disabled={apart}
-              onClick={() => switchViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
+              onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
             >
               {viewMode === 'gpx' ? (
                 <svg className="map-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
