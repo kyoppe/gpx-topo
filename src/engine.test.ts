@@ -55,7 +55,7 @@ function setup(width = 100) {
     onFirstPaint: vi.fn(), onApartChange: vi.fn(), onRouteClick: vi.fn(),
     onMapDrag: vi.fn(), onMapPan: vi.fn(),
     onDetail: vi.fn(), onTimeCommit: vi.fn(), onPopClosed: vi.fn(),
-    onFlightChange: vi.fn(), onInfoChange: vi.fn(), onPhotoChange: vi.fn(),
+    onFlightChange: vi.fn(), onMapManeuverChange: vi.fn(), onInfoChange: vi.fn(), onPhotoChange: vi.fn(),
   };
   const engine = createEngine(canvas, page, callbacks);
   engines.push(engine);

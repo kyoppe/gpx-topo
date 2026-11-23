@@ -2,12 +2,23 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 
 import { renderBasemaps, streamNames, streamRelief, type MapStyle } from './basemap';
 import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
-import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
+import {
+  createEngine,
+  FRAME_X,
+  FRAME_Y,
+  type DetailRequest,
+  type Engine,
+  type EngineModel,
+  type FlightPhase,
+  type HudHitArea,
+} from './engine';
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
 import { createCenteredProjection, createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { searchGsiAddress } from './gsiSearch';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { toggleViewMode, type ViewMode } from './mapMode';
+import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
+import { buildMapPermalink, parseMapPermalink, type MapPermalinkPin } from './mapPermalink';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
@@ -111,6 +122,7 @@ type Pop =
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
 
 type LatestMedia = 'photo' | 'video';
+type HintKind = LatestMedia | 'permalink' | 'map-pin';
 
 type MapBuffer = {
   flat: HTMLCanvasElement;
@@ -247,38 +259,47 @@ export default function App() {
     document.documentElement.lang = language;
     document.title = copy.appName;
   }, [copy.appName, language]);
+  const [permalink] = useState(() => parseMapPermalink(window.location.search));
   const [savedView] = useState(() => loadView());
   const [route, setRoute] = useState<GpxRoute | null>(null);
   const [fileName, setFileName] = useState('SFMT2026-110km.gpx');
   // the start set last time carries over; a GPX opened afresh starts now (see onFile)
   const [startTime, setStartTime] = useState(() => loadStart()?.time ?? '06:00');
-  const [date, setDate] = useState(() => loadStart()?.date ?? todayIso());
+  const [date, setDate] = useState(() => permalink?.date ?? (permalink ? todayIso() : loadStart()?.date ?? todayIso()));
+  const [dateExplicit, setDateExplicit] = useState(() => Boolean(permalink?.date));
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
   /** the projection whose whole map has finished drawing */
   const [basemap, setBasemap] = useState<MapProjection | null>(null);
-  const [baseMapStyle, setBaseMapStyle] = useState<MapStyle>(() => savedView?.baseMapStyle ?? 'pale');
-  const [hillshade, setHillshade] = useState(() => savedView?.hillshade ?? true);
-  const [mapSunlight, setMapSunlight] = useState(() => savedView?.mapSunlight ?? true);
+  const [baseMapStyle, setBaseMapStyle] = useState<MapStyle>(() => permalink?.mapStyle ?? savedView?.baseMapStyle ?? 'pale');
+  const [hillshade, setHillshade] = useState(() => permalink?.hillshade ?? savedView?.hillshade ?? true);
+  const [mapSunlight, setMapSunlight] = useState(() => (permalink?.sun === 'off' ? false : permalink?.sun ? true : savedView?.mapSunlight ?? true));
   const [mapSunAuto, setMapSunAuto] = useState(false);
   const [mapSunSpeed, setMapSunSpeed] = useState(1);
   const [mapLoading, setMapLoading] = useState(false);
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => savedView?.viewMode ?? 'gpx');
-  const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => savedView?.mapViewport ?? null);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => (permalink ? 'map' : savedView?.viewMode ?? 'gpx'));
+  const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
+    if (permalink?.center && savedView?.mapViewport) return { ...savedView.mapViewport, ...permalink.center };
+    if (permalink?.center) return null;
+    return savedView?.mapViewport ?? null;
+  });
   const [mapSearch, setMapSearch] = useState('');
   const [mapSearchResults, setMapSearchResults] = useState<SearchLocation[]>([]);
   const [mapSearchLocation, setMapSearchLocation] = useState<SearchLocation | null>(null);
   const [mapSearchBusy, setMapSearchBusy] = useState(false);
   const [mapSearchError, setMapSearchError] = useState<string | null>(null);
+  const [mapPin, setMapPin] = useState<MapPermalinkPin | null>(() => permalink?.pin ?? null);
+  const [mapPinRemoving, setMapPinRemoving] = useState(false);
+  const [mapPinSelecting, setMapPinSelecting] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   /** the photo of the view: its picture, while it is out of the camera key */
   const [shot, setShot] = useState<{ url: string; blob: Blob; aspect: number } | null>(null);
   const [shotOpen, setShotOpen] = useState(false);
   const [latestMedia, setLatestMedia] = useState<LatestMedia | null>(null);
-  const [xHint, setXHint] = useState<{ kind: LatestMedia; seq: number; phase: 'in' | 'out' } | null>(null);
+  const [xHint, setXHint] = useState<{ kind: HintKind; seq: number; phase: 'in' | 'out' } | null>(null);
   const [videoRecording, setVideoRecording] = useState(false);
   const flagRef = useRef<HTMLDivElement>(null);
   const flagTwinRef = useRef<HTMLDivElement>(null);
@@ -290,12 +311,15 @@ export default function App() {
   const [detailWanted, setDetailWanted] = useState<DetailRequest | null>(null);
   const [detailShown, setDetailShown] = useState<DetailRequest | null>(null);
   const [flyoverPhase, setFlyoverPhase] = useState<FlightPhase | null>(null);
+  const [mapManeuverMenuOpen, setMapManeuverMenuOpen] = useState(false);
+  const [mapManeuver, setMapManeuver] = useState<{ kind: MapManeuverKind; phase: MapManeuverPhase } | null>(null);
   const [pop, setPop] = useState<Pop | null>(null);
   const [month, setMonth] = useState(() => date.slice(0, 7));
   const [peek, setPeek] = useState<string | null>(null);
   const popSeq = useRef(0);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const hudHitLayerRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const routeNameRef = useRef<string | null>(null);
@@ -307,6 +331,7 @@ export default function App() {
   const videoFrameRafRef = useRef<number | null>(null);
   const videoCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const videoLastFrameRef = useRef(0);
+  const videoFrameErrorRef = useRef(false);
   const videoStartedAtRef = useRef(0);
   const videoStartedAtDateRef = useRef<Date | null>(null);
   const videoStopReasonRef = useRef<'manual' | 'max_duration'>('manual');
@@ -330,10 +355,64 @@ export default function App() {
   const modeTransitionTimerRef = useRef<number | null>(null);
   const modeTransitionSeqRef = useRef(0);
   const viewRestoredRef = useRef(false);
+  const permalinkApplyingRef = useRef(false);
+  const permalinkAppliedRef = useRef(false);
+  const permalinkDetachedRef = useRef(false);
+  const mapPinPlacedAtRef = useRef<number | null>(null);
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
   const fileRequestRef = useRef(0);
+  const detachPermalink = useCallback(
+    (reason: string) => {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('mode') !== 'map' || permalinkDetachedRef.current || permalinkApplyingRef.current) return;
+      for (const name of [
+        'mode',
+        'lat',
+        'lon',
+        'view',
+        'bearing',
+        'pitch',
+        'zoom',
+        'pan_x',
+        'pan_y',
+        'pan_z',
+        'date',
+        'style',
+        'hillshade',
+        'pin_lat',
+        'pin_lon',
+        'pin_label',
+        'sun',
+        'time',
+      ]) {
+        url.searchParams.delete(name);
+      }
+      window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+      permalinkDetachedRef.current = true;
+      addAction('map_permalink_detached', { reason });
+    },
+    [permalink],
+  );
+  const syncHudHitAreas = useCallback((areas: HudHitArea[]) => {
+    const layer = hudHitLayerRef.current;
+    if (!layer) return;
+    const byKey = new Map<string, HudHitArea>();
+    for (const area of areas) byKey.set(area.key, area);
+    layer.querySelectorAll<HTMLElement>('[data-hud-hit]').forEach((button) => {
+      const area = byKey.get(button.dataset.hudHit ?? '');
+      if (!area || button.hidden) {
+        button.style.display = 'none';
+        return;
+      }
+      button.style.display = 'block';
+      button.style.left = `${area.x}px`;
+      button.style.top = `${area.y}px`;
+      button.style.width = `${Math.max(1, area.width)}px`;
+      button.style.height = `${Math.max(1, area.height)}px`;
+    });
+  }, []);
   const statsCacheRef = useRef<{ points: GpxRoute['points']; stats: ReturnType<typeof calculateStats> } | null>(null);
   routeNameRef.current = route?.name ?? null;
   apartRef.current = apart;
@@ -417,6 +496,7 @@ export default function App() {
   const switchViewMode = useCallback(
     (next: ViewMode) => {
       if (apart || modeTransition || next === viewMode || !engineRef.current?.isFlat()) return;
+      detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
       if (target === 'map') {
@@ -443,7 +523,7 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, gpxProjection, modeTransition, viewMode],
+    [apart, detachPermalink, gpxProjection, modeTransition, viewMode],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
@@ -513,6 +593,7 @@ export default function App() {
     const [offsetX, offsetY] = mapDragOffsetRef.current;
     const current = mapProjectionRef.current;
     if (!current || (offsetX === 0 && offsetY === 0)) return;
+    detachPermalink('map_pan');
     addAction('map_pan_completed', {
       distance_px: Math.round(Math.hypot(offsetX, offsetY)),
       delta_x_px: Math.round(offsetX),
@@ -530,10 +611,11 @@ export default function App() {
       const center = projection.inverse(projection.width / 2 - offsetX, projection.height / 2 - offsetY);
       return { ...viewportState, ...center };
     });
-  }, []);
+  }, [detachPermalink]);
   const centerMap = useCallback(
     (center: Coordinates, source: string, location?: SearchLocation) => {
       if (apartRef.current) return;
+      detachPermalink('map_center');
       setMapViewport((viewportState) => ({
         lat: center.lat,
         lon: center.lon,
@@ -544,7 +626,7 @@ export default function App() {
       setMapSearchError(null);
       addAction('map_search_selected', { source });
     },
-    [gpxProjection],
+    [detachPermalink, gpxProjection],
   );
   const searchMap = useCallback(
     async (event?: FormEvent) => {
@@ -793,19 +875,23 @@ export default function App() {
 
   useEffect(() => {
     if (viewRestoredRef.current) return;
-    if (savedView?.viewMode === 'map' && !mapViewport) {
+    if (viewMode === 'map' && !mapViewport) {
       if (!gpxProjection) return;
-      setMapViewport({ lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
+      setMapViewport({
+        lat: permalink?.center?.lat ?? gpxProjection.centerLat,
+        lon: permalink?.center?.lon ?? gpxProjection.centerLon,
+        scale: permalink?.center ? gpxProjection.scale : savedView?.mapViewport?.scale ?? gpxProjection.scale,
+      });
       return;
     }
     viewRestoredRef.current = true;
     addAction('view_state_restored', {
       restored: !!savedView,
-      mode: savedView?.viewMode ?? 'gpx',
-      map_viewport: !!savedView?.mapViewport,
+      mode: viewMode,
+      map_viewport: !!mapViewport,
       map_style: savedView?.baseMapStyle ?? 'pale',
     });
-  }, [gpxProjection, mapViewport, savedView]);
+  }, [gpxProjection, mapViewport, permalink, savedView, viewMode]);
 
   useEffect(() => {
     if (!viewRestoredRef.current) return;
@@ -1139,7 +1225,11 @@ export default function App() {
     try {
       engine = createEngine(canvas, page, {
         onFirstPaint: () => addAction('html_in_canvas_painted', htmlInCanvasContext),
-        onApartChange: setApart,
+        onApartChange: (next) => {
+          if (!permalinkApplyingRef.current) detachPermalink(next ? 'raise' : 'lay_flat');
+          setApart(next);
+        },
+        onViewInteraction: detachPermalink,
         onMapDrag: panMapPreview,
         onMapPan: panMap,
         onRouteClick: (km) => routeClickRef.current(km),
@@ -1147,6 +1237,38 @@ export default function App() {
         onFlightChange: (phase) => {
           addAction('flyover_state_changed', { phase: phase ?? 'idle' });
           setFlyoverPhase(phase);
+        },
+        onMapManeuverChange: (state) => {
+          setMapManeuver(state);
+          if (state) setMapManeuverMenuOpen(false);
+          addAction('map_maneuver_state_changed', {
+            kind: state?.kind ?? 'none',
+            phase: state?.phase ?? 'idle',
+          });
+        },
+        onMapPinSelectionChange: setMapPinSelecting,
+        onMapPinSelected: (x, y) => {
+          const projection = mapProjectionRef.current;
+          if (!projection) return;
+          const center = projection.inverse(x, y);
+          detachPermalink('map_pin');
+          setMapPinRemoving(false);
+          const falls = engineRef.current?.startMapPinDrop() ?? false;
+          mapPinPlacedAtRef.current = performance.now();
+          setMapPin((current) => ({ lat: center.lat, lon: center.lon, label: current?.label ?? '' }));
+          // in 3D the hint waits for the landing; flat, the pin is there at once
+          if (!falls) showXHint('map-pin');
+          addAction('map_pin_placed', { lat: center.lat, lon: center.lon });
+        },
+        onMapPinLanded: () => {
+          const placedAt = mapPinPlacedAtRef.current;
+          mapPinPlacedAtRef.current = null;
+          addAction('map_pin_landed', { duration_ms: placedAt === null ? undefined : Math.round(performance.now() - placedAt) });
+          showXHint('map-pin');
+        },
+        onMapPinRemoved: () => {
+          setMapPinRemoving(false);
+          setMapPin(null);
         },
         onInfoChange: (open) => {
           addAction('info_flag_toggled', { open });
@@ -1167,6 +1289,7 @@ export default function App() {
         onXHintExit: (seq) => {
           setXHint((current) => (current && String(current.seq) === seq ? null : current));
         },
+        onHudHitAreas: syncHudHitAreas,
         onTimeCommit: (target, minutes) => {
           addAction('elapsed_time_committed', { target, minutes });
           if (target === 'start') setStartTime(clockInput(minutes));
@@ -1186,7 +1309,21 @@ export default function App() {
       engineRef.current = null;
       engine.dispose();
     };
-  }, [native]);
+  }, [detachPermalink, native]);
+
+  useEffect(() => {
+    if (!mapPinSelecting) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      engineRef.current?.cancelMapPinPlacement();
+      setMapPinSelecting(false);
+      addAction('map_pin_placement_cancelled', { source: 'escape' });
+    };
+    window.addEventListener('keydown', onEscape, true);
+    return () => window.removeEventListener('keydown', onEscape, true);
+  }, [mapPinSelecting]);
 
   useEffect(() => {
     if (!native) return;
@@ -1229,7 +1366,7 @@ export default function App() {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ['aria-hidden', 'class', 'data-piece', 'data-x', 'data-y', 'data-w', 'data-h', 'data-density', 'data-x-hint-phase', 'style'],
+      attributeFilter: ['aria-hidden', 'class', 'data-piece', 'data-key', 'data-latched', 'data-x', 'data-y', 'data-w', 'data-h', 'data-density', 'data-x-hint-phase', 'style'],
     });
     return () => observer.disconnect();
   }, [native]);
@@ -1239,7 +1376,12 @@ export default function App() {
   }, [flyoverPhase]);
 
   useEffect(() => {
+    engineRef.current?.refreshHud();
+  }, [mapManeuver, mapManeuverMenuOpen, mapPin, mapPinSelecting]);
+
+  useEffect(() => {
     if (viewMode === 'map') setPlacing(false);
+    if (viewMode !== 'map' || !apart) setMapManeuverMenuOpen(false);
     engineRef.current?.refreshHud();
   }, [apart, viewMode]);
 
@@ -1253,6 +1395,7 @@ export default function App() {
       route: gpx ? track.map((p) => ({ x: p.x, y: p.y, km: progress.km[p.index] })) : [],
       ways: gpx ? ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })) : [],
       marks: gpx && showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
+      mapPin: viewMode === 'map' && mapProjection && mapPin ? mapProjection.project(mapPin) : null,
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
@@ -1262,11 +1405,47 @@ export default function App() {
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [baseMapStyle, date, high, layout, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [baseMapStyle, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
   }, [model]);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!permalink || permalinkAppliedRef.current || !engine || !model || viewMode !== 'map') return;
+    permalinkApplyingRef.current = true;
+    try {
+      engine.setViewState({
+        raised: permalink.view === '3d',
+        bearing: permalink.bearing ?? undefined,
+        pitch: permalink.pitch ?? undefined,
+        zoom: permalink.zoom ?? undefined,
+        pan: permalink.pan ?? undefined,
+      });
+      if (permalink.sun === 'auto' && permalink.view === '3d') {
+        const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+        if (sun) {
+          const start = daylight?.rise == null ? 0 : Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET);
+          autoSunDispatchRef.current = true;
+          sun.value = String(start);
+          sun.dispatchEvent(new Event('input', { bubbles: true }));
+          autoSunDispatchRef.current = false;
+        }
+        setMapSunAuto(true);
+      }
+    } finally {
+      permalinkApplyingRef.current = false;
+    }
+    permalinkAppliedRef.current = true;
+    addAction('map_permalink_applied', {
+      parameters: permalink.usedParameters,
+      ignored_parameters: permalink.ignoredParameters,
+      view: permalink.view,
+      date_source: permalink.date ? 'query' : 'today',
+      sun: permalink.sun ?? 'default',
+    });
+  }, [daylight, model, permalink, viewMode]);
 
   useEffect(() => {
     engineRef.current?.setPlacing(placing);
@@ -1453,6 +1632,7 @@ export default function App() {
       // a new GPX starts now, and is what opens next time; the start then stays as it is set for it
       const now = startNow();
       setDate(now.date);
+      setDateExplicit(false);
       setMonth(now.date.slice(0, 7));
       setStartTime(now.time);
       planReadyRef.current = true;
@@ -1476,7 +1656,8 @@ export default function App() {
     }
   };
 
-  const showXHint = (kind: LatestMedia) => {
+  const showXHint = (kind: HintKind) => {
+    addAction('x_hint_shown', { kind });
     const seq = ++xHintSeqRef.current;
     setXHint({ kind, seq, phase: 'in' });
     if (xHintTimerRef.current !== null) window.clearTimeout(xHintTimerRef.current);
@@ -1560,6 +1741,7 @@ export default function App() {
       return;
     }
     if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0] as (MediaStreamTrack & { requestFrame?: () => void }) | undefined;
     videoStreamRef.current = stream;
     videoRecorderRef.current = recorder;
     videoCanvasRef.current = recordingCanvas;
@@ -1611,6 +1793,7 @@ export default function App() {
     try {
       recorder.start(1000);
       videoRecordingRef.current = true;
+      videoFrameErrorRef.current = false;
       setVideoRecording(true);
       addAction('video_recording_started', {
         route_name: routeNameRef.current || 'gpx-topo',
@@ -1624,7 +1807,15 @@ export default function App() {
       const captureNextFrame = (now: number) => {
         if (!videoRecordingRef.current || videoCanvasRef.current !== recordingCanvas) return;
         if (now - videoLastFrameRef.current >= 1000 / VIDEO_RECORDING_FRAME_RATE) {
-          engineRef.current?.captureFrame(recordingCanvas);
+          try {
+            engineRef.current?.captureFrame(recordingCanvas);
+            videoTrack?.requestFrame?.();
+          } catch (error) {
+            if (!videoFrameErrorRef.current) {
+              videoFrameErrorRef.current = true;
+              reportWarning('video_frame_capture', error);
+            }
+          }
           videoLastFrameRef.current = now;
         }
         videoFrameRafRef.current = requestAnimationFrame(captureNextFrame);
@@ -1689,12 +1880,20 @@ export default function App() {
 
   if (!native) return <Fallback copy={copy} />;
 
-  const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, 630));
+  const permalinkSun =
+    permalink?.sun === 'time'
+      ? permalink.timeMinutes
+      : permalink?.sun === 'auto' && daylight?.rise != null
+        ? Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET)
+        : null;
+  const initialSun = Math.max(sunRange.min, Math.min(sunRange.max, permalinkSun ?? 630));
   const flyoverPlaying =
     flyoverPhase === 'intro' || flyoverPhase === 'run' || flyoverPhase === 'outro' || flyoverPhase === 'paused';
   const flyoverRunning = flyoverPhase === 'intro' || flyoverPhase === 'run' || flyoverPhase === 'outro';
   const flyoverPaused = flyoverPhase === 'paused';
   const flyoverReturning = flyoverPhase === 'return';
+  const mapManeuverActive = mapManeuver !== null;
+  const mapManeuverAvailable = viewMode === 'map' && apart && mapReady && !!terrain;
   const photoRouteOverlay = (baseMapStyle === 'photo' || baseMapStyle === 'photoNames') && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
   const mapStyleLabel =
@@ -1705,18 +1904,65 @@ export default function App() {
         : baseMapStyle === 'photo'
           ? copy.ui.aerial
           : copy.ui.photoNames;
+  const startMapManeuver = (kind: MapManeuverKind) => {
+    if (!mapManeuverAvailable || mapManeuverActive) return;
+    addAction('map_maneuver_requested', { kind });
+    engineRef.current?.startMapManeuver(kind);
+  };
+  const cancelMapManeuver = () => {
+    if (!mapManeuverActive) return;
+    addAction('map_maneuver_cancelled', { kind: mapManeuver.kind });
+    engineRef.current?.cancelMapManeuver();
+  };
   const selectMapStyle = (style: MapStyle) => {
+    detachPermalink('map_style');
     addAction('map_style_changed', { style });
     setBaseMapStyle(style);
     setMapSwitchOpen(false);
   };
+  const clearMapPin = () => {
+    if (!mapPin || mapPinRemoving) return;
+    detachPermalink('map_pin_clear');
+    const engine = engineRef.current;
+    if (engine && !engine.isFlat()) {
+      setMapPinRemoving(true);
+      engine.startMapPinRemoval();
+    } else {
+      setMapPin(null);
+    }
+    addAction('map_pin_cleared');
+  };
+  const toggleMapPin = () => {
+    if (viewMode !== 'map' || !mapReady) return;
+    if (mapPinSelecting) {
+      engineRef.current?.cancelMapPinPlacement();
+      addAction('map_pin_placement_cancelled');
+      return;
+    }
+    if (mapPin || mapPinRemoving) {
+      clearMapPin();
+      return;
+    }
+    detachPermalink('map_pin_place');
+    addAction('map_pin_placement_started');
+    engineRef.current?.startMapPinPlacement();
+  };
+  const commitMapPinLabel = (label: string) => {
+    const normalized = label.replace(/\r\n/g, '\n').split('\n').slice(0, 2).join('\n').slice(0, 40);
+    if (!mapPin || mapPin.label === normalized) return;
+    detachPermalink('map_pin_label');
+    setMapPin((current) => (current ? { ...current, label: normalized } : current));
+    addAction('map_pin_label_changed', { has_label: Boolean(normalized.trim()) });
+  };
   const toggleHillshade = () => {
+    detachPermalink('hillshade');
     const next = !hillshade;
     addAction('map_hillshade_changed', { enabled: next });
     setHillshade(next);
     setMapSwitchOpen(false);
   };
   const toggleMapSunlight = () => {
+    detachPermalink('sunlight');
     const next = !mapSunlight;
     addAction('map_sunlight_changed', { enabled: next });
     setMapSunlight(next);
@@ -1724,6 +1970,7 @@ export default function App() {
   };
   const toggleMapSunAuto = () => {
     if (!apart || !mapSunlight) return;
+    detachPermalink('sun_auto');
     const next = !mapSunAuto;
     if (next) {
       const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
@@ -1744,12 +1991,64 @@ export default function App() {
   };
   const selectMapSunSpeed = (speed: number) => {
     if (speed < 0 || speed >= MAP_SUN_SPEEDS.length) return;
+    detachPermalink('sun_auto_speed');
     setMapSunSpeed(speed);
     addAction('map_sun_auto_speed_changed', { speed });
   };
+  const copyMapPermalink = async () => {
+    const center = mapProjection
+      ? { lat: mapProjection.centerLat, lon: mapProjection.centerLon }
+      : mapViewport
+        ? { lat: mapViewport.lat, lon: mapViewport.lon }
+        : null;
+    const engine = engineRef.current;
+    if (viewMode !== 'map' || !center || !engine) return;
+    const view = engine.getViewState();
+    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    const timeMinutes = Number(sun?.value);
+    const url = buildMapPermalink(
+      {
+        center,
+        view: view.raised ? '3d' : 'flat',
+        bearing: view.bearing,
+        pitch: view.pitch,
+        zoom: view.zoom,
+        pan: view.pan,
+        date: dateExplicit ? date : null,
+        mapStyle: baseMapStyle,
+        hillshade,
+        pin: mapPin,
+        sunlight: mapSunlight,
+        sunAuto: mapSunAuto,
+        timeMinutes: Number.isFinite(timeMinutes) ? timeMinutes : 630,
+      },
+      window.location.href,
+    );
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);
+      else {
+        const input = document.createElement('textarea');
+        input.value = url;
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.append(input);
+        input.select();
+        if (!document.execCommand('copy')) throw new Error('Clipboard copy failed.');
+        input.remove();
+      }
+      addAction('map_permalink_copied', { view: view.raised ? '3d' : 'flat', sunlight: mapSunlight, sun_auto: mapSunAuto });
+      showXHint('permalink');
+    } catch (error) {
+      reportWarning('copy_map_permalink', error);
+      setToast(copy.toast.permalinkCopyFailed);
+    }
+  };
 
   return (
-    <main lang={language} className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}`}>
+    <main
+      lang={language}
+      className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}`}
+    >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <div className="stage">
           <div ref={pageRef} className="page" style={{ width: layout.pageWidth, height: layout.pageHeight }}>
@@ -1853,6 +2152,30 @@ export default function App() {
                   </>
                 )}
               </div>
+              {viewMode === 'map' && mapPin && (
+                <div className={`pin map-pin${mapPin.label.trim() ? ' map-pin-labeled' : ''}`} data-piece="pin" data-map-pin="" drawable="">
+                  <span className="pin-label">
+                    <b className="map-pin-marker" aria-hidden="true">●</b>
+                    <textarea
+                      className="map-pin-input"
+                      defaultValue={mapPin.label}
+                      maxLength={40}
+                      rows={1}
+                      aria-label={copy.ui.mapPinNameAria}
+                      onInput={() => engineRef.current?.refreshHud()}
+                      onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                        // Enter finishes the name (the blur commits it); Shift+Enter breaks the line, once at most
+                        if (!event.shiftKey || event.currentTarget.value.includes('\n')) {
+                          event.preventDefault();
+                          if (!event.shiftKey) event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </span>
+                </div>
+              )}
               {viewMode === 'gpx' && ways.map((way, index) => (
                 <button
                   key={way.id}
@@ -2030,7 +2353,10 @@ export default function App() {
                     aria-label={copy.ui.time}
                     disabled={viewMode === 'map' && !mapSunlight}
                     onInput={() => {
-                      if (!autoSunDispatchRef.current && mapSunAuto) setMapSunAuto(false);
+                      if (!autoSunDispatchRef.current) {
+                        detachPermalink('time');
+                        if (mapSunAuto) setMapSunAuto(false);
+                      }
                     }}
                     style={{ ['--track' as string]: sunTrack }}
                   />
@@ -2230,7 +2556,9 @@ export default function App() {
                           aria-label={copy.dateLabel(c.iso)}
                           onPointerEnter={() => peekDate(c.iso)}
                           onClick={() => {
+                            detachPermalink('date');
                             addAction('date_changed', { date: c.iso });
+                            setDateExplicit(true);
                             setDate(c.iso);
                             setMonth(c.iso.slice(0, 7));
                             engineRef.current?.closePop();
@@ -2311,6 +2639,48 @@ export default function App() {
                 )}
               </div>
             )}
+            {mapManeuverAvailable && mapManeuverMenuOpen && !mapManeuverActive && (
+              <div className="maneuver-menu-layer" data-hud="">
+                <div
+                  className="maneuver-menu"
+                  data-piece="maneuver"
+                  drawable=""
+                  role="dialog"
+                  aria-label={copy.ui.mapManeuverMenu}
+                >
+                  <strong>{copy.ui.mapManeuverMenu}</strong>
+                  <button type="button" data-hud-hit="maneuver:dronie" onClick={() => startMapManeuver('dronie')}>
+                    {copy.ui.dronie}
+                  </button>
+                  <button type="button" data-hud-hit="maneuver:circle" onClick={() => startMapManeuver('circle')}>
+                    {copy.ui.circle}
+                  </button>
+                  <button type="button" data-hud-hit="maneuver:rocket" onClick={() => startMapManeuver('rocket')}>
+                    {copy.ui.rocket}
+                  </button>
+                  <button type="button" data-hud-hit="maneuver:helix" onClick={() => startMapManeuver('helix')}>
+                    {copy.ui.helix}
+                  </button>
+                  <button type="button" data-hud-hit="maneuver:boomerang" onClick={() => startMapManeuver('boomerang')}>
+                    {copy.ui.boomerang}
+                  </button>
+                  <button type="button" data-hud-hit="maneuver:asteroid" onClick={() => startMapManeuver('asteroid')}>
+                    {copy.ui.asteroid}
+                  </button>
+                  <button type="button" data-hud-hit="maneuver:dollyZoom" onClick={() => startMapManeuver('dollyZoom')}>
+                    {copy.ui.dollyZoom}
+                  </button>
+                  <button
+                    type="button"
+                    className="maneuver-menu-close"
+                    data-hud-hit="maneuver:close"
+                    onClick={() => setMapManeuverMenuOpen(false)}
+                  >
+                    {copy.ui.close}
+                  </button>
+                </div>
+              </div>
+            )}
             {/* the photo of the view, as a print the engine floats over the map, front and back; its buttons stay real buttons */}
             <div
               className="photo"
@@ -2374,7 +2744,13 @@ export default function App() {
               >
                 <div className="card" data-piece="card" drawable="" />
                 <div className="x-hint-content" data-piece="content" drawable="" role="status">
-                  {xHint.kind === 'photo' ? copy.ui.xHintPhoto : copy.ui.xHintVideo}
+                  {xHint.kind === 'photo'
+                    ? copy.ui.xHintPhoto
+                    : xHint.kind === 'video'
+                      ? copy.ui.xHintVideo
+                      : xHint.kind === 'map-pin'
+                        ? copy.ui.xHintMapPin
+                        : copy.toast.permalinkCopied}
                 </div>
               </section>
             )}
@@ -2384,6 +2760,12 @@ export default function App() {
           <nav className="hud" data-hud="" aria-label={copy.ui.controls}>
             <div className="bar" data-piece="bar" drawable="">
               <span className="well" data-well="mode" />
+              {viewMode === 'map' && (
+                <>
+                  <span className="well" data-well="pin" />
+                  <span className="well" data-well="permalink" />
+                </>
+              )}
               {viewMode === 'gpx' && (
                 <>
                   <span className="well" data-well="open" />
@@ -2395,6 +2777,8 @@ export default function App() {
               {flyoverPlaying && (
                 <span className="well" data-well="stop" data-appear="" />
               )}
+              {mapManeuverAvailable && !mapManeuverActive && <span className="well" data-well="maneuver" />}
+              {mapManeuverActive && <span className="well" data-well="map-cancel" data-appear="" />}
               <span className="well" data-well="camera" />
               <span className="well" data-well="video" />
               {latestMedia && <span className="well" data-well="x" data-appear="" />}
@@ -2425,6 +2809,39 @@ export default function App() {
                 copy.ui.gpxMode
               )}
             </button>
+            {viewMode === 'map' && (
+              <button
+                type="button"
+                className="key key-pin"
+                data-piece="key"
+                data-key="pin"
+                data-latched={mapPinSelecting || mapPin ? '' : undefined}
+                drawable=""
+                disabled={!mapReady}
+                aria-label={mapPinSelecting ? copy.ui.mapPinCancel : copy.ui.mapPin}
+                onClick={toggleMapPin}
+              >
+                <svg className="pin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M12 21s7-6.2 7-12A7 7 0 0 0 5 9c0 5.8 7 12 7 12Z" />
+                  <circle cx="12" cy="9" r="2.4" />
+                </svg>
+              </button>
+            )}
+            {viewMode === 'map' && (
+              <button
+                type="button"
+                className="key key-permalink"
+                data-piece="key"
+                data-key="permalink"
+                drawable=""
+                aria-label={copy.ui.copyPermalink}
+                onClick={() => void copyMapPermalink()}
+              >
+                <svg className="permalink-icon" viewBox="34 39 96 96" aria-hidden="true" focusable="false">
+                  <image href="/permalink-icons.png" width="289" height="161" />
+                </svg>
+              </button>
+            )}
             {viewMode === 'gpx' && (
               <>
             <button
@@ -2457,6 +2874,35 @@ export default function App() {
             </button>
               </>
             )}
+            {mapManeuverAvailable && !mapManeuverActive && (
+              <button
+                type="button"
+                className="key key-maneuver"
+                data-piece="key"
+                data-key="maneuver"
+                drawable=""
+                aria-label={copy.ui.mapManeuver}
+                aria-expanded={mapManeuverMenuOpen}
+                disabled={!mapReady || !terrain}
+                onClick={() => setMapManeuverMenuOpen((open) => !open)}
+              >
+                ✦
+              </button>
+            )}
+            {mapManeuverActive && (
+              <button
+                type="button"
+                className="key key-maneuver-cancel"
+                data-piece="key"
+                data-key="map-cancel"
+                data-appear=""
+                drawable=""
+                aria-label={copy.ui.cancelManeuver}
+                onClick={cancelMapManeuver}
+              >
+                ×
+              </button>
+            )}
             <button
               type="button"
               className="key key-flip"
@@ -2466,6 +2912,7 @@ export default function App() {
               drawable=""
               tabIndex={apart ? -1 : 0}
               onClick={() => {
+                detachPermalink('raise');
                 addAction('view_mode_toggled', { target: 'raised' });
                 engineRef.current?.toggle();
               }}
@@ -2481,6 +2928,7 @@ export default function App() {
               drawable=""
               tabIndex={apart ? 0 : -1}
               onClick={() => {
+                detachPermalink('lay_flat');
                 addAction('view_mode_toggled', { target: 'flat' });
                 engineRef.current?.toggle();
               }}
@@ -2574,6 +3022,107 @@ export default function App() {
         </div>
       </canvas>
 
+      <div ref={hudHitLayerRef} className="hud-hit-layer" aria-hidden="true">
+        {!mapManeuverActive && (
+          <>
+            <button
+              type="button"
+              data-hud-hit="mode"
+              tabIndex={-1}
+              disabled={modeTransition !== null}
+              onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
+            />
+            {viewMode === 'map' && (
+              <button type="button" data-hud-hit="pin" tabIndex={-1} disabled={!mapReady} onClick={toggleMapPin} />
+            )}
+            {viewMode === 'map' && (
+              <button type="button" data-hud-hit="permalink" tabIndex={-1} onClick={() => void copyMapPermalink()} />
+            )}
+            {viewMode === 'gpx' && (
+              <>
+                <button
+                  type="button"
+                  data-hud-hit="open"
+                  tabIndex={-1}
+                  onClick={() => {
+                    addAction('gpx_file_picker_opened');
+                    fileRef.current?.click();
+                  }}
+                />
+                <button
+                  type="button"
+                  data-hud-hit="place"
+                  tabIndex={-1}
+                  onClick={() => {
+                    addAction('waypoint_placement_toggled', { enabled: !placing });
+                    setPlacing((on) => !on);
+                  }}
+                />
+                <button
+                  type="button"
+                  data-hud-hit="fly"
+                  tabIndex={-1}
+                  disabled={flyoverReturning}
+                  onClick={() => {
+                    addAction('flyover_control', { action: flyoverPlaying ? (flyoverPaused ? 'resume' : 'pause') : 'play' });
+                    if (flyoverPlaying) engineRef.current?.toggleFlyoverPause();
+                    else engineRef.current?.flyover();
+                  }}
+                />
+                {flyoverPlaying && (
+                  <button
+                    type="button"
+                    data-hud-hit="stop"
+                    tabIndex={-1}
+                    onClick={() => {
+                      addAction('flyover_control', { action: 'stop' });
+                      engineRef.current?.flyover();
+                    }}
+                  />
+                )}
+              </>
+            )}
+            {mapManeuverAvailable && (
+              <button
+                type="button"
+                data-hud-hit="maneuver"
+                tabIndex={-1}
+                onClick={() => setMapManeuverMenuOpen((open) => !open)}
+              />
+            )}
+            <button
+              type="button"
+              data-hud-hit="flip"
+              tabIndex={-1}
+              onClick={() => {
+                addAction('view_mode_toggled', { target: apart ? 'flat' : 'raised' });
+                engineRef.current?.toggle();
+              }}
+            />
+            <button type="button" data-hud-hit="camera" tabIndex={-1} onClick={() => void exportPng()} />
+            <button type="button" data-hud-hit="video" tabIndex={-1} onClick={() => void startVideoRecording()} />
+            {latestMedia && (
+              <button type="button" data-hud-hit="x" tabIndex={-1} onClick={postLatestMedia} />
+            )}
+            {mapManeuverMenuOpen && (
+              <>
+                <button type="button" data-hud-hit="maneuver:dronie" tabIndex={-1} onClick={() => startMapManeuver('dronie')} />
+                <button type="button" data-hud-hit="maneuver:circle" tabIndex={-1} onClick={() => startMapManeuver('circle')} />
+                <button type="button" data-hud-hit="maneuver:rocket" tabIndex={-1} onClick={() => startMapManeuver('rocket')} />
+                <button type="button" data-hud-hit="maneuver:helix" tabIndex={-1} onClick={() => startMapManeuver('helix')} />
+                <button type="button" data-hud-hit="maneuver:boomerang" tabIndex={-1} onClick={() => startMapManeuver('boomerang')} />
+                <button type="button" data-hud-hit="maneuver:asteroid" tabIndex={-1} onClick={() => startMapManeuver('asteroid')} />
+                <button type="button" data-hud-hit="maneuver:dollyZoom" tabIndex={-1} onClick={() => startMapManeuver('dollyZoom')} />
+                <button type="button" data-hud-hit="maneuver:close" tabIndex={-1} onClick={() => setMapManeuverMenuOpen(false)} />
+              </>
+            )}
+          </>
+        )}
+        {mapManeuverActive && (
+          <button type="button" data-hud-hit="map-cancel" tabIndex={-1} onClick={cancelMapManeuver} />
+        )}
+      </div>
+
       <div ref={flagTwinRef} className="flag flag-twin" aria-hidden="true">
         <FlagContent brushes={[]} copy={copy} twin />
       </div>
@@ -2583,7 +3132,7 @@ export default function App() {
         aria-label={copy.ui.helpLinks}
         title={copy.ui.helpLinks}
         aria-pressed={infoOpen}
-        disabled={flyoverPlaying || flyoverReturning}
+        disabled={flyoverPlaying || flyoverReturning || mapManeuverActive}
         onClick={() => engineRef.current?.toggleInfo()}
       >
         i
