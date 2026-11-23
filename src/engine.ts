@@ -1701,8 +1701,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   // element px -> canvas CSS px, as a DOMMatrix, from the same camera the picture uses
-  let GEOMETRY = false;
-  let probed = false;
+  // Decided once, up front: a frame drawn before a first-paint probe would already have moved the pieces by CSS
+  // transform, and a probe read straight after a geometry change gets Chrome's old hit-test answer.
+  const GEOMETRY = typeof canvas.updateElementGeometry === 'function';
   let geoN = 0;
   function place(p: Piece) {
     const cols = [mul([p.ex[0], p.ex[1], p.ex[2], 0]), mul([p.ey[0], p.ey[1], p.ey[2], 0]), null, mul([p.O[0], p.O[1], p.O[2], 1])];
@@ -1729,25 +1730,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (p.css !== s) {
       p.css = s;
       p.el.style.transform = s;
-    }
-  }
-  // Does updateElementGeometry() really move an element here? Try it once and look.
-  function probeGeometry() {
-    probed = true;
-    if (typeof canvas.updateElementGeometry !== 'function' || !sheet) return;
-    const el = sheet.el;
-    try {
-      canvas.updateElementGeometry(el, { canvasTransform: new DOMMatrix([0.01, 0, 0, 0.01, 4, 4]) });
-      const c = canvas.getBoundingClientRect();
-      const inside = (x: number, y: number) => {
-        const h = document.elementFromPoint(c.left + x, c.top + y);
-        return !!h && el.contains(h);
-      };
-      GEOMETRY = inside(6, 6) && !inside(Math.min(300, vw / 2), Math.min(300, vh / 2));
-      if (!GEOMETRY) for (const p of pieces) canvas.updateElementGeometry(p.el, { canvasTransform: new DOMMatrix() });
-    } catch {
-      GEOMETRY = false;
-      probed = false;
     }
   }
 
@@ -3091,7 +3073,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     }
     if (!measured) return;
-    if (!probed) probeGeometry();
     let missing = false;
     for (const p of pieces) {
       if (!p.stale || !p.w) continue;
@@ -3629,7 +3610,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     },
     mode: () => ({
       geometry: GEOMETRY,
-      probed,
       pieces: pieces.length,
       frames,
       uploads,
