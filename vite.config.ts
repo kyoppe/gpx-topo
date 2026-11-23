@@ -62,11 +62,6 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api/gsi': {
-        target: 'https://cyberjapandata.gsi.go.jp',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/gsi/, '/xyz'),
-      },
       '/api/search': {
         target: 'https://msearch.gsi.go.jp',
         changeOrigin: true,
