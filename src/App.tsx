@@ -1239,6 +1239,9 @@ export default function App() {
         onFrameRateChange: ({ fps, frameMs, reason }) => addAction('render_fps_changed', { mode: 'motion', fps, frame_ms: frameMs, reason }),
         onMapDrag: panMapPreview,
         onMapPan: panMap,
+        onCameraRotate: (change) => addAction('camera_rotate_completed', change),
+        onCameraPan: (change) => addAction('camera_pan_completed', change),
+        onCameraZoom: (change) => addAction('camera_zoom_completed', change),
         onRouteClick: (km) => routeClickRef.current(km),
         onDetail: setDetailWanted,
         onFlightChange: (phase) => {

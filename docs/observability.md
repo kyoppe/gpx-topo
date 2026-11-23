@@ -92,6 +92,9 @@ attributes:
 - `html_in_canvas_painted` once per engine, after a `paint` event produces its
   first successful element texture upload (`texElementSubImage2D`)
 - `view_mode_toggled`
+- `map_pan_completed` for the existing flat 2D map drag
+- `camera_rotate_completed`, `camera_pan_completed`, and `camera_zoom_completed`
+  for completed 3D camera gestures (details below)
 - `map_style_changed`
 - `flyover_control` and `flyover_state_changed`
 - `waypoint_add_requested`, `waypoint_add_rejected`, `waypoint_edit`,
@@ -132,6 +135,69 @@ generic click that automatic interaction tracking already captures.
 
 `waypoint_edit` is emitted once when a name edit is committed (on blur or
 Enter). `waypoint_move` records the clamped waypoint distance after the move.
+
+### 3D camera activity
+
+Camera actions use the same `addAction` wrapper as `map_pan_completed`.
+Each rotate/tilt or pan drag emits once on pointer release, and only if it
+changed the camera target. Cancelled drags, lost pointer capture, clicks,
+hover, and engine disposal do not emit completion actions. A drag that raises
+the flat GPX view and turns it counts as rotation. The existing 2D
+`map_pan_completed` action and its screen-pixel attributes are unchanged.
+If a release event is missed, the next press from the same pointer discards
+the unfinished camera gesture and starts a fresh interaction; the abandoned
+gesture emits no action and contributes no movement or duration to the new one.
+
+Zoom wheel events are grouped until a 200 ms pause, matching the engine's
+existing wheel gesture boundary. Browser/trackpad pinch events use the same
+wheel handler with `ctrlKey`, recorded as `input: "pinch"`; ordinary wheel
+events use `input: "wheel"`. A change of input starts a separate action.
+Events at a zoom limit extend an active gesture, but gestures with no zoom
+change do not emit. Wheel gestures that only raise or lower the model do not
+count as zoom. Pickers and scrollable controls are excluded. This instruments
+the existing input paths; it does not add new touch gesture controls.
+
+Every camera action includes `duration_ms`. Drag duration runs from pointer
+press to release. Zoom duration runs from its first zoom-changing wheel event
+to its last wheel event, excluding the final 200 ms pause; a single-event zoom
+therefore has duration zero. Pending zoom actions are discarded on engine
+disposal. Measurements follow changes to the camera target after limits are
+applied, without including subsequent animation. Flyovers, resets, waypoint
+focus, automatic zoom-to-pointer translation, and zoom-driven tilt do not
+generate additional camera actions.
+
+| Action | Signed net changes | Cumulative activity to SUM |
+| --- | --- | --- |
+| `camera_rotate_completed` | `delta_heading_deg`, `delta_pitch_deg` | `total_heading_deg`, `total_pitch_deg`: sums of absolute angular steps, in degrees |
+| `camera_pan_completed` | `delta_x_px`, `delta_y_px`, `delta_z_px` | `distance_px`: sum of translation step lengths in model/world pixels, not screen pixels or geographic meters |
+| `camera_zoom_completed` | `delta_zoom`, plus `start_zoom` and `end_zoom` | `total_zoom_change`: sum of absolute changes in the dimensionless zoom multiplier (1 is the fitted view; 2 is twice that zoom) |
+
+Heading follows the engine's yaw; positive pitch means more tilt away from
+straight down. Angular steps are accumulated before whole-turn normalization,
+so multiple full turns are retained. Cumulative values are nonnegative and
+include reversals: turning 90 degrees and back has zero net heading change
+and `total_heading_deg: 180`. Likewise, zooming from 1 to 2 and back to 1 has
+`delta_zoom: 0` and `total_zoom_change: 2`. SUM the cumulative attributes when
+measuring activity; signed deltas can cancel out across gestures.
+
+For the power-user table, filter RUM **action events**, for example:
+
+```text
+@type:action service:gpx-topo-web env:kyo @action.name:camera_rotate_completed
+```
+
+Group by `@usr.anonymous_id` (and the table's existing region facet). COUNT
+matching actions for rotation count; SUM `@context.total_heading_deg` and
+`@context.total_pitch_deg` for rotation amounts. Use the corresponding action
+name for pan/zoom counts and SUM `@context.distance_px` or
+`@context.total_zoom_change` for their amounts. Register these numeric
+attributes, and optionally `@context.duration_ms` in milliseconds, as RUM
+measures. Register the angular attributes with degree units where available;
+keep pan and zoom units consistent with the definitions above. Apply the
+table's environment, host, and user exclusions to each query. Camera actions
+have no DOM click target, so do not copy a view-only target-selector filter
+into these action queries. New actions appear only after deployment; this
+instrumentation does not backfill activity or update the dashboard itself.
 
 Both HTML-in-Canvas actions include `is_webview`, detected from the `wv` token
 in the user agent, and `user_agent_data_brands` when

@@ -50,6 +50,30 @@ export type DetailRequest = { x: number; y: number; w: number; h: number; densit
 
 export type PhotoCloseVia = 'button' | 'escape';
 
+export type CameraRotation = {
+  delta_heading_deg: number;
+  delta_pitch_deg: number;
+  total_heading_deg: number;
+  total_pitch_deg: number;
+  duration_ms: number;
+};
+export type CameraPan = {
+  /** Translation in model/world px, after camera bounds are applied. */
+  delta_x_px: number;
+  delta_y_px: number;
+  delta_z_px: number;
+  distance_px: number;
+  duration_ms: number;
+};
+export type CameraZoom = {
+  input: 'wheel' | 'pinch';
+  start_zoom: number;
+  end_zoom: number;
+  delta_zoom: number;
+  total_zoom_change: number;
+  duration_ms: number;
+};
+
 export type HudHitArea = {
   key: string;
   x: number;
@@ -68,6 +92,9 @@ export type EngineCallbacks = {
   onMapDrag(dx: number, dy: number): void;
   /** A completed drag in the flat map mode, in screen px. */
   onMapPan(dx: number, dy: number): void;
+  onCameraRotate(change: CameraRotation): void;
+  onCameraPan(change: CameraPan): void;
+  onCameraZoom(change: CameraZoom): void;
   /** A click while placing a waypoint: how far along the route (km) it landed, or null when it missed the route. */
   onRouteClick(km: number | null): void;
   onDetail(request: DetailRequest | null): void;
@@ -4157,6 +4184,25 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let downOnMap = false;
   let mapDragTotal: [number, number] = [0, 0];
   let panFrom: { cam: Cam; P: Vec3; pan: Vec3 } | null = null;
+  let cameraDrag: ({ pointerId: number; startedAt: number } & (
+    | { kind: 'rotate'; change: Omit<CameraRotation, 'duration_ms'> }
+    | { kind: 'pan'; change: Omit<CameraPan, 'duration_ms'> }
+  )) | null = null;
+
+  function finishCameraDrag(completed: boolean) {
+    const gesture = cameraDrag;
+    cameraDrag = null;
+    if (!gesture || !completed) return;
+    const duration_ms = Math.round(performance.now() - gesture.startedAt);
+    if (gesture.kind === 'rotate') {
+      if (gesture.change.total_heading_deg + gesture.change.total_pitch_deg > 0) {
+        callbacks.onCameraRotate({ ...gesture.change, duration_ms });
+      }
+    } else if (gesture.change.distance_px > 0) {
+      callbacks.onCameraPan({ ...gesture.change, duration_ms });
+    }
+  }
+
   let viewInteractionNotified = false;
   const notifyViewInteraction = (reason: string) => {
     if (viewInteractionNotified) return;
@@ -4164,6 +4210,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onViewInteraction?.(reason);
   };
   const onPointerDown = (ev: PointerEvent) => {
+    if (cameraDrag) {
+      if (cameraDrag.pointerId !== ev.pointerId) return;
+      // A new press from the same pointer means its previous release was missed.
+      finishCameraDrag(false);
+      drag = null;
+      panFrom = null;
+      canvas.classList.remove('turning');
+    }
     const t = ev.target as Element;
     viewInteractionNotified = false;
     if (mapPinSelection) {
@@ -4249,11 +4303,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (P) panFrom = { cam, P, pan: [...st.pan] };
       else drag = 'turn';
     }
+    const start = { pointerId: ev.pointerId, startedAt: performance.now() };
+    cameraDrag = drag === 'pan'
+      ? { ...start, kind: 'pan', change: { delta_x_px: 0, delta_y_px: 0, delta_z_px: 0, distance_px: 0 } }
+      : { ...start, kind: 'rotate', change: { delta_heading_deg: 0, delta_pitch_deg: 0, total_heading_deg: 0, total_pitch_deg: 0 } };
     setHover(null);
     canvas.setPointerCapture(ev.pointerId);
     canvas.classList.add('turning');
   };
   const onPointerMove = (ev: PointerEvent) => {
+    if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
     flagHover = !!(ev.target as Element).closest?.('[data-piece="flag"]');
     if (mapPinSelection && drag === 'pin-select') {
       const dx = ev.clientX - px;
@@ -4315,6 +4374,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     if (moved > 0.5) notifyViewInteraction(drag === 'pan' ? 'camera_pan' : 'camera_rotate');
     if (drag === 'pan' && panFrom) {
+      const before = st.panT;
       const [sx, sy] = canvasPoint(ev);
       const { o, d } = ray(panFrom.cam, sx, sy);
       if (d[2] < -1e-4) {
@@ -4323,19 +4383,41 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         st.panT = [panFrom.pan[0] + panFrom.P[0] - Q[0], panFrom.pan[1] + panFrom.P[1] - Q[1], panFrom.pan[2]];
         clampPan();
       }
+      if (cameraDrag?.kind === 'pan' && (dx || dy)) {
+        const delta = st.panT.map((v, i) => v - before[i]);
+        const change = cameraDrag.change;
+        change.delta_x_px += delta[0];
+        change.delta_y_px += delta[1];
+        change.delta_z_px += delta[2];
+        change.distance_px += Math.hypot(...delta);
+      }
       need();
       return;
     }
     if (moved > 4 && st.eT < 0.5) apart(1);
+    const yawBefore = st.yawT;
+    const tiltBefore = st.tiltT;
     st.yawT -= dx * 0.0055;
     // down to straight down, and up to just above level; never into the ground
     const hero = HERO.tilt * standOf(st.zoomT);
     st.tiltT = clamp(st.tiltT - dy * 0.0045, 0.12 - hero, TILT_MAX - hero);
     keepAboveGround();
+    if (cameraDrag?.kind === 'rotate' && (dx || dy)) {
+      // Measure each applied step so full turns and reversals survive yaw normalization.
+      const heading = (st.yawT - yawBefore) * 180 / Math.PI;
+      const pitch = (st.tiltT - tiltBefore) * 180 / Math.PI;
+      const change = cameraDrag.change;
+      change.delta_heading_deg += heading;
+      change.delta_pitch_deg += pitch;
+      change.total_heading_deg += Math.abs(heading);
+      change.total_pitch_deg += Math.abs(pitch);
+    }
     need();
   };
   const onPointerUp = (ev: PointerEvent) => {
+    if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
     if (!drag) return;
+    finishCameraDrag(ev.type === 'pointerup');
     const was = drag;
     drag = null;
     panFrom = null;
@@ -4401,6 +4483,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     need();
   };
+  const onCameraCaptureLost = (ev: PointerEvent) => {
+    if (cameraDrag?.pointerId === ev.pointerId) onPointerUp(ev);
+  };
   // the right button moves the model, so the browser's menu stays shut except over a field being typed in
   // The wheel raises the flat page into the model as far as it is turned, and a page left part way up
   // stays there; risen, it zooms toward the point under the pointer; zoomed all the way out, it lowers
@@ -4408,6 +4493,27 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const WHEEL_GAP = 200;
   let wheelAt = 0;
   let wheelPhase: 'rise' | 'zoom' | null = null;
+  let cameraZoom: { startedAt: number; lastAt: number; change: Omit<CameraZoom, 'duration_ms'> } | null = null;
+  let cameraZoomTimer: number | undefined;
+
+  function finishCameraZoom() {
+    window.clearTimeout(cameraZoomTimer);
+    cameraZoomTimer = undefined;
+    const gesture = cameraZoom;
+    cameraZoom = null;
+    if (gesture) callbacks.onCameraZoom({
+      ...gesture.change,
+      duration_ms: Math.round(gesture.lastAt - gesture.startedAt),
+    });
+  }
+
+  function scheduleCameraZoomEnd(now: number) {
+    if (!cameraZoom) return;
+    cameraZoom.lastAt = now;
+    window.clearTimeout(cameraZoomTimer);
+    cameraZoomTimer = window.setTimeout(finishCameraZoom, WHEEL_GAP);
+  }
+
   const onWheel = (ev: WheelEvent) => {
     const t = ev.target as Element;
     if (mapManeuver || mapManeuverSelection) {
@@ -4443,8 +4549,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (!dy) return;
     notifyViewInteraction('camera_zoom_or_raise');
     const now = performance.now();
-    if (now - wheelAt > WHEEL_GAP) wheelPhase = null;
+    const input = ev.ctrlKey ? 'pinch' : 'wheel';
+    if (now - wheelAt > WHEEL_GAP) {
+      wheelPhase = null;
+      finishCameraZoom();
+    } else if (cameraZoom && cameraZoom.change.input !== input) {
+      finishCameraZoom();
+    }
     wheelAt = now;
+    // Events at the zoom limit still belong to the current gesture.
+    scheduleCameraZoomEnd(now);
     const rate = ev.ctrlKey ? 0.012 : 0.0022;
     const atMin = st.zoomT <= ZOOM_MIN + 1e-6;
     const phase = dy < 0 ? (st.eT < 1 ? 'rise' : 'zoom') : !atMin ? 'zoom' : st.eT > 0 ? 'rise' : null;
@@ -4483,6 +4597,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (z1 <= ZOOM_MIN + 1e-6) st.panT = [0, 0, 0];
     clampPan();
     keepAboveGround();
+    cameraZoom ??= {
+      startedAt: now,
+      lastAt: now,
+      change: { input, start_zoom: z0, end_zoom: z0, delta_zoom: 0, total_zoom_change: 0 },
+    };
+    cameraZoom.change.end_zoom = z1;
+    cameraZoom.change.delta_zoom += z1 - z0;
+    cameraZoom.change.total_zoom_change += Math.abs(z1 - z0);
+    scheduleCameraZoomEnd(now);
     setHover(null);
     need();
   };
@@ -4521,6 +4644,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
+  canvas.addEventListener('lostpointercapture', onCameraCaptureLost);
   canvas.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('keydown', onKey);
 
@@ -4701,6 +4825,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function dispose() {
     disposed = true;
+    cameraDrag = null;
+    cameraZoom = null;
+    window.clearTimeout(cameraZoomTimer);
     window.clearTimeout(detailTimer);
     if (delayedNeed !== null) window.clearTimeout(delayedNeed);
     delayedNeed = null;
@@ -4717,6 +4844,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.removeEventListener('pointermove', onPointerMove);
     canvas.removeEventListener('pointerup', onPointerUp);
     canvas.removeEventListener('pointercancel', onPointerUp);
+    canvas.removeEventListener('lostpointercapture', onCameraCaptureLost);
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('pointerleave', onLeave);
     window.removeEventListener('keydown', onKey);
