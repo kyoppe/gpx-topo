@@ -110,6 +110,19 @@ attributes:
 - `info_link_clicked` for links inside the falling Info flag
 - `highest_point_toggled` and `waypoint_placement_toggled`
 - `info_flag_toggled`
+- `map_pin_placement_started`, `map_pin_placement_cancelled` (with `source` when
+  cancelled by Escape), `map_pin_placed` (with `lat` and `lon`),
+  `map_pin_label_changed` (with `has_label`), and `map_pin_cleared`
+- `map_pin_landed` when a pin dropped in 3D touches the ground, with
+  `duration_ms` from placement; it is not emitted on the flat map, where the
+  pin appears at once. A placement with no matching landing means the drop was
+  not seen
+- `map_maneuver_requested`, `map_maneuver_cancelled`, and
+  `map_maneuver_state_changed`
+- `map_permalink_detached` when the first interaction returns a permalink URL to
+  the plain one, with `reason`
+- `x_hint_shown` when a hint card springs out of the HUD, with `kind` (`map-pin`,
+  `permalink`, or the latest media kind)
 - `date_picker_opened` and `date_changed`
 
 Prefer stable attributes such as `ok`, `source`, `map_style`, `waypoint_id`,

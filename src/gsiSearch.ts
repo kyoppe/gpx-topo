@@ -1,4 +1,4 @@
-import type { SearchLocation } from './mapSearch';
+import { MAX_SEARCH_RESULTS, type SearchLocation } from './mapSearch';
 
 type GsiFeature = {
   geometry?: { coordinates?: [number, number] };
@@ -29,14 +29,24 @@ export function parseMunicipalityNames(source: string): ReadonlyMap<string, stri
   return names;
 }
 
-export async function loadMunicipalityNames(): Promise<ReadonlyMap<string, string>> {
+export async function loadMunicipalityNames(fetcher: typeof fetch = fetch): Promise<ReadonlyMap<string, string>> {
   if (!municipalityNamesPromise) {
-    municipalityNamesPromise = fetch(MUNICIPALITY_URL)
+    municipalityNamesPromise = fetcher(MUNICIPALITY_URL)
       .then((response) => (response.ok ? response.text() : ''))
       .then(parseMunicipalityNames)
       .catch(() => new Map<string, string>());
   }
   return municipalityNamesPromise;
+}
+
+const ADDRESS_SEARCH_URL = 'https://msearch.gsi.go.jp/address-search/AddressSearch';
+
+export async function searchGsiAddress(query: string, fetcher: typeof fetch = fetch): Promise<SearchLocation[]> {
+  const response = await fetcher(`${ADDRESS_SEARCH_URL}?q=${encodeURIComponent(query)}`);
+  if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+  const source = (await response.json()) as unknown;
+  const municipalityNames = await loadMunicipalityNames(fetcher);
+  return normalizeGsiSearchResults(source, query, municipalityNames).slice(0, MAX_SEARCH_RESULTS);
 }
 
 export function normalizeGsiSearchResults(

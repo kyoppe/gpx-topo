@@ -52,6 +52,8 @@ export type Copy = {
     imageSavedFailed: string;
     imageCopiedFailed: string;
     imageCopied: string;
+    permalinkCopied: string;
+    permalinkCopyFailed: string;
     videoRecordingUnsupported: string;
     videoRecordingFailed: string;
     xPostFailed: string;
@@ -119,6 +121,10 @@ export type Copy = {
     scrollHint: string;
     mapMode: string;
     gpxMode: string;
+    copyPermalink: string;
+    mapPin: string;
+    mapPinCancel: string;
+    mapPinNameAria: string;
     mapSearchPlaceholder: string;
     mapSearchSubmit: string;
     mapSearchNoResults: string;
@@ -132,11 +138,22 @@ export type Copy = {
     flyoverPause: string;
     flyoverResume: string;
     flyoverStop: string;
+    mapManeuver: string;
+    mapManeuverMenu: string;
+    dronie: string;
+    circle: string;
+    rocket: string;
+    helix: string;
+    boomerang: string;
+    asteroid: string;
+    dollyZoom: string;
+    cancelManeuver: string;
     captureImage: string;
     recordVideo: string;
     stopVideoRecording: string;
     xHintPhoto: string;
     xHintVideo: string;
+    xHintMapPin: string;
     helpLinks: string;
   };
   flag: {
@@ -197,6 +214,8 @@ function makeCopy(language: Language): Copy {
         imageSavedFailed: '画像を保存できませんでした。',
         imageCopiedFailed: '画像をコピーできませんでした。',
         imageCopied: '画像をコピーしました。',
+        permalinkCopied: 'パーマリンクをコピーしました。',
+        permalinkCopyFailed: 'パーマリンクをコピーできませんでした。',
         videoRecordingUnsupported: 'このブラウザでは動画を録画できません。',
         videoRecordingFailed: '動画を録画できませんでした。',
         xPostFailed: 'Xの投稿画面を開けませんでした。',
@@ -264,6 +283,10 @@ function makeCopy(language: Language): Copy {
         scrollHint: 'ホイールで立体・ズーム · Esc で平面',
         mapMode: 'Map',
         gpxMode: 'GPX',
+        copyPermalink: 'パーマリンクをコピー',
+        mapPin: '地点を示すピン',
+        mapPinCancel: 'ピン配置を取消',
+        mapPinNameAria: 'ピンの名前',
         mapSearchPlaceholder: '住所・地名・座標・GoogleマップURL',
         mapSearchSubmit: '検索',
         mapSearchNoResults: '検索結果がありません。',
@@ -277,11 +300,22 @@ function makeCopy(language: Language): Copy {
         flyoverPause: 'Flyoverを一時停止',
         flyoverResume: 'Flyoverを再開',
         flyoverStop: 'Flyoverを停止',
+        mapManeuver: '空撮',
+        mapManeuverMenu: '空撮マニューバ',
+        dronie: 'ドローニー',
+        circle: 'サークル',
+        rocket: 'ロケット',
+        helix: 'ヘリックス',
+        boomerang: 'ブーメラン',
+        asteroid: 'アステロイド',
+        dollyZoom: 'ドリーズーム',
+        cancelManeuver: '空撮をキャンセル',
         captureImage: '画像にする',
         recordVideo: '画面を録画',
         stopVideoRecording: '録画を停止',
         xHintPhoto: '画像をコピーしました。\nXに貼り付けてください。',
         xHintVideo: '動画を添付してXに投稿できます。',
+        xHintMapPin: 'ピンをドロップしました。\nピンのラベルは編集できます。',
         helpLinks: '使い方とリンク',
       },
       flag: {
@@ -346,6 +380,8 @@ function makeCopy(language: Language): Copy {
       imageSavedFailed: 'Could not save the image.',
       imageCopiedFailed: 'Could not copy the image.',
       imageCopied: 'Image copied.',
+      permalinkCopied: 'Permalink copied.',
+      permalinkCopyFailed: 'Could not copy the permalink.',
       videoRecordingUnsupported: 'Video recording is not supported by this browser.',
       videoRecordingFailed: 'Could not record the video.',
       xPostFailed: 'Could not open the X post composer.',
@@ -413,6 +449,10 @@ function makeCopy(language: Language): Copy {
       scrollHint: 'Scroll to raise and zoom · Esc to lay flat',
       mapMode: 'Map',
       gpxMode: 'GPX',
+      copyPermalink: 'Copy permalink',
+      mapPin: 'Drop a location pin',
+      mapPinCancel: 'Cancel pin placement',
+      mapPinNameAria: 'Pin name',
       mapSearchPlaceholder: 'Address, place, coordinates, or Google Maps URL',
       mapSearchSubmit: 'Search',
       mapSearchNoResults: 'No search results.',
@@ -426,11 +466,22 @@ function makeCopy(language: Language): Copy {
       flyoverPause: 'Pause Flyover',
       flyoverResume: 'Resume Flyover',
       flyoverStop: 'Stop Flyover',
+      mapManeuver: 'Aerial shot',
+      mapManeuverMenu: 'Aerial shot maneuvers',
+      dronie: 'Dronie',
+      circle: 'Circle',
+      rocket: 'Rocket',
+      helix: 'Helix',
+      boomerang: 'Boomerang',
+      asteroid: 'Asteroid',
+      dollyZoom: 'Dolly Zoom',
+      cancelManeuver: 'Cancel aerial shot',
       captureImage: 'Capture image',
       recordVideo: 'Record screen',
       stopVideoRecording: 'Stop recording',
       xHintPhoto: 'Photo copied.\nPaste it into your post on X.',
       xHintVideo: 'Attach the video to your post on X.',
+      xHintMapPin: 'Pin dropped.\nYou can edit its label.',
       helpLinks: 'Help and links',
     },
     flag: {

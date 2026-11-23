@@ -49,7 +49,7 @@ function tilesIn(projection: MapProjection, zoom: number, region: MapRegion) {
     .filter((t) => t.left < region.x + region.w && t.left + t.size > region.x && t.top < region.y + region.h && t.top + t.size > region.y);
 }
 
-const tileUrl = (layer: string, tile: MapTile) => `/api/gsi/${layer}/${tile.z}/${tile.x}/${tile.y}.${layer === 'seamlessphoto' ? 'jpg' : 'png'}`;
+const tileUrl = (layer: string, tile: MapTile) => `https://cyberjapandata.gsi.go.jp/xyz/${layer}/${tile.z}/${tile.x}/${tile.y}.${layer === 'seamlessphoto' ? 'jpg' : 'png'}`;
 
 function placeTile(context: Context2D, image: CanvasImageSource, tile: MapTile, region: MapRegion, density: number) {
   // a hair of overlap so tile seams never show

@@ -53,7 +53,7 @@ async function decodeTile(bytes: Uint8Array<ArrayBuffer>) {
 async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSignal) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetch(`/api/gsi/dem_png/${z}/${x}/${y}.png`, { signal });
+      const response = await fetch(`https://cyberjapandata.gsi.go.jp/xyz/dem_png/${z}/${x}/${y}.png`, { signal });
       if (response.status === 404) {
         return 'sea' as const;
       }

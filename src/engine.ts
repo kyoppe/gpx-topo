@@ -4,6 +4,12 @@ import { clothVertices, createCloth, layCloth, stepCloth, type Cloth } from './c
 import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
 import { holdLean } from './lean';
+import {
+  MAP_MANEUVERS,
+  MAP_MANEUVR_APPROACH_SECONDS,
+  MAP_MANEUVR_RETURN_SECONDS,
+  type MapManeuverKind,
+} from './mapManeuver';
 import { separation, type ScreenPoint } from './overlap';
 import { createRenderer, type DrawItem, type TextureLayer, type Vec3 } from './renderer';
 import { formatClock, lightAt, type Light } from './sun';
@@ -24,6 +30,7 @@ export type EngineModel = {
   ways: EngineWay[];
   /** Marks on the map (map px) that are not waypoints, such as the high point. */
   marks: { id: string; x: number; y: number }[];
+  mapPin?: { x: number; y: number } | null;
   date: string;
   lat: number;
   lon: number;
@@ -66,10 +73,20 @@ export type CameraZoom = {
   duration_ms: number;
 };
 
+export type HudHitArea = {
+  key: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type EngineCallbacks = {
   /** The first paint event with a successful HTML element texture upload. */
   onFirstPaint(): void;
   onApartChange(apart: boolean): void;
+  /** A user gesture changed the camera or map view. */
+  onViewInteraction?(reason: string): void;
   /** A flat-map drag moved the visible map by this incremental screen delta. */
   onMapDrag(dx: number, dy: number): void;
   /** A completed drag in the flat map mode, in screen px. */
@@ -85,17 +102,49 @@ export type EngineCallbacks = {
   /** The picker marked `data-seq` finished folding away. */
   onPopClosed(seq: string): void;
   onFlightChange(phase: FlightPhase | null): void;
+  onMapManeuverChange(state: MapManeuverState | null): void;
+  onMapPinSelectionChange?(active: boolean): void;
+  onMapPinSelected?(x: number, y: number): void;
+  onMapPinRemoved?(): void;
+  /** The dropped pin has touched the ground. */
+  onMapPinLanded?(): void;
   /** The (i) flag was raised over the map, or taken down. */
   onInfoChange(open: boolean): void;
   /** The photo of the view came out of the camera key, or went back into it. */
   onPhotoChange(open: boolean, via?: PhotoCloseVia): void;
   /** The X hint reached the HUD and can be removed after its exit animation. */
   onXHintExit?(seq: string): void;
+  /** Screen-space rectangles for the transparent HUD input layer. */
+  onHudHitAreas?(areas: HudHitArea[]): void;
+};
+
+export type EngineViewState = {
+  raised: boolean;
+  bearing: number;
+  pitch: number;
+  zoom: number;
+  pan: { x: number; y: number; z: number };
 };
 export type FlightPhase = 'intro' | 'run' | 'outro' | 'return' | 'paused';
 type FlightResumePhase = Exclude<FlightPhase, 'return' | 'paused'>;
+export type MapManeuverPhase = 'select' | 'approach' | 'move' | 'hold' | 'return';
+export type MapManeuverState = { kind: MapManeuverKind; phase: MapManeuverPhase };
 
-type Kind = 'sheet' | 'terrain' | 'relief' | 'detail' | 'card' | 'content' | 'pin' | 'bar' | 'key' | 'pop' | 'row' | 'flag' | 'photo';
+type Kind =
+  | 'sheet'
+  | 'terrain'
+  | 'relief'
+  | 'detail'
+  | 'card'
+  | 'content'
+  | 'pin'
+  | 'bar'
+  | 'key'
+  | 'pop'
+  | 'row'
+  | 'flag'
+  | 'photo'
+  | 'maneuver';
 type Drum = {
   name: string;
   /** how many values go round: 24 hours, 60 minutes */
@@ -146,7 +195,7 @@ type Piece = {
   dodge: [number, number];
 };
 /** A camera about the point it looks at: which way it stands off (yaw, as `camera` turns), how high (rad above level), and how far (world px). */
-type Rig = { look: Vec3; yaw: number; pitch: number; dist: number };
+type Rig = { look: Vec3; yaw: number; pitch: number; dist: number; fov?: number };
 type Flight = {
   phase: FlightPhase;
   resumePhase: FlightResumePhase;
@@ -164,9 +213,28 @@ type Flight = {
   /** how far off the whole raised model is seen, against which the view counts as zoomed for pins and route lines */
   fitD: number;
 };
+type MapManeuverFlight = {
+  kind: MapManeuverKind;
+  phase: MapManeuverPhase;
+  t: number;
+  target: Vec3;
+  home: Rig;
+  current: Rig;
+  from: Rig;
+  close: Rig;
+  final: Rig;
+  fromE: number;
+  saved: {
+    e: number;
+    yaw: number;
+    tilt: number;
+    zoom: number;
+    pan: Vec3;
+  };
+};
 /** Where a flat piece stands: its corner, its edge directions, its normal, and its size. */
 type Frame = Pick<Piece, 'O' | 'ex' | 'ey' | 'nrm' | 'w' | 'h'>;
-type Cam = { vp: Float32Array; eye: Vec3; r: Vec3; u: Vec3; dir: Vec3; base: Vec3; yaw: number; D: number };
+type Cam = { vp: Float32Array; eye: Vec3; r: Vec3; u: Vec3; dir: Vec3; base: Vec3; yaw: number; D: number; fov: number };
 
 const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -235,6 +303,8 @@ const PHOTO_OUT = 0.45;
 const PHOTO_FILL = 0.62;
 const FLAG_FALL = 0.7;
 const FLAG_PULL = 1.1;
+/** A map pin leaves faster than the flag is drawn out. */
+const MAP_PIN_RISE = 0.5;
 /** The view it is shown in: zoomed in this far, tilted this much further, and moved this share of the way towards the flag. */
 const FLAG_VIEW_ZOOM = 1;
 const FLAG_VIEW_TILT = 0.12;
@@ -327,9 +397,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let vh = 1;
   let last = 0;
   let pending = false;
-  let drag: 'turn' | 'pan' | 'map' | 'drum' | 'runner' | null = null;
+  let drag: 'turn' | 'pan' | 'map' | 'drum' | 'runner' | 'maneuver-select' | 'pin-select' | null = null;
   let activeWay: string | null = null;
   let flight: Flight | null = null;
+  let mapManeuver: MapManeuverFlight | null = null;
+  let mapManeuverSelection: MapManeuverKind | null = null;
+  let mapPinSelection = false;
   /** the (i) flag: waiting for the map to stand, falling, planted, or being pulled out; and the view to go back to */
   let info: {
     phase: 'wait' | 'drop' | 'stand' | 'pull';
@@ -374,6 +447,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let xKeyPiece: Piece | null = null;
   let xKeyProgress = 1;
   let xKeyVelocity = 0;
+  let mapPinMotion: 'drop' | 'rise' | null = null;
+  let mapPinMotionProgress = 1;
+  let mapPinDropRequested = false;
   let flagPlaced = false;
   let flagSteady = false;
   /** how wide the cloth is drawn (world px), fitted to the window */
@@ -402,7 +478,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let panelAvoidNormal: Vec3 = [0, 0, 1];
   let placing = false;
   let disposed = false;
-  let cam: Cam = { vp: new Float32Array(16), eye: [0, 0, 1], r: [1, 0, 0], u: [0, -1, 0], dir: [0, 0, 1], base: [0, 0, 0], yaw: 0, D: 1 };
+  let cam: Cam = {
+    vp: new Float32Array(16),
+    eye: [0, 0, 1],
+    r: [1, 0, 0],
+    u: [0, -1, 0],
+    dir: [0, 0, 1],
+    base: [0, 0, 0],
+    yaw: 0,
+    D: 1,
+    fov: FOV,
+  };
   let light: Light = { dir: [0, 0, 1], col: [1, 1, 1], amb: [0.5, 0.5, 0.5], expo: 1, night: 0, elevation: 45 };
   /** the elevation under the pointer, in 3D */
   let hover: { x: number; y: number; ele: number } | null = null;
@@ -472,6 +558,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function toScreen(P: Vec3): ScreenPoint | null {
     const c = mul([P[0], P[1], P[2], 1]);
     return c[3] > 1e-6 ? [((c[0] / c[3]) * 0.5 + 0.5) * vw, ((-c[1] / c[3]) * 0.5 + 0.5) * vh] : null;
+  }
+  /** World-space height that puts a falling pin just above the visible screen. */
+  function pinFallHeight(ax: number, ay: number, gz: number, h: number) {
+    let high = Math.max(h * 2.5, vh * 0.5);
+    for (let i = 0; i < 12; i += 1) {
+      const screen = toScreen([ax, ay, gz + high]);
+      if (!screen || screen[1] <= -h) break;
+      high *= 1.7;
+    }
+    return high;
   }
   const cornersOf = (p: Frame) =>
     [
@@ -617,8 +713,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   /** Fill `m` with the view and projection for an eye with axes `r`, `u`, and `dir` (pointing back from the view to the eye). */
-  function viewProjection(m: Float32Array, eye: Vec3, r: Vec3, u: Vec3, dir: Vec3, near: number, far: number) {
-    const f = 1 / Math.tan(FOV / 2);
+  function viewProjection(m: Float32Array, eye: Vec3, r: Vec3, u: Vec3, dir: Vec3, near: number, far: number, fov = FOV) {
+    const f = 1 / Math.tan(fov / 2);
     const asp = vw / vh;
     const a = (far + near) / (near - far);
     const b = (2 * far * near) / (near - far);
@@ -661,7 +757,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       eye = [x + dir[0] * D, y + dir[1] * D, z + dir[2] * D];
       // far enough for the whole model even from low down and close in, and for the table to have faded into the
       // background by the time it is cut off
-      viewProjection(m, eye, r, u, dir, D * 0.05, Math.max(D * 14, D + Math.hypot(PW, PH) * 1.5, 12000));
+      viewProjection(m, eye, r, u, dir, D * 0.05, Math.max(D * 14, D + Math.hypot(PW, PH) * 1.5, 12000), FOV);
     };
     let D = D0;
     if (p > 0.001) {
@@ -712,7 +808,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     D /= zoom;
     build(D, tx + pan[0], ty + pan[1], tz + pan[2]);
-    return { vp: m, eye, r, u, dir, base: [tx, ty, tz], yaw, D };
+    return { vp: m, eye, r, u, dir, base: [tx, ty, tz], yaw, D, fov: FOV };
   }
 
   const FLYOVER_INTRO = 5;
@@ -756,6 +852,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   const wrapAngle = (d: number) => d - Math.PI * 2 * Math.round(d / (Math.PI * 2));
+  const degreesOf = (radians: number) => (((radians * 180) / Math.PI) % 360 + 360) % 360;
+  const radiansOf = (degrees: number) => (degrees * Math.PI) / 180;
 
   function angleStep(from: number, to: number, amount: number) {
     return from + wrapAngle(to - from) * amount;
@@ -767,6 +865,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       yaw: angleStep(a.yaw, b.yaw, s),
       pitch: lerp(a.pitch, b.pitch, s),
       dist: Math.exp(lerp(Math.log(a.dist), Math.log(b.dist), s)),
+      ...(a.fov !== undefined || b.fov !== undefined ? { fov: lerp(a.fov ?? FOV, b.fov ?? FOV, s) } : {}),
     };
   }
 
@@ -783,8 +882,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const eye = eyeOf(g);
     const m = new Float32Array(16);
     // far enough for the whole model from wherever the eye is
-    viewProjection(m, eye, r, u, dir, g.dist * 0.1, Math.max(g.dist * 14, g.dist + Math.hypot(PW, PH) * 1.5));
-    return { vp: m, eye, r, u, dir, base: g.look, yaw: g.yaw, D: g.dist };
+    const fov = g.fov ?? FOV;
+    viewProjection(m, eye, r, u, dir, g.dist * 0.1, Math.max(g.dist * 14, g.dist + Math.hypot(PW, PH) * 1.5), fov);
+    return { vp: m, eye, r, u, dir, base: g.look, yaw: g.yaw, D: g.dist, fov };
   }
 
   function rigOf(c: Cam): Rig {
@@ -793,7 +893,309 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       yaw: c.yaw,
       pitch: Math.asin(clamp(c.dir[2], -1, 1)),
       dist: c.D,
+      fov: c.fov,
     };
+  }
+
+  function distanceToMapEdge(x: number, y: number, dx: number, dy: number) {
+    const hits: number[] = [];
+    if (dx > 1e-6) hits.push((MAPX + MW - x) / dx);
+    if (dx < -1e-6) hits.push((MAPX - x) / dx);
+    if (dy > 1e-6) hits.push((MAPY + MH - y) / dy);
+    if (dy < -1e-6) hits.push((MAPY - y) / dy);
+    return Math.max(1, ...hits.filter((hit) => hit > 0));
+  }
+
+  function rigFromPolar(target: Vec3, yaw: number, horizontal: number, height: number, fov = FOV): Rig {
+    const h = Math.max(1, horizontal);
+    const z = Math.max(1, height);
+    return {
+      look: target,
+      yaw,
+      pitch: Math.atan2(z, h),
+      dist: Math.hypot(h, z),
+      fov,
+    };
+  }
+
+  /** Build the camera on a world-space path while keeping the selected ground point in frame. */
+  function mapManeuverRig(flight: MapManeuverFlight, progress: number): Rig {
+    const q = smooth(progress);
+    const startHorizontal = Math.cos(flight.close.pitch) * flight.close.dist;
+    const startHeight = Math.sin(flight.close.pitch) * flight.close.dist;
+    const endHorizontal = Math.cos(flight.final.pitch) * flight.final.dist;
+    const endHeight = Math.sin(flight.final.pitch) * flight.final.dist;
+    const yaw = flight.close.yaw;
+
+    if (flight.kind === 'circle') {
+      return rigFromPolar(flight.target, yaw + Math.PI * 2 * q, startHorizontal, startHeight);
+    }
+    if (flight.kind === 'helix') {
+      return rigFromPolar(
+        flight.target,
+        yaw + Math.PI * 2 * q,
+        lerp(startHorizontal, endHorizontal, q),
+        lerp(startHeight, endHeight, q),
+      );
+    }
+    if (flight.kind === 'boomerang') {
+      const arc = Math.sin(Math.PI * q);
+      return rigFromPolar(
+        flight.target,
+        yaw + Math.PI * 2 * q,
+        lerp(startHorizontal, endHorizontal, arc),
+        lerp(startHeight, endHeight, arc),
+      );
+    }
+    if (flight.kind === 'rocket') {
+      return rigFromPolar(flight.target, yaw, startHorizontal, lerp(startHeight, endHeight, q));
+    }
+    if (flight.kind === 'asteroid') {
+      const rise = smooth(clamp(q / 0.72, 0, 1));
+      const panorama = smooth(clamp((q - 0.72) / 0.28, 0, 1));
+      return rigFromPolar(
+        flight.target,
+        yaw + Math.PI * 2 * panorama,
+        lerp(startHorizontal, endHorizontal, rise),
+        lerp(startHeight, endHeight, rise),
+        lerp(FOV, flight.final.fov ?? FOV, panorama),
+      );
+    }
+    const horizontal = lerp(startHorizontal, endHorizontal, q);
+    const height = lerp(startHeight, endHeight, q);
+    const fov =
+      flight.kind === 'dollyZoom'
+        ? clamp(2 * Math.atan(Math.tan(FOV / 2) * (Math.hypot(horizontal, height) / flight.close.dist)), FOV, 1.25)
+        : FOV;
+    return rigFromPolar(flight.target, yaw, horizontal, height, fov);
+  }
+
+  function closeMapManeuverRig(target: Vec3, base: Rig): Rig {
+    const pitch = 0.62;
+    const requested = clamp(Math.min(base.dist * 0.32, Math.min(MW, MH) * 0.55), 140, 360);
+    const edge = Math.min(target[0] - MAPX, MAPX + MW - target[0], target[1] - MAPY, MAPY + MH - target[1]);
+    const horizontal = Math.min(Math.cos(pitch) * requested, Math.max(24, edge * 0.75));
+    return {
+      look: target,
+      yaw: base.yaw,
+      pitch,
+      dist: horizontal / Math.cos(pitch),
+      fov: base.fov,
+    };
+  }
+
+  function mapManeuverFinal(kind: MapManeuverKind, close: Rig, target: Vec3): Rig {
+    const horizontal = Math.cos(close.pitch) * close.dist;
+    const height = Math.sin(close.pitch) * close.dist;
+    const available = distanceToMapEdge(target[0], target[1], Math.sin(close.yaw), Math.cos(close.yaw)) * 0.86;
+    if (kind === 'circle') return { ...close, yaw: close.yaw + Math.PI * 2, fov: FOV };
+    if (kind === 'rocket') {
+      return rigFromPolar(target, close.yaw, horizontal, height + Math.max(420, Math.min(MW, MH) * 0.9));
+    }
+    if (kind === 'helix') {
+      return rigFromPolar(
+        target,
+        close.yaw,
+        Math.min(horizontal * 1.3, Math.max(horizontal, available)),
+        height + Math.max(360, Math.min(MW, MH) * 0.7),
+      );
+    }
+    if (kind === 'boomerang') {
+      return rigFromPolar(
+        target,
+        close.yaw + Math.PI,
+        Math.min(horizontal * 1.8, Math.max(horizontal, available)),
+        height + Math.max(280, Math.min(MW, MH) * 0.45),
+      );
+    }
+    if (kind === 'asteroid') {
+      return rigFromPolar(
+        target,
+        close.yaw,
+        Math.min(horizontal * 2.3, Math.max(horizontal, available)),
+        height + Math.max(520, Math.min(MW, MH) * 1.05),
+        1.05,
+      );
+    }
+    const endHorizontal = Math.min(horizontal * 2.6, Math.max(horizontal, available));
+    const endHeight = height + Math.max(260, endHorizontal * 0.42);
+    const endFov =
+      kind === 'dollyZoom'
+        ? clamp(2 * Math.atan(Math.tan(FOV / 2) * (Math.hypot(endHorizontal, endHeight) / close.dist)), FOV, 1.25)
+        : FOV;
+    return rigFromPolar(target, close.yaw, endHorizontal, endHeight, endFov);
+  }
+
+  function enterMapManeuverPhase(phase: MapManeuverPhase) {
+    if (!mapManeuver) return;
+    mapManeuver.phase = phase;
+    mapManeuver.t = 0;
+    mapManeuver.from = mapManeuver.current;
+    mapManeuver.fromE = st.e;
+    callbacks.onMapManeuverChange({ kind: mapManeuver.kind, phase });
+  }
+
+  function restoreMapManeuver() {
+    if (!mapManeuver) return;
+    const saved = mapManeuver.saved;
+    st.e = saved.e;
+    st.eT = saved.e;
+    st.ev = 0;
+    st.yaw = saved.yaw;
+    st.yawT = saved.yaw;
+    st.tilt = saved.tilt;
+    st.tiltT = saved.tilt;
+    st.zoom = saved.zoom;
+    st.zoomT = saved.zoom;
+    st.pan = [...saved.pan];
+    st.panT = [...saved.pan];
+    mapManeuver = null;
+    callbacks.onMapManeuverChange(null);
+  }
+
+  function returnFromMapManeuver() {
+    if (mapManeuverSelection) {
+      mapManeuverSelection = null;
+      setManeuverSelecting(false);
+      setHover(null);
+      callbacks.onMapManeuverChange(null);
+      need();
+      return;
+    }
+    if (!mapManeuver || mapManeuver.phase === 'return') return;
+    enterMapManeuverPhase('return');
+    need();
+  }
+
+  function leaveMapManeuverAtCurrentView() {
+    if (!mapManeuver || mapManeuver.phase === 'return') return;
+    adoptRig(mapManeuver.current);
+    mapManeuver = null;
+    callbacks.onMapManeuverChange(null);
+    need();
+  }
+
+  function advanceMapManeuver(dt: number): Rig | null {
+    if (!mapManeuver) return null;
+    if (mapManeuver.phase === 'return') {
+      mapManeuver.t += dt;
+      const q = smooth(clamp(mapManeuver.t / MAP_MANEUVR_RETURN_SECONDS, 0, 1));
+      holdRaised(lerp(mapManeuver.fromE, mapManeuver.saved.e, q));
+      if (q >= 1) {
+        restoreMapManeuver();
+        return null;
+      }
+      mapManeuver.current = mixRig(mapManeuver.from, mapManeuver.home, q);
+      return mapManeuver.current;
+    }
+
+    mapManeuver.t += dt;
+    if (mapManeuver.phase === 'approach') {
+      const q = clamp(mapManeuver.t / MAP_MANEUVR_APPROACH_SECONDS, 0, 1);
+      holdRaised(lerp(mapManeuver.fromE, 1, smooth(q)));
+      mapManeuver.current = mixRig(mapManeuver.from, mapManeuver.close, smooth(q));
+      if (q >= 1) enterMapManeuverPhase('move');
+      return mapManeuver.current;
+    }
+
+    holdRaised(1);
+    const timing = MAP_MANEUVERS[mapManeuver.kind];
+    if (mapManeuver.phase === 'move') {
+      const q = clamp(mapManeuver.t / timing.move, 0, 1);
+      mapManeuver.current = mapManeuverRig(mapManeuver, q);
+      if (q >= 1) enterMapManeuverPhase('hold');
+      return mapManeuver.current;
+    }
+
+    if (mapManeuver.phase === 'hold') {
+      mapManeuver.current = mapManeuver.kind === 'boomerang' ? mapManeuver.close : mapManeuver.final;
+      if (mapManeuver.t >= timing.hold) {
+        enterMapManeuverPhase('return');
+      }
+      return mapManeuver.current;
+    }
+
+    return mapManeuver.current;
+  }
+
+  function mapManeuverStart(kind: MapManeuverKind) {
+    if (!model?.mapMode || mapManeuver || mapManeuverSelection || flight || st.eT < 0.5 || !model.terrain) return;
+    mapManeuverSelection = kind;
+    setManeuverSelecting(true);
+    setHover(null);
+    callbacks.onMapManeuverChange({ kind, phase: 'select' });
+    need();
+  }
+
+  function mapPinStart() {
+    if (!model?.mapMode || mapPinSelection || mapManeuver || mapManeuverSelection || flight || !model.terrain) return;
+    mapPinSelection = true;
+    setManeuverSelecting(true);
+    setHover(null);
+    callbacks.onMapPinSelectionChange?.(true);
+    need();
+  }
+
+  function mapPinCancel() {
+    if (!mapPinSelection) return;
+    mapPinSelection = false;
+    setManeuverSelecting(false);
+    setHover(null);
+    callbacks.onMapPinSelectionChange?.(false);
+    need();
+  }
+
+  function startMapPinRemoval() {
+    if (!model?.mapPin || mapPinMotion === 'rise') return;
+    if (st.e < 0.5) {
+      callbacks.onMapPinRemoved?.();
+      return;
+    }
+    mapPinMotion = 'rise';
+    mapPinMotionProgress = 0;
+    need();
+  }
+
+  /** Starts the drop; true when the pin will fall, and `onMapPinLanded` follows, false when it is shown at once. */
+  function startMapPinDrop() {
+    mapPinDropRequested = st.eT >= 0.5;
+    const falls = mapPinDropRequested;
+    if (mapPinDropRequested && pins.some((p) => p.el.hasAttribute('data-map-pin'))) {
+      mapPinDropRequested = false;
+      mapPinMotion = 'drop';
+      mapPinMotionProgress = 0;
+    }
+    need();
+    return falls;
+  }
+
+  function startMapManeuverAt(P: Vec3) {
+    const kind = mapManeuverSelection;
+    if (!kind || !model?.mapMode || mapManeuver || flight) return;
+    mapManeuverSelection = null;
+    setManeuverSelecting(false);
+    const home = rigOf(cam);
+    const from = home;
+    const target: Vec3 = [P[0], P[1], groundAt(P[0], P[1], 1)];
+    const close = closeMapManeuverRig(target, from);
+    const final = mapManeuverFinal(kind, close, target);
+    mapManeuver = {
+      kind,
+      phase: 'approach',
+      t: 0,
+      target,
+      home,
+      current: from,
+      from,
+      close,
+      final,
+      fromE: st.e,
+      saved: { e: st.e, yaw: st.yaw, tilt: st.tilt, zoom: st.zoom, pan: [...st.pan] },
+    };
+    panelAlphaT = 1;
+    panelAvoidReady = false;
+    callbacks.onMapManeuverChange({ kind, phase: 'approach' });
+    need();
   }
 
   /** Keep the current Flyover rig when manual input takes over the 3D view. */
@@ -1688,9 +2090,43 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   const targetCam = () => camera(st.eT, st.yawT, st.tiltT, st.zoomT, st.panT);
 
+  function getViewState(): EngineViewState {
+    const raised = st.e >= 0.5;
+    const current = camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
+    return {
+      raised,
+      bearing: degreesOf(current.yaw),
+      pitch: raised ? degreesOf(Math.asin(clamp(current.dir[2], -1, 1))) : 0,
+      zoom: st.zoom,
+      pan: { x: st.pan[0], y: st.pan[1], z: st.pan[2] },
+    };
+  }
+
+  function setViewState(next: Partial<EngineViewState>) {
+    if (next.raised !== undefined) apart(next.raised ? 1 : 0);
+    if (next.zoom !== undefined && Number.isFinite(next.zoom)) {
+      st.zoomT = clamp(next.zoom, ZOOM_MIN, Math.max(ZOOM_MAX, zoomCap()));
+    }
+    if (next.pan) {
+      if (Number.isFinite(next.pan.x)) st.panT[0] = next.pan.x;
+      if (Number.isFinite(next.pan.y)) st.panT[1] = next.pan.y;
+      if (Number.isFinite(next.pan.z)) st.panT[2] = next.pan.z;
+    }
+    if (next.bearing !== undefined && Number.isFinite(next.bearing)) {
+      st.yawT = wrapAngle(radiansOf(next.bearing) - HERO.yaw);
+    }
+    if (next.pitch !== undefined && Number.isFinite(next.pitch)) {
+      const pitch = clamp(radiansOf(next.pitch), 0.02, Math.PI / 2 - 0.02);
+      const tilt = Math.PI / 2 - pitch;
+      st.tiltT = clamp(tilt - HERO.tilt * standOf(st.zoomT), 0.12 - HERO.tilt * standOf(st.zoomT), TILT_MAX - HERO.tilt * standOf(st.zoomT));
+    }
+    keepAboveGround();
+    need();
+  }
+
   /** The ray through a canvas point (CSS px). */
   function ray(c: Cam, sx: number, sy: number) {
-    const f = 1 / Math.tan(FOV / 2);
+    const f = 1 / Math.tan(c.fov / 2);
     const a = (((sx / vw) * 2 - 1) * (vw / vh)) / f;
     const b = (1 - (sy / vh) * 2) / f;
     const d: Vec3 = [0, 1, 2].map((i) => -c.dir[i] + a * c.r[i] + b * c.u[i]) as Vec3;
@@ -1751,6 +2187,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const GEOMETRY = typeof canvas.updateElementGeometry === 'function';
   let geoN = 0;
   function place(p: Piece) {
+    if (!p.el.isConnected || !canvas.contains(p.el)) return;
     const cols = [mul([p.ex[0], p.ex[1], p.ex[2], 0]), mul([p.ey[0], p.ey[1], p.ey[2], 0]), null, mul([p.O[0], p.O[1], p.O[2], 1])];
     const m = new Float64Array(16);
     for (const c of [0, 1, 3]) {
@@ -1852,8 +2289,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     });
     pins = of('pin').map((el) => {
       const p = get(el, 'pin');
-      const spot = model?.ways.find((w) => w.id === el.dataset.way) ?? model?.marks.find((m) => m.id === el.dataset.mark);
+      const spot = el.hasAttribute('data-map-pin')
+        ? model?.mapPin
+        : model?.ways.find((w) => w.id === el.dataset.way) ?? model?.marks.find((m) => m.id === el.dataset.mark);
       p.at = spot ? { x: spot.x, y: spot.y } : { x: 0, y: 0 };
+      p.hidden = el.hasAttribute('data-map-pin') && !spot;
       p.stand = 26;
       return p;
     });
@@ -1891,12 +2331,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const photos = of('photo').map((el) => get(el, 'photo'));
     photoFront = photos.find((p) => p.el.dataset.face !== 'back') ?? null;
     photoBack = photos.find((p) => p.el.dataset.face === 'back') ?? null;
+    const maneuvers = of('maneuver').map((el) => get(el, 'maneuver'));
+    maneuverPiece = maneuvers[0] ?? null;
     const bars = of('bar').map((el) => get(el, 'bar'));
     bar = bars[0] ?? null;
     keys = of('key').map((el) => {
       const p = get(el, 'key');
+      const previousName = p.name;
+      const previousFace = p.face;
       p.name = el.dataset.key ?? '';
       p.face = el.dataset.face ?? '';
+      if (p.name !== previousName || p.face !== previousFace) p.stale = true;
       return p;
     });
     const nextXKeyPiece = keys.find((p) => p.name === 'x') ?? null;
@@ -1921,7 +2366,24 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       p.name = el.dataset.drum ?? '';
       return p;
     });
-    pieces = [...sheets, ...lands, ...reliefs, ...details, ...cards, ...contents, ...pins, ...hikers, ...probes, ...flags, ...photos, ...bars, ...keys, ...pops, ...rows];
+    pieces = [
+      ...sheets,
+      ...lands,
+      ...reliefs,
+      ...details,
+      ...cards,
+      ...contents,
+      ...pins,
+      ...hikers,
+      ...probes,
+      ...flags,
+      ...photos,
+      ...maneuvers,
+      ...bars,
+      ...keys,
+      ...pops,
+      ...rows,
+    ];
     sunEl = page.querySelector<HTMLInputElement>('input[data-sun]');
     clockEl = page.querySelector<HTMLElement>('[data-clock]');
     cursorEl = page.querySelector<SVGCircleElement>('[data-cursor]');
@@ -1971,6 +2433,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
   }
 
+  function syncPinEngineStem() {
+    for (const p of pins) {
+      const hasStem = p.el.hasAttribute('data-pin-engine-stem');
+      if (hasStem !== pinEngineStem) {
+        p.el.toggleAttribute('data-pin-engine-stem', pinEngineStem);
+        p.stale = true;
+      }
+    }
+  }
+
   function setModel(next: EngineModel) {
     const terrainChanged = !model || model.terrain !== next.terrain;
     const mapStyleChanged = !model || model.mapStyle !== next.mapStyle;
@@ -1995,6 +2467,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     }
     collect();
+    syncPinEngineStem();
     measure();
     for (const p of pieces) p.stale = true;
     measured = true;
@@ -2080,13 +2553,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   });
   /** Moves an element's hit area off the canvas, for a face that is turned away. */
   function unplace(p: Piece) {
-    if (!GEOMETRY) return;
+    if (!GEOMETRY || !p.el.isConnected || !canvas.contains(p.el)) return;
     canvas.updateElementGeometry!(p.el, { canvasTransform: new DOMMatrix([0.001, 0, 0, 0.001, -99999, -99999]) });
   }
 
   // ---------------------------------------------------------------- the bar: real buttons, made into keys on a slab in front of the camera
   let bar: Piece | null = null;
   let keys: Piece[] = [];
+  let maneuverPiece: Piece | null = null;
   let keyHot: string | null = null;
   let keyDown: string | null = null;
   let riseStep = -1;
@@ -2111,8 +2585,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
   function hudFrame(dt: number, rise: number) {
     const items: DrawItem[] = [];
+    const hitAreas: HudHitArea[] = [];
     let busy = false;
-    if (!bar || noHud) return { items, busy };
+    if (!bar || noHud) {
+      return { items, busy, hitAreas };
+    }
     if (xKeyPiece) {
       const springK = 150;
       const springDamping = 2 * 0.28 * Math.sqrt(springK);
@@ -2127,7 +2604,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
     }
     measureHud();
-    if (!bar.w) return { items, busy };
+    if (!bar.w) {
+      return { items, busy, hitAreas };
+    }
     // the wells and the key faces in CSS follow the rise too, in steps so the textures are not redrawn every frame
     const step = Math.round(rise * 20) / 20;
     if (step !== riseStep) {
@@ -2137,7 +2616,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       need();
     }
     // a plane where one world unit is one CSS px, kept between the near and far planes
-    const Dh = vh / 2 / Math.tan(FOV / 2);
+    const Dh = vh / 2 / Math.tan(cam.fov / 2);
     const Dq = clamp(Dh, cam.D * 0.2, cam.D * 6);
     const s = Dq / Dh;
     const { r, u, dir, eye } = cam;
@@ -2206,6 +2685,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       k.O = back ? P(-hw, hh, -hd) : P(-hw, -hh, hd);
       k.ex = sc(a, 1);
       k.ey = back ? sc(b, -1) : sc(b, 1);
+      k.nrm = [...n];
       const facing = Math.cos(th) >= 0 ? !back : back;
       if (facing) place(k);
       else unplace(k);
@@ -2213,6 +2693,18 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       // faces share the HUD depth buffer, so drawing both can expose the stale
       // face during the first upload or while the key is settling.
       if (!facing) continue;
+      const screenCorners = cornersOf(k).map(toScreen);
+      if (screenCorners.every((corner): corner is ScreenPoint => corner !== null)) {
+        const xs = screenCorners.map(([x]) => x);
+        const ys = screenCorners.map(([, y]) => y);
+        hitAreas.push({
+          key: k.name,
+          x: Math.min(...xs),
+          y: Math.min(...ys),
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        });
+      }
       const neg = (v: Vec3) => v.map((x) => -x) as Vec3;
       const side = k.side;
       const faceEy = back ? neg(b) : b;
@@ -2257,7 +2749,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         shade: { w: k.w + 2 * m, h: k.h + 2 * m, blur, strength: (0.16 + d * 0.022) * rise },
       });
     }
-    return { items, busy };
+    return { items, busy, hitAreas };
   }
 
   // ---------------------------------------------------------------- pickers: a card that rises off the panel; time drums turn as real cylinders
@@ -2587,6 +3079,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let fullH = 1;
   let needN = 0;
   let routeStrokeZoom = 0;
+  let pinEngineStem = false;
 
   function updateRouteStrokeZoom(viewZoom: number) {
     const zoom = Math.max(1, viewZoom);
@@ -2599,6 +3092,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function frame(now: number, fixed?: number) {
     if (disposed) return;
+    if (pieces.some((p) => !p.el.isConnected || !canvas.contains(p.el))) {
+      collect();
+      syncPinEngineStem();
+      measure();
+    }
     const dt = fixed ?? Math.min(0.05, last ? (now - last) / 1000 : 0.016);
     last = now;
     // springs
@@ -2639,6 +3137,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       st.zoom = st.zoomT;
       st.pan = [...st.panT];
     }
+    const nextPinEngineStem = st.e >= 0.5;
+    if (nextPinEngineStem !== pinEngineStem) {
+      pinEngineStem = nextPinEngineStem;
+      syncPinEngineStem();
+      if (measured) {
+        measure();
+        for (const p of pins) p.stale = true;
+      }
+    }
     // flying, the lines are drawn once rather than again as the camera closes in: thin enough for the chase, still seen from high
     updateRouteStrokeZoom(flight ? Math.min(FLYOVER_STROKE_ZOOM, flight.fitD / chaseDist()) : st.zoom);
     if (st.sunT != null && sunEl) {
@@ -2666,10 +3173,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
 
     const flyPose = advanceFlight(dt);
-    if ((flight && flight.phase !== 'paused') || flyPose) moving = true;
+    const maneuverPose = advanceMapManeuver(dt);
+    if ((flight && flight.phase !== 'paused') || flyPose || maneuverPose) moving = true;
     const lift = liftOf(st.e);
     const lit = 0.78 * smooth(st.e / 0.4);
-    cam = flyPose ? rigCam(flyPose) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
+    cam = maneuverPose ? rigCam(maneuverPose) : flyPose ? rigCam(flyPose) : camera(st.e, st.yaw, st.tilt, st.zoom, st.pan);
     const camRight = cam.r;
     const panelCards = cards.filter((card) => !isXHintPiece(card));
     const xHintPhase = xHintPiece?.el.closest<HTMLElement>('[data-x-hint]')?.dataset.xHintPhase;
@@ -2798,6 +3306,28 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       : null;
     // pins grow on screen as the view zooms in, slower than the map so they do not cover it
     const shrink = 1 / Math.pow(flight ? Math.max(1, flight.fitD / cam.D) : st.zoom, 0.5);
+    // The drop clock starts only once the pin's picture has been uploaded: a layer that is not ready is not drawn, so a
+    // clock started at the element's birth runs out unseen while the first paint is still on its way, and the pin
+    // would pop in already landed.
+    const mapPinPiece = pins.find((p) => p.el.hasAttribute('data-map-pin'));
+    const mapPinReady = !!mapPinPiece && mapPinPiece.w > 0 && mapPinPiece.tex.ready;
+    if (mapPinDropRequested || (mapPinMotion === 'drop' && !mapPinReady)) moving = true;
+    if (mapPinDropRequested && mapPinReady) {
+      mapPinDropRequested = false;
+      mapPinMotion = 'drop';
+      mapPinMotionProgress = 0;
+    }
+    if (mapPinMotion && (mapPinMotion === 'rise' || mapPinReady)) {
+      const duration = mapPinMotion === 'drop' ? FLAG_FALL : MAP_PIN_RISE;
+      mapPinMotionProgress = Math.min(1, mapPinMotionProgress + dt / duration);
+      moving = true;
+      if (mapPinMotionProgress >= 1) {
+        const finished = mapPinMotion;
+        mapPinMotion = null;
+        if (finished === 'rise') callbacks.onMapPinRemoved?.();
+        else callbacks.onMapPinLanded?.();
+      }
+    }
 
     // where everything is
     const EPS = 0.03;
@@ -2813,9 +3343,41 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       order += 1;
       p.ex = [1, 0, 0];
       p.ey = [0, 1, 0];
+      if (p.kind === 'maneuver') {
+        const key = keys.find((candidate) => candidate.name === 'maneuver');
+        if (!key || !key.w || !key.h || !p.w || !p.h) {
+          p.hidden = true;
+          unplace(p);
+          continue;
+        }
+        p.hidden = false;
+        const cross: Vec3 = [
+          key.ex[1] * key.ey[2] - key.ex[2] * key.ey[1],
+          key.ex[2] * key.ey[0] - key.ex[0] * key.ey[2],
+          key.ex[0] * key.ey[1] - key.ex[1] * key.ey[0],
+        ];
+        const normalLength = Math.hypot(cross[0], cross[1], cross[2]) || 1;
+        const n = cross.map((v) => v / normalLength) as Vec3;
+        const keyCenter = [0, 1, 2].map(
+          (i) => key.O[i] + key.ex[i] * key.w * 0.5 + key.ey[i] * key.h * 0.5,
+        ) as Vec3;
+        const center = keyCenter.map(
+          (v, i) => v - key.ey[i] * (key.h * 0.5 + p.h * 0.5 + 14) + n[i] * 32,
+        ) as Vec3;
+        p.ex = [...key.ex];
+        p.ey = [...key.ey];
+        p.nrm = n;
+        p.O = center.map((v, i) => v - p.ex[i] * p.w * 0.5 - p.ey[i] * p.h * 0.5) as Vec3;
+        p.z = 0;
+        p.topZ = 0;
+        place(p);
+        continue;
+      }
       if (p.kind === 'card') {
         if (isXHintPiece(p)) {
-          const key = keys.find((candidate) => candidate.name === 'x');
+          const hintKind = xHintPiece?.el.closest<HTMLElement>('[data-x-hint]')?.dataset.xHintKind;
+          const keyName = hintKind === 'permalink' ? 'permalink' : hintKind === 'map-pin' ? 'pin' : 'x';
+          const key = keys.find((candidate) => candidate.name === keyName);
           if (!key || !key.w || !key.h || !p.w || !p.h) {
             p.O = [0, 0, 0.2];
             continue;
@@ -2944,6 +3506,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       }
       if (p.kind === 'pin') {
         const s = smooth((st.e - 0.16) / 0.26);
+        const isMapPin = p.el.hasAttribute('data-map-pin');
+        const movingMapPin = isMapPin && mapPinMotion !== null;
+        if (p.el.hasAttribute('data-map-pin-moving') !== movingMapPin) p.el.toggleAttribute('data-map-pin-moving', movingMapPin);
         const ax = MAPX + p.at.x;
         const ay = MAPY + p.at.y;
         const gz = groundZ(p.at.x, p.at.y, lift);
@@ -2963,7 +3528,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
           p.anchor = [ax, ay, lz, lz];
           continue;
         }
-        const az = gz + p.stand * s * shrink + 0.12 + EPS * (40 + order);
+        const pinSkyHeight = isMapPin ? pinFallHeight(ax, ay, gz, p.h) : 0;
+        const pinMotionHeight =
+          isMapPin && mapPinMotion === 'drop'
+            ? pinSkyHeight * (1 - mapPinMotionProgress ** 2)
+            : isMapPin && mapPinMotion === 'rise'
+              ? pinSkyHeight * mapPinMotionProgress ** 1.8
+              : 0;
+        const az = gz + p.stand * s * shrink + 0.12 + EPS * (40 + order) + pinMotionHeight;
         const ang = (s * Math.PI) / 2;
         let rx = lerp(1, camRight[0], s);
         let ry = lerp(0, camRight[1], s);
@@ -2986,10 +3558,48 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     // the flag keeps flying and the photo floating, but that alone is no reason to draw the rest of the picture coarser
     const flying = !!info || !!photo;
     for (const p of pieces) {
-      if (p.kind === 'terrain' || p.kind === 'relief' || p.kind === 'detail' || p.kind === 'bar' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.kind === 'photo' || p.hidden) continue;
+      if (p.kind === 'terrain' || p.kind === 'relief' || p.kind === 'detail' || p.kind === 'bar' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.kind === 'photo' || p.kind === 'maneuver' || p.hidden) continue;
       if (p.kind === 'pin' && pinCovered(p)) unplace(p);
       else place(p);
     }
+    const menuHitAreas: HudHitArea[] = [];
+    const maneuverMenu = maneuverPiece;
+    if (maneuverMenu && !maneuverMenu.hidden && !noHud) {
+      const localOffset = (button: HTMLElement, axis: 'x' | 'y') => {
+        let value = axis === 'x' ? button.offsetLeft : button.offsetTop;
+        let parent = button.offsetParent as HTMLElement | null;
+        while (parent && parent !== maneuverMenu.el) {
+          value += axis === 'x' ? parent.offsetLeft : parent.offsetTop;
+          parent = parent.offsetParent as HTMLElement | null;
+        }
+        return value;
+      };
+      for (const button of maneuverMenu.el.querySelectorAll<HTMLElement>('[data-hud-hit]')) {
+        const key = button.dataset.hudHit;
+        const x = localOffset(button, 'x');
+        const y = localOffset(button, 'y');
+        const width = button.offsetWidth;
+        const height = button.offsetHeight;
+        if (!key || width <= 0 || height <= 0) continue;
+        const corners = [
+          [x, y],
+          [x + width, y],
+          [x + width, y + height],
+          [x, y + height],
+        ].map(([px, py]) => toScreen([0, 1, 2].map((i) => maneuverMenu.O[i] + maneuverMenu.ex[i] * px + maneuverMenu.ey[i] * py) as Vec3));
+        if (!corners.every((corner): corner is ScreenPoint => corner !== null)) continue;
+        const xs = corners.map(([px]) => px);
+        const ys = corners.map(([, py]) => py);
+        menuHitAreas.push({
+          key,
+          x: Math.min(...xs),
+          y: Math.min(...ys),
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        });
+      }
+    }
+    callbacks.onHudHitAreas?.([...H.hitAreas, ...menuHitAreas]);
     placeFlag();
     placePhoto();
     const PF = popFrame(dt);
@@ -3002,6 +3612,89 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     // scene
     const q = quad;
     const opaque: DrawItem[] = [];
+    const maneuverHud: DrawItem[] = [];
+    const menu = maneuverPiece;
+    if (menu && !menu.hidden) {
+      const depth = 8 * Math.max(0.6, Math.hypot(menu.ex[0], menu.ex[1], menu.ex[2]));
+      const back = menu.nrm.map((v) => -v) as Vec3;
+      const backO = menu.O.map((v, i) => v - menu.nrm[i] * depth) as Vec3;
+      const side = [0.25, 0.28, 0.34] as Vec3;
+      const exLength = Math.hypot(menu.ex[0], menu.ex[1], menu.ex[2]) || 1;
+      const eyLength = Math.hypot(menu.ey[0], menu.ey[1], menu.ey[2]) || 1;
+      const exUnit = menu.ex.map((v) => v / exLength) as Vec3;
+      const eyUnit = menu.ey.map((v) => v / eyLength) as Vec3;
+      const deep = menu.nrm.map((v) => v * -depth) as Vec3;
+      const radius = Math.min(14, menu.w / 2, menu.h / 2);
+      const at = (x: number, y: number, z = 0) =>
+        [0, 1, 2].map((i) => menu.O[i] + menu.ex[i] * x + menu.ey[i] * y + menu.nrm[i] * z) as Vec3;
+      maneuverHud.push(
+        q(menu, {
+          O: backO,
+          solid: [0.12, 0.14, 0.18],
+          round: [radius / Math.max(1, menu.w), radius / Math.max(1, menu.h)],
+          useNormal: true,
+          nrm: back,
+        }),
+        q(menu, { glow: 0.35 }),
+        {
+          solid: side,
+          useNormal: true,
+          nrm: eyUnit.map((v) => -v) as Vec3,
+          O: at(radius, 0),
+          ex: menu.ex.map((v) => v * (menu.w - 2 * radius)) as Vec3,
+          ey: deep,
+        },
+        {
+          solid: side,
+          useNormal: true,
+          nrm: exUnit,
+          O: at(menu.w, radius),
+          ex: menu.ey.map((v) => v * (menu.h - 2 * radius)) as Vec3,
+          ey: deep,
+        },
+        {
+          solid: side,
+          useNormal: true,
+          nrm: eyUnit,
+          O: at(radius, menu.h),
+          ex: menu.ex.map((v) => v * (menu.w - 2 * radius)) as Vec3,
+          ey: deep,
+        },
+        {
+          solid: side,
+          useNormal: true,
+          nrm: exUnit.map((v) => -v) as Vec3,
+          O: at(0, radius),
+          ex: menu.ey.map((v) => v * (menu.h - 2 * radius)) as Vec3,
+          ey: deep,
+        },
+      );
+      const corners = [
+        [radius, radius, Math.PI, (Math.PI * 3) / 2],
+        [menu.w - radius, radius, -Math.PI / 2, 0],
+        [menu.w - radius, menu.h - radius, 0, Math.PI / 2],
+        [radius, menu.h - radius, Math.PI / 2, Math.PI],
+      ] as const;
+      const ARC = 4;
+      for (const [cx, cy, start, end] of corners) {
+        for (let j = 0; j < ARC; j += 1) {
+          const t0 = start + ((end - start) * j) / ARC;
+          const t1 = start + ((end - start) * (j + 1)) / ARC;
+          const tm = (t0 + t1) / 2;
+          const p0 = at(cx + radius * Math.cos(t0), cy + radius * Math.sin(t0));
+          const p1 = at(cx + radius * Math.cos(t1), cy + radius * Math.sin(t1));
+          const nrm = [0, 1, 2].map((i) => exUnit[i] * Math.cos(tm) + eyUnit[i] * Math.sin(tm)) as Vec3;
+          maneuverHud.push({
+            solid: side,
+            useNormal: true,
+            nrm,
+            O: p0,
+            ex: [0, 1, 2].map((i) => p1[i] - p0[i]) as Vec3,
+            ey: deep,
+          });
+        }
+      }
+    }
     for (const c of cards) {
       const back = c.nrm.map((v) => -v) as Vec3;
       const scaleX = Math.hypot(c.ex[0], c.ex[1], c.ex[2]);
@@ -3032,8 +3725,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (sheet) opaque.push(q(sheet, { recv: true }));
     const BIG = 40000;
     opaque.push({ table: true, recv: true, O: [PW / 2 - BIG, PH / 2 - BIG, -0.6], ex: [2 * BIG, 0, 0], ey: [0, 2 * BIG, 0] });
+    // a map pin falling or rising is still drawn, only its leg is left out until it stands
     const standing = [...pins, ...(hiker ? [hiker] : []), ...(probe && !probe.hidden ? [probe] : [])];
     for (const p of standing) {
+      if (p.el.hasAttribute('data-map-pin-moving')) continue;
       const hgt = p.anchor[3] - p.anchor[2];
       if (hgt > 1) {
         const sw = 1.1 * shrink;
@@ -3093,7 +3788,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       },
       opaque,
       blend,
-      hud: photoFlying ? [...H.items, ...photoItems, ...xHintHud] : [...H.items, ...xHintHud],
+      hud: photoFlying
+        ? [...H.items, ...(noHud ? [] : maneuverHud), ...photoItems, ...xHintHud]
+        : [...H.items, ...(noHud ? [] : maneuverHud), ...xHintHud],
       hudLight: lit,
       casters:
         flagCasters || photoCast.length ? { cloth: flagCasters?.cloth, quads: [...(flagCasters?.quads ?? []), ...photoCast] } : null,
@@ -3130,7 +3827,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onDetail(null);
   }
   function checkDetail() {
-    if (disposed || !model || drag || st.eT < 1 || st.e < 0.6) return;
+    if (disposed || !model || drag || mapManeuver || mapManeuverSelection || st.eT < 1 || st.e < 0.6) return;
     const lift = liftOf(st.e);
     const toScreen = (x: number, y: number, z: number) => {
       const c = mul([x, y, z, 1]);
@@ -3187,6 +3884,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   /** Re-collect HUD pieces after React conditionally adds or removes a key. */
   function refreshHud() {
     collect();
+    syncPinEngineStem();
     measure();
     for (const p of pieces) p.stale = true;
     need();
@@ -3262,7 +3960,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     for (const p of pieces) {
       if (!p.stale || !p.w) continue;
       try {
-        let k = p.kind === 'content' || p.kind === 'pin' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.kind === 'photo' ? TS * 2 : TS;
+        let k = p.kind === 'content' || p.kind === 'pin' || p.kind === 'key' || p.kind === 'pop' || p.kind === 'row' || p.kind === 'flag' || p.kind === 'photo' || p.kind === 'maneuver' ? TS * 2 : TS;
         if (p.kind === 'terrain' || p.kind === 'relief') k = Math.min(TS * 1.5, R.maxTexture / Math.max(p.w, p.h), 4096 / Math.max(p.w, p.h));
         if (p.kind === 'detail') k = Math.min(Number(p.el.dataset.density) || 1, detailSide() / Math.max(p.w, p.h));
         R.upload(p.tex, p.el, Math.max(1, Math.round(p.w * k)), Math.max(1, Math.round(p.h * k)));
@@ -3398,6 +4096,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     st.panT[2] = clamp(st.panT[2], -b[2], topZ(1) - b[2]);
   }
 
+  function setManeuverSelecting(on: boolean) {
+    canvas.classList.toggle('maneuver-selecting', on);
+    probe?.el.toggleAttribute('data-targeting', on);
+  }
+
   function setHover(next: { x: number; y: number; ele: number } | null) {
     hover = next;
     if (!probe) return;
@@ -3470,9 +4173,47 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
   }
 
+  let viewInteractionNotified = false;
+  const notifyViewInteraction = (reason: string) => {
+    if (viewInteractionNotified) return;
+    viewInteractionNotified = true;
+    callbacks.onViewInteraction?.(reason);
+  };
   const onPointerDown = (ev: PointerEvent) => {
     if (cameraDrag) return;
     const t = ev.target as Element;
+    viewInteractionNotified = false;
+    if (mapPinSelection) {
+      if (t !== canvas && (t.closest?.(INTERACTIVE) || t.closest?.('[data-hud]'))) return;
+      if (!onTerrain(t)) return;
+      ev.preventDefault();
+      moved = 0;
+      px = ev.clientX;
+      py = ev.clientY;
+      drag = 'pin-select';
+      canvas.setPointerCapture(ev.pointerId);
+      updateGroundHover(ev);
+      return;
+    }
+    if (mapManeuverSelection) {
+      if (t.closest?.('[data-key="map-cancel"]')) return;
+      if (t !== canvas && (t.closest?.(INTERACTIVE) || t.closest?.('[data-hud]'))) return;
+      if (!onTerrain(t)) return;
+      ev.preventDefault();
+      moved = 0;
+      px = ev.clientX;
+      py = ev.clientY;
+      drag = 'maneuver-select';
+      canvas.setPointerCapture(ev.pointerId);
+      updateGroundHover(ev);
+      return;
+    }
+    if (mapManeuver) {
+      if (!t.closest?.('[data-key="map-cancel"]')) {
+        ev.preventDefault();
+        return;
+      }
+    }
     if (flight && !t.closest?.('[data-key="fly"],[data-key="stop"]')) leaveFlightAtCurrentView();
     // the right and middle buttons move the model from anywhere but a field being typed in
     const panning = ev.button === 2 || ev.button === 1;
@@ -3536,6 +4277,24 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const onPointerMove = (ev: PointerEvent) => {
     if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
     flagHover = !!(ev.target as Element).closest?.('[data-piece="flag"]');
+    if (mapPinSelection && drag === 'pin-select') {
+      const dx = ev.clientX - px;
+      const dy = ev.clientY - py;
+      px = ev.clientX;
+      py = ev.clientY;
+      moved += Math.abs(dx) + Math.abs(dy);
+      updateGroundHover(ev);
+      return;
+    }
+    if (mapManeuverSelection && drag === 'maneuver-select') {
+      const dx = ev.clientX - px;
+      const dy = ev.clientY - py;
+      px = ev.clientX;
+      py = ev.clientY;
+      moved += Math.abs(dx) + Math.abs(dy);
+      updateGroundHover(ev);
+      return;
+    }
     if (!drag) {
       // In 3D the ground under the pointer reads out its height, and that contour lights up.
       // This path is deliberately independent of mapMode: only the flat map drag below is Map-specific.
@@ -3572,9 +4331,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       callbacks.onMapDrag(dx, dy);
       mapDragTotal[0] += dx;
       mapDragTotal[1] += dy;
+      if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) notifyViewInteraction('map_pan');
       need();
       return;
     }
+    if (moved > 0.5) notifyViewInteraction(drag === 'pan' ? 'camera_pan' : 'camera_rotate');
     if (drag === 'pan' && panFrom) {
       const before = st.panT;
       const [sx, sy] = canvasPoint(ev);
@@ -3623,9 +4384,28 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const was = drag;
     drag = null;
     panFrom = null;
+    if (was === 'pin-select') {
+      const [sx, sy] = canvasPoint(ev);
+      const P = pick(cam, sx, sy, liftOf(st.e));
+      mapPinSelection = false;
+      setManeuverSelecting(false);
+      setHover(null);
+      callbacks.onMapPinSelectionChange?.(false);
+      if (moved < 5 && P) {
+        const mx = P[0] - MAPX;
+        const my = P[1] - MAPY;
+        if (mx >= 0 && my >= 0 && mx <= MW && my <= MH) {
+          callbacks.onMapPinSelected?.(mx, my);
+        }
+      }
+      need();
+      return;
+    }
     if (was === 'map') {
       if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapPan(...mapDragTotal);
       mapDragTotal = [0, 0];
+    } else if ((was === 'turn' || was === 'pan') && moved > 0.5) {
+      notifyViewInteraction(was === 'pan' ? 'camera_pan' : 'camera_rotate');
     }
     if (was === 'drum' && drumDrag) {
       const d = drumDrag.drum;
@@ -3634,6 +4414,20 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       else d.vT = boundedDrumValue(pop!, d, Math.round(d.v + clamp(drumDrag.vel, -40, 40) * 0.12));
       if (pop) setFocus(pop.drums.indexOf(d));
       drumDrag = null;
+      need();
+      return;
+    }
+    if (was === 'maneuver-select') {
+      const [sx, sy] = canvasPoint(ev);
+      const P = pick(cam, sx, sy, liftOf(st.e));
+      if (moved < 5 && P) {
+        const mx = P[0] - MAPX;
+        const my = P[1] - MAPY;
+        if (mx >= 0 && my >= 0 && mx <= MW && my <= MH) {
+          notifyViewInteraction('map_maneuver');
+          startMapManeuverAt(P);
+        }
+      }
       need();
       return;
     }
@@ -3685,6 +4479,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   const onWheel = (ev: WheelEvent) => {
     const t = ev.target as Element;
+    if (mapManeuver || mapManeuverSelection) {
+      ev.preventDefault();
+      return;
+    }
     // the text on the flag scrolls under the wheel when it is longer than the cloth
     const scroller = t.closest?.<HTMLElement>('.flag-text');
     if (scroller && scroller.scrollHeight > scroller.clientHeight + 1) return;
@@ -3712,6 +4510,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     ev.preventDefault();
     const dy = ev.deltaMode === 1 ? ev.deltaY * 30 : ev.deltaY;
     if (!dy) return;
+    notifyViewInteraction('camera_zoom_or_raise');
     const now = performance.now();
     const input = ev.ctrlKey ? 'pinch' : 'wheel';
     if (now - wheelAt > WHEEL_GAP) {
@@ -3774,6 +4573,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   const onKey = (ev: KeyboardEvent) => {
+    if (mapPinSelection) {
+      if (ev.key === 'Escape') mapPinCancel();
+      ev.preventDefault();
+      return;
+    }
+    if (mapManeuver || mapManeuverSelection) {
+      if (ev.key === 'Escape') returnFromMapManeuver();
+      ev.preventDefault();
+      return;
+    }
     if (flight) leaveFlightAtCurrentView();
     if (popKey(ev)) {
       ev.preventDefault();
@@ -3857,22 +4666,36 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   // the picture without the bar, and without the strip at the bottom the bar stands in
+  const captureSizes = new WeakMap<HTMLCanvasElement, { width: number; height: number }>();
   function captureFrame(target: HTMLCanvasElement) {
-    const scale = canvas.width / Math.max(1, vw);
-    const cut = Math.round((bar ? bar.h + 18 + 10 : 0) * scale);
+    const animationClock = last;
     noHud = true;
     try {
       frame(performance.now(), 0);
-      const width = canvas.width;
-      const height = Math.max(1, canvas.height - cut);
-      if (target.width !== width || target.height !== height) {
-        target.width = width;
-        target.height = height;
+      const sourceWidth = canvas.width;
+      const scale = sourceWidth / Math.max(1, vw);
+      const cut = Math.round((bar ? bar.h + 18 + 10 : 0) * scale);
+      const sourceHeight = Math.max(1, canvas.height - cut);
+      let size = captureSizes.get(target);
+      if (!size) {
+        size = { width: sourceWidth, height: sourceHeight };
+        captureSizes.set(target, size);
       }
-      target.getContext('2d')?.drawImage(canvas, 0, 0, width, height, 0, 0, width, height);
+      if (target.width !== size.width || target.height !== size.height) {
+        target.width = size.width;
+        target.height = size.height;
+      }
+      target
+        .getContext('2d')
+        ?.drawImage(canvas, 0, 0, sourceWidth, sourceHeight, 0, 0, size.width, size.height);
     } finally {
       noHud = false;
-      frame(performance.now(), 0);
+      try {
+        frame(performance.now(), 0);
+      } finally {
+        // A recording-only render must not reset the clock used by the live animation.
+        last = animationClock;
+      }
     }
   }
 
@@ -4015,12 +4838,20 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     toggle,
     flyover,
     toggleFlyoverPause,
+    startMapManeuver: mapManeuverStart,
+    cancelMapManeuver: returnFromMapManeuver,
+    startMapPinPlacement: mapPinStart,
+    cancelMapPinPlacement: mapPinCancel,
+    startMapPinDrop,
+    startMapPinRemoval,
     toggleInfo,
     showPhoto,
     hidePhoto,
     isFlat: () => st.e < 0.03 && st.eT < 0.03,
     focusWay,
     setPlacing,
+    getViewState,
+    setViewState,
     capture,
     captureFrame,
     refreshHud,
