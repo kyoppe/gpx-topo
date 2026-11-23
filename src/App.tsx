@@ -5,6 +5,7 @@ import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } 
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
 import { createCenteredProjection, createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
+import { searchGsiAddress } from './gsiSearch';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
@@ -563,11 +564,16 @@ export default function App() {
       setMapSearchResults([]);
       setMapSearchLocation(null);
       try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-        if (!response.ok) throw new Error(`Search failed: ${response.status}`);
-        const body: unknown = await response.json();
+        let results: SearchLocation[];
+        if (googleMapsUrl) {
+          const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+          if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+          const body: unknown = await response.json();
+          results = normalizeSearchResponse(body);
+        } else {
+          results = await searchGsiAddress(query);
+        }
         if (request !== mapSearchRequestRef.current) return;
-        const results = normalizeSearchResponse(body);
         if (googleMapsUrl && results.length > 0) {
           centerMap(results[0], 'google_maps_url', results[0]);
         } else {
