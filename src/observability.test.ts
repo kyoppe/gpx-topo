@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { LogsEvent } from '@datadog/browser-logs';
+import { datadogLogs, type LogsEvent } from '@datadog/browser-logs';
+import { datadogRum } from '@datadog/browser-rum';
 
-import { enrichBrowserLog } from './observability';
+import { enrichBrowserLog, startObservability } from './observability';
+import * as viewEngagement from './viewEngagement';
+
+afterEach(() => vi.restoreAllMocks());
 
 function log(overrides: Partial<LogsEvent> = {}): LogsEvent {
   return {
@@ -36,4 +40,18 @@ describe('enrichBrowserLog', () => {
     expect(consoleEvent.event_type).toBe('browser_console');
     expect(errorEvent.event_type).toBe('browser_error');
   });
+});
+
+it('starts view engagement once, after RUM initialization', () => {
+  const startTracker = vi.spyOn(viewEngagement, 'startViewEngagement').mockReturnValue(() => {});
+  const initRum = vi.spyOn(datadogRum, 'init').mockImplementation(() => {
+    expect(startTracker).not.toHaveBeenCalled();
+  });
+  vi.spyOn(datadogLogs, 'init').mockImplementation(() => {});
+
+  startObservability();
+  startObservability();
+
+  expect(initRum).toHaveBeenCalledTimes(1);
+  expect(startTracker).toHaveBeenCalledTimes(1);
 });
