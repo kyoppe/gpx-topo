@@ -3233,6 +3233,23 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   }
   const onTerrain = (t: Element) => t === canvas || !!t.closest?.('[data-piece="sheet"]');
+  /** Update the ground hover state shared by GPX and Map mode once the model is raised. */
+  function updateGroundHover(ev: PointerEvent) {
+    const t = ev.target as Element;
+    if (st.eT < 0.5 || st.e < 0.6 || !model?.terrain || !onTerrain(t)) {
+      if (hover) setHover(null);
+      return;
+    }
+    const [sx, sy] = canvasPoint(ev);
+    const P = pick(cam, sx, sy, liftOf(st.e));
+    const mx = P ? P[0] - MAPX : -1;
+    const my = P ? P[1] - MAPY : -1;
+    if (!P || mx < 0 || my < 0 || mx > MW || my > MH) {
+      if (hover) setHover(null);
+      return;
+    }
+    setHover({ x: mx, y: my, ele: model.terrain.elev(mx, my) });
+  }
   /** The pointer on the elevation profile drawing (px), wherever its card stands. */
   function profileAt(ev: { clientX: number; clientY: number }): [number, number] | null {
     const host = profileEl?.closest<HTMLElement>('[data-piece]');
@@ -3312,21 +3329,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const onPointerMove = (ev: PointerEvent) => {
     flagHover = !!(ev.target as Element).closest?.('[data-piece="flag"]');
     if (!drag) {
-      // in 3D the ground under the pointer reads out its height, and that contour lights up
-      const t = ev.target as Element;
-      if (st.eT < 0.5 || st.e < 0.6 || !model?.terrain || !onTerrain(t)) {
-        if (hover) setHover(null);
-        return;
-      }
-      const [sx, sy] = canvasPoint(ev);
-      const P = pick(cam, sx, sy, liftOf(st.e));
-      const mx = P ? P[0] - MAPX : -1;
-      const my = P ? P[1] - MAPY : -1;
-      if (!P || mx < 0 || my < 0 || mx > MW || my > MH) {
-        if (hover) setHover(null);
-        return;
-      }
-      setHover({ x: mx, y: my, ele: model.terrain.elev(mx, my) });
+      // In 3D the ground under the pointer reads out its height, and that contour lights up.
+      // This path is deliberately independent of mapMode: only the flat map drag below is Map-specific.
+      updateGroundHover(ev);
       return;
     }
     if (drag === 'drum' && drumDrag) {

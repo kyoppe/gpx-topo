@@ -316,6 +316,9 @@ export default function App() {
     [mapViewport, layout.mapWidth, layout.mapHeight],
   );
   const projection = viewMode === 'map' ? mapProjection : gpxProjection;
+  // Map-only prefetching is useful while flat for dragging, but the raised model
+  // should use the same visible-area terrain pipeline as GPX mode.
+  const flatMapMode = viewMode === 'map' && !apart;
   mapProjectionRef.current = mapProjection;
   basemapRef.current = basemap;
   const progress = useMemo(() => (points ? trackProgress(points) : null), [points]);
@@ -756,7 +759,7 @@ export default function App() {
     if (!projection || !flat || !relief) return;
     const controller = new AbortController();
     const density = Math.min(2, window.devicePixelRatio || 1);
-    const pad = viewMode === 'map' ? MAP_PAN_BUFFER : 0;
+    const pad = flatMapMode ? MAP_PAN_BUFFER : 0;
     const renderProjection = pad
       ? createCenteredProjection(projection.centerLat, projection.centerLon, projection.width + pad * 2, projection.height + pad * 2, projection.scale)
       : projection;
@@ -846,11 +849,11 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [baseMapStyle, projection, viewMode]);
+  }, [baseMapStyle, flatMapMode, projection, viewMode]);
 
   useEffect(() => {
     if (!projection) return;
-    const sourcePad = viewMode === 'map' ? DEM_PREFETCH : 0;
+    const sourcePad = flatMapMode ? DEM_PREFETCH : 0;
     const sourceProjection = sourcePad
       ? createCenteredProjection(
           projection.centerLat,
@@ -862,8 +865,18 @@ export default function App() {
       : projection;
     const hasPrefetch =
       viewMode === 'gpx' ||
-      (demGrid && demGrid.projection.width >= projection.width + DEM_PREFETCH * 2 && demGrid.projection.height >= projection.height + DEM_PREFETCH * 2);
-    const canReuse = demGrid && hasPrefetch && (viewMode === 'gpx' || demGrid.grid.source === 'gsi-dem') && projectionRect(demGrid.projection, projection);
+      (flatMapMode &&
+        demGrid &&
+        demGrid.projection.width >= projection.width + DEM_PREFETCH * 2 &&
+        demGrid.projection.height >= projection.height + DEM_PREFETCH * 2);
+    const exactProjection = demGrid?.projection === projection;
+    const canReuse =
+      demGrid &&
+      (viewMode === 'gpx'
+        ? hasPrefetch && projectionRect(demGrid.projection, projection)
+        : flatMapMode
+          ? hasPrefetch && demGrid.grid.source === 'gsi-dem' && !!projectionRect(demGrid.projection, projection)
+          : exactProjection);
     if (canReuse) return;
     const controller = new AbortController();
     const { signal } = controller;
@@ -1465,14 +1478,10 @@ export default function App() {
                   </span>
                 </div>
               )}
-              {viewMode === 'gpx' && (
-                <>
-                  <div className="hiker" data-piece="hiker" drawable="" role="img" aria-label={copy.ui.positionAtTime} />
-                  <div className="probe" data-piece="probe" drawable="" aria-hidden="true">
-                    <b data-probe-text="">-</b>
-                  </div>
-                </>
-              )}
+              {viewMode === 'gpx' && <div className="hiker" data-piece="hiker" drawable="" role="img" aria-label={copy.ui.positionAtTime} />}
+              <div className="probe" data-piece="probe" drawable="" aria-hidden="true">
+                <b data-probe-text="">-</b>
+              </div>
             </div>
 
             <aside className="side" style={{ left: layout.sideX, top: PAD, width: PANEL_WIDTH, height: layout.pageHeight - PAD * 2 }}>
