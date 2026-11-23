@@ -1,8 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LogsEvent } from '@datadog/browser-logs';
+import { datadogRum } from '@datadog/browser-rum';
 
+import { supportsHtmlInCanvas } from './htmlInCanvas';
 import { enrichBrowserLog } from './observability';
+
+vi.mock('@datadog/browser-rum', () => ({
+  datadogRum: { init: vi.fn(), setGlobalContextProperty: vi.fn() },
+}));
+vi.mock('@datadog/browser-logs', () => ({
+  datadogLogs: { init: vi.fn() },
+}));
+vi.mock('@datadog/browser-rum-react', () => ({ reactPlugin: vi.fn() }));
+vi.mock('./htmlInCanvas', () => ({ supportsHtmlInCanvas: vi.fn() }));
 
 function log(overrides: Partial<LogsEvent> = {}): LogsEvent {
   return {
@@ -35,5 +46,25 @@ describe('enrichBrowserLog', () => {
 
     expect(consoleEvent.event_type).toBe('browser_console');
     expect(errorEvent.event_type).toBe('browser_error');
+  });
+});
+
+describe('startObservability', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it.each([true, false])('sets HTML-in-Canvas support to %s after RUM init', async (supported) => {
+    vi.mocked(supportsHtmlInCanvas).mockReturnValue(supported);
+    const { startObservability } = await import('./observability');
+
+    startObservability();
+
+    expect(datadogRum.init).toHaveBeenCalledOnce();
+    expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledExactlyOnceWith('html_in_canvas_supported', supported);
+    expect(vi.mocked(datadogRum.init).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(datadogRum.setGlobalContextProperty).mock.invocationCallOrder[0],
+    );
   });
 });

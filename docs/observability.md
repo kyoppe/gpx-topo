@@ -45,6 +45,13 @@ workflow performs the build or deployment.
 - Browser Logs also receive `service`, `env`, and `version` when the SDK event
   does not already contain them.
 
+Immediately after RUM initialization, the feature probe sets the global boolean
+`html_in_canvas_supported`. Filter or group views, actions, errors, resources,
+and long tasks by `@context.html_in_canvas_supported` (`true` or `false`), without
+depending on LCP selectors. This reports API support; use the existing
+`html_in_canvas_ready` and `html_in_canvas_painted` actions to measure readiness
+and painting success.
+
 User-entered values are not masked. Waypoint names, GPX file names, and GPX
 content may be included in RUM context or Browser Logs when they are relevant
 to the operation being recorded.
