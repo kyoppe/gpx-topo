@@ -16,7 +16,7 @@ describe('parseMapPermalink', () => {
   it('parses 3D camera parameters and normalizes bearing', () => {
     expect(
       parseMapPermalink(
-        '?mode=map&view=3d&bearing=-30&pitch=42&zoom=1.8&pan_x=12.345&pan_y=-6.7&pan_z=0.25&date=2026-11-24&style=photoNames&hillshade=off&pin_lat=35.68&pin_lon=139.76&pin_label=Summit&sun=auto',
+        '?mode=map&view=3d&bearing=-30&pitch=42&zoom=1.8&pan_x=12.345&pan_y=-6.7&pan_z=0.25&date=2026-11-24&style=photoNames&hillshade=off&pin_lat=35.68&pin_lon=139.76&pin_label=Summit&sun=auto&sun_speed=fast',
       ),
     ).toMatchObject({
       view: '3d',
@@ -29,6 +29,7 @@ describe('parseMapPermalink', () => {
       hillshade: false,
       pin: { lat: 35.68, lon: 139.76, label: 'Summit' },
       sun: 'auto',
+      sunSpeed: 'fast',
       timeMinutes: null,
     });
   });
@@ -55,6 +56,7 @@ describe('parseMapPermalink', () => {
         pin: { lat: 35.68, lon: 139.76, label: 'Summit' },
         sunlight: true,
         sunAuto: false,
+        sunSpeed: 'normal',
         timeMinutes: 1110,
       },
       'https://example.test/?lang=ja',
@@ -79,11 +81,67 @@ describe('parseMapPermalink', () => {
         pin: null,
         sunlight: true,
         sunAuto: false,
+        sunSpeed: 'normal',
         timeMinutes: 630,
       },
       'https://example.test/',
     );
 
     expect(url).toBe('https://example.test/?mode=map&lat=35.681236&lon=139.767125&style=pale&hillshade=on&view=flat&time=10%3A30');
+  });
+
+  it('accepts normal auto sunlight speed and ignores it outside auto mode', () => {
+    expect(parseMapPermalink('?mode=map&sun=auto&sun_speed=normal')).toMatchObject({
+      sun: 'auto',
+      sunSpeed: 'normal',
+    });
+    expect(parseMapPermalink('?mode=map&sun=off&sun_speed=fast')).toMatchObject({
+      sun: 'off',
+      sunSpeed: 'normal',
+    });
+    expect(parseMapPermalink('?mode=map&sun=off&sun_speed=fast')?.ignoredParameters).toContain('sun_speed');
+  });
+
+  it('emits non-default auto sunlight speed and omits normal speed', () => {
+    const fast = buildMapPermalink(
+      {
+        center: { lat: 35.681236, lon: 139.767125 },
+        view: '3d',
+        bearing: 0,
+        pitch: 45,
+        zoom: 2,
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        sunlight: true,
+        sunAuto: true,
+        sunSpeed: 'fast',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+    expect(fast).toContain('&sun=auto&sun_speed=fast');
+
+    const normal = buildMapPermalink(
+      {
+        center: { lat: 35.681236, lon: 139.767125 },
+        view: '3d',
+        bearing: 0,
+        pitch: 45,
+        zoom: 2,
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        sunlight: true,
+        sunAuto: true,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+    expect(normal).toContain('&sun=auto');
+    expect(normal).not.toContain('sun_speed=');
   });
 });

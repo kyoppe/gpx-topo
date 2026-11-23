@@ -18,7 +18,7 @@ import { searchGsiAddress } from './gsiSearch';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
-import { buildMapPermalink, parseMapPermalink, type MapPermalinkPin } from './mapPermalink';
+import { buildMapPermalink, parseMapPermalink, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
@@ -45,6 +45,7 @@ const DEM_PREFETCH = MAP_PAN_BUFFER * 2;
 const PROFILE_WIDTH = PANEL_WIDTH - 36;
 const PROFILE_HEIGHT = 84;
 const MAP_SUN_SPEEDS = [12, 24, 72] as const;
+const MAP_SUN_SPEED_NAMES: readonly MapPermalinkSunSpeed[] = ['slow', 'normal', 'fast'];
 const MAP_SUNRISE_OFFSET = 60;
 
 type Layout = {
@@ -275,7 +276,7 @@ export default function App() {
   const [hillshade, setHillshade] = useState(() => permalink?.hillshade ?? savedView?.hillshade ?? true);
   const [mapSunlight, setMapSunlight] = useState(() => (permalink?.sun === 'off' ? false : permalink?.sun ? true : savedView?.mapSunlight ?? true));
   const [mapSunAuto, setMapSunAuto] = useState(false);
-  const [mapSunSpeed, setMapSunSpeed] = useState(1);
+  const [mapSunSpeed, setMapSunSpeed] = useState(() => MAP_SUN_SPEED_NAMES.indexOf(permalink?.sunSpeed ?? 'normal'));
   const [mapLoading, setMapLoading] = useState(false);
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
@@ -2020,6 +2021,7 @@ export default function App() {
         pin: mapPin,
         sunlight: mapSunlight,
         sunAuto: mapSunAuto,
+        sunSpeed: MAP_SUN_SPEED_NAMES[mapSunSpeed] ?? 'normal',
         timeMinutes: Number.isFinite(timeMinutes) ? timeMinutes : 630,
       },
       window.location.href,

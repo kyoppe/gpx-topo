@@ -2,6 +2,7 @@ import type { MapStyle } from './basemap';
 
 export type MapPermalinkView = 'flat' | '3d';
 export type MapPermalinkSun = 'auto' | 'off' | 'time' | null;
+export type MapPermalinkSunSpeed = 'slow' | 'normal' | 'fast';
 export type MapPermalinkPin = { lat: number; lon: number; label: string };
 export type MapPermalinkPan = { x: number; y: number; z: number };
 
@@ -17,6 +18,7 @@ export type MapPermalink = {
   hillshade: boolean | null;
   pin: MapPermalinkPin | null;
   sun: MapPermalinkSun;
+  sunSpeed: MapPermalinkSunSpeed;
   timeMinutes: number | null;
   usedParameters: string[];
   ignoredParameters: string[];
@@ -35,6 +37,7 @@ export type MapPermalinkBuildState = {
   pin: MapPermalinkPin | null;
   sunlight: boolean;
   sunAuto: boolean;
+  sunSpeed: MapPermalinkSunSpeed;
   timeMinutes: number;
 };
 
@@ -58,6 +61,7 @@ const KNOWN_PARAMETERS = new Set([
   'pin_lon',
   'pin_label',
   'sun',
+  'sun_speed',
   'time',
 ]);
 
@@ -221,6 +225,17 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     ignoredParameters.push('time');
   }
 
+  const sunSpeedValue = params.get('sun_speed');
+  const sunSpeed: MapPermalinkSunSpeed =
+    sun === 'auto' && (sunSpeedValue === 'slow' || sunSpeedValue === 'normal' || sunSpeedValue === 'fast') ? sunSpeedValue : 'normal';
+  if (sunSpeedValue !== null) {
+    if (sun === 'auto' && (sunSpeedValue === 'slow' || sunSpeedValue === 'normal' || sunSpeedValue === 'fast')) {
+      usedParameters.push('sun_speed');
+    } else {
+      ignoredParameters.push('sun_speed');
+    }
+  }
+
   for (const key of params.keys()) {
     if (!KNOWN_PARAMETERS.has(key) && key !== 'lang') ignoredParameters.push(key);
   }
@@ -237,6 +252,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     hillshade,
     pin,
     sun,
+    sunSpeed,
     timeMinutes: time,
     usedParameters: [...new Set(usedParameters)],
     ignoredParameters: [...new Set(ignoredParameters)],
@@ -272,7 +288,10 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
     }
   }
   if (!state.sunlight) params.set('sun', 'off');
-  else if (state.sunAuto) params.set('sun', 'auto');
+  else if (state.sunAuto) {
+    params.set('sun', 'auto');
+    if (state.sunSpeed !== 'normal') params.set('sun_speed', state.sunSpeed);
+  }
   else params.set('time', clock(state.timeMinutes));
   url.search = params.toString();
   return url.toString();
