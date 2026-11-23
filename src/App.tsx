@@ -1080,6 +1080,23 @@ export default function App() {
   }, [native]);
 
   useEffect(() => {
+    const page = pageRef.current;
+    if (!native || !page) return;
+    const observer = new MutationObserver((records) => {
+      if (records.some((record) => record.type === 'childList' || record.type === 'attributes')) {
+        engineRef.current?.refreshHud();
+      }
+    });
+    observer.observe(page, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['aria-hidden', 'class', 'data-piece', 'data-x', 'data-y', 'data-w', 'data-h', 'data-density', 'style'],
+    });
+    return () => observer.disconnect();
+  }, [native]);
+
+  useEffect(() => {
     engineRef.current?.refreshHud();
   }, [flyoverPhase]);
 

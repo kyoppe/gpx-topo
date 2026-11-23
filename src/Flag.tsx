@@ -132,8 +132,9 @@ export function FlagContent({ brushes, copy, twin = false }: { brushes: Brush[];
               }}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M5.5 5.5h7.2a3.3 3.3 0 0 1 3.3 3.3v5.7a3.3 3.3 0 0 1-3.3 3.3H9l-3.5 2v-2.7a3.3 3.3 0 0 1-3.3-3.3V8.8a3.3 3.3 0 0 1 3.3-3.3Z" />
-                <path d="m7.4 10.8 1.4 1.5 2.7-3M18 7.4h3M18 11h3M18 14.6h3" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                <path d="M5 2.8h9.5L19 7.3v10.1a3.8 3.8 0 0 1-3.8 3.8H5a3.8 3.8 0 0 1-3.8-3.8V6.6A3.8 3.8 0 0 1 5 2.8Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.45" />
+                <path d="M14.5 3v4.3h4.1M4.8 10h6.8M4.8 13.2h5.7M4.8 16.4h4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.45" />
+                <path d="M15.5 12c1.2-1.5 4-.8 4 1.3 0 2.5-4 5.6-4 5.6s-4-3.1-4-5.6c0-2.1 2.8-2.8 4-1.3Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.65" />
               </svg>
             </a>
           </p>
