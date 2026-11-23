@@ -743,6 +743,7 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
   function deleteLayer(L: TextureLayer) {
     gl.deleteTexture(L.tex);
   }
+  let uploadVerified = false;
   function upload(L: TextureLayer, el: Element, width: number, height: number) {
     const scale = Math.min(1, maxTexture / Math.max(width, height));
     const w = Math.max(1, Math.floor(width * scale));
@@ -756,6 +757,14 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
     }
     gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, el, { width: w, height: h });
     gl.generateMipmap(gl.TEXTURE_2D);
+    // WebGL errors need not throw. Verify the first upload before counting it as painted,
+    // then avoid synchronous error checks on subsequent uploads.
+    if (!uploadVerified) {
+      if (gl.isContextLost() || gl.getError() !== gl.NO_ERROR) {
+        throw new Error('HTML-in-Canvas texture upload failed.');
+      }
+      uploadVerified = true;
+    }
     L.ready = true;
   }
 
