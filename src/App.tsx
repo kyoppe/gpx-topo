@@ -5,7 +5,7 @@ import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } 
 import { createEngine, FRAME_X, FRAME_Y, type DetailRequest, type Engine, type EngineModel, type FlightPhase } from './engine';
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
 import { createCenteredProjection, createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
-import { supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
+import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
@@ -1092,9 +1092,11 @@ export default function App() {
     if (!native || !canvas || !page) return;
     canvas.setAttribute('content', 'drawable');
     canvas.setAttribute('layoutsubtree', '');
+    const htmlInCanvasContext = getHtmlInCanvasContext();
     let engine: Engine;
     try {
       engine = createEngine(canvas, page, {
+        onFirstPaint: () => addAction('html_in_canvas_painted', htmlInCanvasContext),
         onApartChange: setApart,
         onMapDrag: panMapPreview,
         onMapPan: panMap,
@@ -1132,7 +1134,7 @@ export default function App() {
       setToast(error instanceof Error ? error.message : copy.toast.threeDStartFailed);
       return;
     }
-    addAction('html_in_canvas_ready');
+    addAction('html_in_canvas_ready', htmlInCanvasContext);
     engineRef.current = engine;
     engine.refreshHud();
     return () => {

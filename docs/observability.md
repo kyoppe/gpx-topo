@@ -57,6 +57,9 @@ attributes:
 
 - `gpx_file_picker_opened`, `gpx_file_open_requested`, and `gpx_loaded`
 - `operation_failed` and `operation_warning` for caught failures
+- `html_in_canvas_ready` after the feature probe passes and the engine is constructed
+- `html_in_canvas_painted` once per engine, after a `paint` event produces its
+  first successful element texture upload (`texElementSubImage2D`)
 - `view_mode_toggled`
 - `map_style_changed`
 - `flyover_control` and `flyover_state_changed`
@@ -83,6 +86,17 @@ generic click that automatic interaction tracking already captures.
 
 `waypoint_edit` is emitted once when a name edit is committed (on blur or
 Enter). `waypoint_move` records the clamped waypoint distance after the move.
+
+Both HTML-in-Canvas actions include `is_webview`, detected from the `wv` token
+in the user agent, and `user_agent_data_brands` when
+`navigator.userAgentData.brands` is available (an array of `{ brand, version }`
+objects). These attributes are diagnostic and do not affect feature detection.
+The ready action retains its existing timing and meaning: API availability and
+engine construction do not establish painting success. The painted action
+requires a non-throwing upload with no WebGL error or lost context on the first
+successful upload; fallback animation frames and failed uploads do not emit it.
+It confirms an element snapshot was uploaded, not that every element or final
+screen pixel rendered correctly.
 
 ## Browser Logs
 
