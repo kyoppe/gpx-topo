@@ -46,6 +46,7 @@ const PROFILE_WIDTH = PANEL_WIDTH - 36;
 const PROFILE_HEIGHT = 84;
 const MAP_SUN_SPEEDS = [12, 24, 72] as const;
 const MAP_SUN_SPEED_NAMES: readonly MapPermalinkSunSpeed[] = ['slow', 'normal', 'fast'];
+const MAP_SUN_FPS = 30;
 const MAP_SUNRISE_OFFSET = 60;
 
 type Layout = {
@@ -743,6 +744,10 @@ export default function App() {
     let previous = performance.now();
     const speed = MAP_SUN_SPEEDS[mapSunSpeed];
     const tick = (now: number) => {
+      if (now - previous < 1000 / MAP_SUN_FPS) {
+        frame = requestAnimationFrame(tick);
+        return;
+      }
       const elapsed = Math.min(0.1, Math.max(0, (now - previous) / 1000));
       previous = now;
       const current = Number(sun.value);
@@ -1231,6 +1236,7 @@ export default function App() {
           setApart(next);
         },
         onViewInteraction: detachPermalink,
+        onFrameRateChange: ({ fps, frameMs, reason }) => addAction('render_fps_changed', { mode: 'motion', fps, frame_ms: frameMs, reason }),
         onMapDrag: panMapPreview,
         onMapPan: panMap,
         onRouteClick: (km) => routeClickRef.current(km),

@@ -1,6 +1,7 @@
 import { nearestTurn } from './angle';
 import type { MapStyle } from './basemap';
 import { clothVertices, createCloth, layCloth, stepCloth, type Cloth } from './cloth';
+import { createAdaptiveFrameRate } from './frameRate';
 import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
 import { holdLean } from './lean';
@@ -89,6 +90,8 @@ export type EngineCallbacks = {
   onXHintExit?(seq: string): void;
   /** Screen-space rectangles for the transparent HUD input layer. */
   onHudHitAreas?(areas: HudHitArea[]): void;
+  /** Adaptive rendering changed the target rate during a camera animation. */
+  onFrameRateChange?(context: { fps: number; frameMs: number; reason: 'slow' | 'recovered' }): void;
 };
 
 export type EngineViewState = {
@@ -370,6 +373,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let vh = 1;
   let last = 0;
   let pending = false;
+  let delayedNeed: number | null = null;
   let drag: 'turn' | 'pan' | 'map' | 'drum' | 'runner' | 'maneuver-select' | 'pin-select' | null = null;
   let activeWay: string | null = null;
   let flight: Flight | null = null;
@@ -3046,7 +3050,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let measured = false;
   let touched = false;
   let qs = 1;
-  let slow = 0;
+  const motionFrameRate = createAdaptiveFrameRate({ highFps: 60, lowFps: 30 });
   let wasBusy = false;
   let fullW = 1;
   let fullH = 1;
@@ -3065,6 +3069,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function frame(now: number, fixed?: number) {
     if (disposed) return;
+    const frameStarted = performance.now();
     if (pieces.some((p) => !p.el.isConnected || !canvas.contains(p.el))) {
       collect();
       syncPinEngineStem();
@@ -3770,17 +3775,20 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       dpr: canvas.width / Math.max(1, vw),
     });
     frames += 1;
+    const frameWorkMs = performance.now() - frameStarted;
     // if frames run long while things move, draw fewer pixels until they stop, then one sharp frame
-    if (busy && wasBusy && fixed == null) {
-      slow = slow * 0.85 + (dt > 0.026 ? 0.15 : 0);
-      if (slow > 0.6 && qs > 0.5) {
-        qs = Math.max(0.5, qs * 0.8);
-        slow = 0;
+    if ((busy || wasBusy) && fixed == null) {
+      const rateChange = motionFrameRate.observe(frameWorkMs);
+      if (rateChange) callbacks.onFrameRateChange?.({ ...rateChange, frameMs: Math.round(frameWorkMs) });
+      if (busy && wasBusy) {
+        if (frameWorkMs > 26) qs = Math.max(0.5, qs * 0.8);
+        else if (frameWorkMs < 18 && qs < 1) qs = Math.min(1, qs * 1.02);
       }
-      // and back up again once they run quickly
-      if (dt < 0.018 && qs < 1) qs = Math.min(1, qs * 1.02);
     }
-    if (busy || wasBusy || flying || settling) need();
+    if (busy || wasBusy || flying || settling) {
+      const delay = fixed == null && (busy || wasBusy) ? motionFrameRate.frameDelayMs(frameWorkMs) : 0;
+      need(delay);
+    }
     wasBusy = busy;
     // finer tiles belong to the model only; the flat page keeps the whole-map picture
     if (st.eT < 1) dropDetail();
@@ -3890,8 +3898,21 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   }
 
   // Ask for a paint event; some builds do not send one when no element changed, so fall back to a plain frame.
-  function need() {
-    if (pending || disposed) return;
+  function need(delayMs = 0) {
+    if (disposed) return;
+    if (delayMs > 0) {
+      if (pending || delayedNeed !== null) return;
+      delayedNeed = window.setTimeout(() => {
+        delayedNeed = null;
+        need();
+      }, delayMs);
+      return;
+    }
+    if (delayedNeed !== null) {
+      window.clearTimeout(delayedNeed);
+      delayedNeed = null;
+    }
+    if (pending) return;
     pending = true;
     canvas.requestPaint();
     const mine = ++needN;
@@ -4672,6 +4693,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   function dispose() {
     disposed = true;
     window.clearTimeout(detailTimer);
+    if (delayedNeed !== null) window.clearTimeout(delayedNeed);
+    delayedNeed = null;
     canvas.removeEventListener('paint', onPaint);
     for (const t of touchEvents) stage.removeEventListener(t, markTouched, true);
     stage.removeEventListener('pointerover', onKeyOver);
