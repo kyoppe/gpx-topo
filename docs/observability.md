@@ -116,6 +116,8 @@ attributes:
   not seen
 - `map_maneuver_requested`, `map_maneuver_cancelled`, and
   `map_maneuver_state_changed`
+- `render_fps_changed` when adaptive motion rendering changes between 60 and
+  30 FPS, with `mode`, `fps`, `frame_ms`, and `reason`
 - `map_permalink_detached` when the first interaction returns a permalink URL to
   the plain one, with `reason`
 - `x_hint_shown` when a hint card springs out of the HUD, with `kind` (`map-pin`,
