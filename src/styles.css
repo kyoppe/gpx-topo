@@ -2446,3 +2446,697 @@ main[lang='en'] .bar-hint {
   opacity: 0.22;
   filter: grayscale(1);
 }
+
+/* ---------------------------------------------------------------- fallback controls */
+/* Without HTML-in-Canvas the side cards, the bar and the pickers are not drawn into the scene: they are ordinary
+   HTML over the canvas. The same elements, so the same look; only where they sit changes. */
+.fb-mount {
+  display: contents;
+}
+
+.fb-ui {
+  --fb-ease: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --fb-duration: 480ms;
+  --fb-edge: 12px;
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 100vh;
+  height: 100dvh;
+  z-index: 4;
+  font-size: 13px;
+  line-height: 1.4;
+  /* what waits beyond the edge (the closed drawer) is cut off, so it never counts toward the page's width */
+  overflow: clip;
+  pointer-events: none;
+}
+
+/* iOS Safari zooms the whole page in when a field under 16px takes focus; keep fields at 16px on touch screens */
+@media (pointer: coarse) {
+  .fb-ui input:not([type='range'], [type='checkbox'], [type='radio'], [type='button'], [type='submit']),
+  .fb-ui textarea {
+    font-size: 16px;
+  }
+}
+
+.fb-ui ::selection {
+  background: rgba(48, 84, 240, 0.22);
+}
+
+/* the map style switch floats at the top left of the map */
+.fb-map-controls {
+  position: absolute;
+  top: max(var(--fb-edge), env(safe-area-inset-top));
+  left: max(var(--fb-edge), env(safe-area-inset-left));
+}
+
+.fb-map-controls .map-switch {
+  position: relative;
+  right: auto;
+  bottom: auto;
+}
+
+/* the room a docked panel takes beside the canvas (its width and the margin either side) */
+.fallback-ui {
+  --fb-dock-width: 424px;
+}
+
+.fb-docked .stage-canvas {
+  /* a canvas is a replaced element: `auto` would keep its drawing-buffer width, so say the width outright */
+  width: calc(100% - var(--fb-dock-width));
+}
+
+.fb-docked .info-button {
+  right: calc(var(--fb-dock-width) + 12px);
+}
+
+/* The cards. On a wide window they are docked beside the map (the canvas is narrowed to leave them room); otherwise
+   they are the lower part of a sheet: a grip and the bar of keys always show, and the cards come up from under them. */
+.fb-sheet {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: max(var(--fb-edge), env(safe-area-inset-bottom));
+  border-radius: 20px 20px 0 0;
+  background: #f1f3f6;
+  box-shadow:
+    0 -8px 30px rgba(24, 32, 43, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  pointer-events: auto;
+}
+
+/* the grip: the whole width of the sheet's top edge, so a thumb finds it */
+.fb-grip {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+/* the touch area reaches above the sheet's edge, so the bar can stay slim and still be easy to catch */
+.fb-grip::after {
+  content: '';
+  position: absolute;
+  inset: -20px 0 0;
+}
+
+.fb-grip::before {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 5px;
+  margin: 0 auto;
+  border-radius: 3px;
+  background: rgba(24, 32, 43, 0.28);
+}
+
+.fb-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+
+.fb-panel {
+  position: relative;
+  height: var(--fb-sheet-h, 0px);
+  overflow: hidden;
+  transition: height var(--fb-duration) var(--fb-ease);
+}
+
+/* a finger is moving the sheet: no easing behind it */
+html[data-fb-drag] .fb-panel,
+html[data-fb-drag] .fallback-ui .stage-canvas {
+  transition: none;
+}
+
+/* the cards keep their full size while the sheet grows, so they do not reflow under the finger */
+.fb-panel-body {
+  display: flex;
+  height: var(--fb-sheet-open, 400px);
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px max(var(--fb-edge), env(safe-area-inset-right)) 0 max(var(--fb-edge), env(safe-area-inset-left));
+  visibility: hidden;
+  transition: visibility 0s linear var(--fb-duration);
+}
+
+.fb-ui[data-panel='open'] .fb-panel-body,
+html[data-fb-drag] .fb-panel-body {
+  visibility: visible;
+  transition: none;
+}
+
+/* the 3D view moves up a little as the sheet comes up, so what it shows stays above the sheet */
+.fallback-ui:not(.fb-docked) .stage-canvas {
+  transform: translateY(calc(var(--fb-sheet-h, 0px) * -0.35));
+  transition: transform var(--fb-sheet-duration, 480ms) var(--fb-sheet-ease, ease-out);
+}
+
+.fb-panel .side {
+  position: static;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
+.fb-panel .slot {
+  pointer-events: auto;
+}
+
+.fb-panel .card {
+  box-shadow:
+    0 6px 22px rgba(24, 32, 43, 0.18),
+    inset 0 0 0 1px var(--rule);
+}
+
+/* the waypoints' title keeps its words whole; the hint beside it goes under it when there is no room */
+.fb-panel .in-ways > .row {
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+.fb-panel .in-ways > .row .label {
+  white-space: nowrap;
+}
+
+/* start time and date: side by side when they fit, one under the other when they do not, and never past the card */
+.fb-panel .row-inputs {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.fb-panel .row-inputs label {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.fb-panel .row-inputs .field {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fb-panel .profile {
+  width: 100%;
+  height: auto;
+}
+
+/* the sheet shows one card group at a time, so it fits a phone's height */
+.fb-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 11px;
+  background: rgba(228, 232, 237, 0.92);
+  box-shadow: 0 2px 10px rgba(24, 32, 43, 0.16);
+  pointer-events: auto;
+}
+
+.fb-tabs button {
+  min-width: 0;
+  flex: 1;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink2);
+  font: 600 12.5px var(--sans);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.fb-tabs button[aria-selected='true'] {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(24, 32, 43, 0.2);
+  color: var(--ink);
+}
+
+.fb-ui[data-dock='false'][data-tab='route'] .fb-panel .slot:not([data-section='route']),
+.fb-ui[data-dock='false'][data-tab='search'] .fb-panel .slot:not([data-section='search']),
+.fb-ui[data-dock='false'][data-tab='sun'] .fb-panel .slot:not([data-section='sun']),
+.fb-ui[data-dock='false'][data-tab='ways'] .fb-panel .slot:not([data-section='ways']) {
+  display: none;
+}
+
+/* the waypoint card is as tall as its waypoints, up to what is left of the panel, and then its list scrolls */
+.fb-panel .slot-fill {
+  flex: 0 1 auto;
+}
+
+/* a press on the profile carries the runner along the route, so the page must not scroll under the finger */
+.fb-panel [data-profile] {
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+/* docked: always there, the whole height beside the map; no grip, no tabs, every card */
+.fb-ui[data-dock='true'] .fb-sheet {
+  display: contents;
+}
+
+.fb-ui[data-dock='true'] .fb-sheet-grip-host,
+.fb-ui[data-dock='true'] .fb-tabs {
+  display: none;
+}
+
+.fb-ui[data-dock='true'] .fb-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--fb-dock-width);
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+  transition: none;
+}
+
+.fb-ui[data-dock='true'] .fb-panel-body {
+  height: 100%;
+  padding: calc(max(var(--fb-edge), env(safe-area-inset-top)) + 44px) max(var(--fb-edge), env(safe-area-inset-right)) var(--fb-edge) var(--fb-edge);
+  visibility: visible;
+}
+
+/* the keys: one row at the top of the sheet; docked, a bar along the bottom of the map */
+.fb-hud {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 max(var(--fb-edge), env(safe-area-inset-right)) 0 max(var(--fb-edge), env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.fb-ui[data-dock='true'] .fb-hud {
+  position: absolute;
+  right: var(--fb-dock-width);
+  bottom: 0;
+  left: 0;
+  padding-bottom: max(var(--fb-edge), env(safe-area-inset-bottom));
+}
+
+.fb-hud .hud {
+  position: relative;
+  display: flex;
+  max-width: 100%;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  background: linear-gradient(#f6f7f8, #eceef1);
+  box-shadow:
+    0 6px 22px rgba(24, 32, 43, 0.2),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.09);
+  pointer-events: auto;
+}
+
+/* in the sheet the keys sit straight on it, with no bar of their own */
+.fb-ui[data-dock='false'] .fb-hud .hud {
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.fb-hud .bar {
+  display: none;
+}
+
+.fb-hud .key {
+  position: relative;
+  display: grid;
+  min-width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
+  padding: 0 12px;
+  border-radius: 11px;
+  touch-action: manipulation;
+}
+
+.fb-hud .key-mode,
+.fb-hud .key-permalink,
+.fb-hud .key-pin,
+.fb-hud .key-fly,
+.fb-hud .key-stop {
+  width: auto;
+  padding: 0 10px;
+}
+
+.fb-hud .key-open,
+.fb-hud .key-place {
+  width: auto;
+}
+
+/* the map / route switch changes the whole screen, so it gets a dark rim the other keys lack */
+.fb-hud .key-mode {
+  --edge: inset 0 0 0 1.5px var(--ink);
+}
+
+.fb-hud .key-mode:focus-visible {
+  --edge: inset 0 0 0 2px var(--accent);
+}
+
+.fb-hud .key-flip {
+  width: auto;
+  min-width: 84px;
+}
+
+/* a key's picture and its words: a narrow bar shows the picture only (the words stay for screen readers) */
+.key-icon {
+  display: none;
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.key[data-latched] .key-icon {
+  stroke: #fff;
+}
+
+@media (max-width: 560px) {
+  .fb-hud .key-open,
+  .fb-hud .key-place {
+    padding: 0 10px;
+  }
+
+  .fb-hud .key-icon {
+    display: block;
+  }
+
+  .fb-hud .key-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* what the scene alone can do (the photo, the video, the drone moves, the first person view) is left out here */
+.fb-hud .key-camera,
+.fb-hud .key-video,
+.fb-hud .key-x,
+.fb-hud .key-maneuver,
+.fb-hud .key-maneuver-cancel,
+.fb-hud .key-fpv {
+  display: none;
+}
+
+/* raise and lay flat are one key with two faces; only the one that does something now is shown */
+.fb-ui[data-apart='false'] .key-flip[data-face='back'],
+.fb-ui[data-apart='true'] .key-flip[data-face='front'] {
+  display: none;
+}
+
+/* the map pin's name, edited here rather than on the pin */
+.fb-pin-editor {
+  display: flex;
+  width: min(420px, 100%);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow:
+    0 6px 22px rgba(24, 32, 43, 0.2),
+    inset 0 0 0 1px var(--rule);
+  pointer-events: auto;
+  animation: fb-rise var(--fb-duration) var(--fb-ease) both;
+}
+
+.fb-pin-editor .map-pin-marker {
+  flex: none;
+}
+
+.fb-pin-editor input {
+  min-width: 0;
+  flex: 1;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 600 16px var(--sans);
+  outline: none;
+}
+
+.fb-pin-editor input::placeholder {
+  color: var(--ink3);
+  font-weight: 400;
+}
+
+@keyframes fb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+}
+
+/* the (i) button sits at the top right here, clear of the bar */
+.fallback-ui .info-button {
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  bottom: auto;
+  width: 40px;
+  height: 40px;
+  box-shadow: 0 4px 14px rgba(24, 32, 43, 0.2);
+}
+
+/* the bar's keys do the work of the hit layer, which the scene needs to put real buttons over drawn keys */
+.fallback-ui .hud-hit-layer {
+  display: none;
+}
+
+/* dialogs: the pickers and the help flag */
+.fb-modal {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.fb-modal .pop-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--fb-edge);
+  background: rgba(24, 32, 43, 0.4);
+  pointer-events: auto;
+  animation: fb-fade 200ms ease-out both;
+}
+
+.fb-modal .pop {
+  position: relative;
+  max-width: 100%;
+  box-shadow:
+    0 14px 44px rgba(24, 32, 43, 0.32),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.1);
+  animation: fb-pop var(--fb-duration) var(--fb-ease) both;
+}
+
+.fb-modal .pop-date {
+  width: min(320px, 100%);
+}
+
+.fb-modal .cal-day {
+  min-height: 38px;
+}
+
+.fb-modal .pop-time {
+  width: min(300px, 100%);
+}
+
+.fb-time-fields {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+
+.fb-stepper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.fb-step {
+  display: grid;
+  width: 74px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #eef0f3;
+  appearance: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.fb-step:hover {
+  background: #e3e6eb;
+}
+
+.fb-step svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--ink2);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.fb-step-value {
+  width: 74px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #d6dae1;
+  box-shadow:
+    inset 0 3px 6px rgba(24, 32, 43, 0.3),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.1);
+  color: var(--ink);
+  font: 800 24px var(--mono);
+  text-align: center;
+}
+
+.fb-step-value:focus {
+  outline: none;
+  box-shadow:
+    inset 0 3px 6px rgba(24, 32, 43, 0.3),
+    inset 0 0 0 2px var(--accent);
+}
+
+.fb-dialog-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--fb-edge);
+  pointer-events: auto;
+}
+
+.fb-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(24, 32, 43, 0.5);
+  animation: fb-fade 200ms ease-out both;
+  appearance: none;
+  cursor: default;
+}
+
+.fb-dialog {
+  position: relative;
+  display: flex;
+  max-width: 100%;
+  max-height: calc(100% - var(--fb-edge) * 2);
+  animation: fb-pop var(--fb-duration) var(--fb-ease) both;
+}
+
+/* the help flag, as plain black cloth: not hung in the wind, so its text can be read and selected */
+.fb-flag-dialog {
+  width: min(720px, 100%);
+  border-radius: 14px;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.flag-static {
+  position: relative;
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - var(--fb-edge) * 4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+
+.flag-static .flag-text {
+  height: auto;
+  overflow: visible;
+  padding: 24px 28px 20px;
+}
+
+.flag-static .flag-art {
+  right: 12px;
+}
+
+@media (max-width: 640px) {
+  .flag-static .flag-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .flag-static ul.flag-continuation {
+    margin-top: 0;
+  }
+
+  .flag-static .flag-foot {
+    flex-direction: column;
+  }
+}
+
+.fb-dialog-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #f2efe6;
+  font: 400 24px/1 var(--sans);
+  cursor: pointer;
+}
+
+@keyframes fb-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fb-pop {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.92);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-ui[data-panel='open'] .fb-panel,
+  .fb-pin-editor,
+  .fb-modal .pop,
+  .fb-dialog,
+  .fb-modal .pop-layer,
+  .fb-scrim {
+    animation-duration: 1ms;
+    transition-duration: 1ms;
+  }
+}

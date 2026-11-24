@@ -393,12 +393,27 @@ export type EngineOptions = {
    * Omitted or `native`: the HTML-in-Canvas behavior, unchanged.
    */
   renderPath?: 'native' | 'fallback';
+  /**
+   * Fallback only: the element that holds the app's ordinary (visible) controls, outside the stage. The sun
+   * slider, the clock, the profile and the waypoint rows are looked up here as well as in the page.
+   */
+  uiRoot?: HTMLElement | null;
 };
 
 export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks, options: EngineOptions = {}) {
   const fallback = options.renderPath === 'fallback';
   const R = fallback ? createRenderer(canvas, createRasterTextureSource()) : createRenderer(canvas);
   const stage = page.parentElement as HTMLElement;
+  // the roots the app's controls live in: the page, and (fallback) the visible panel beside the canvas
+  const uiRoot = fallback ? options.uiRoot ?? null : null;
+  const uiRoots: HTMLElement[] = uiRoot ? [page, uiRoot] : [page];
+  const findUi = <T extends Element>(selector: string): T | null => {
+    for (const root of uiRoots) {
+      const found = root.querySelector<T>(selector);
+      if (found) return found;
+    }
+    return null;
+  };
   // where the pieces must live: inside the canvas for HTML-in-Canvas, in the stage for the fallback
   const inScene = (el: Element) => (fallback ? stage : canvas).contains(el);
 
@@ -426,6 +441,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let clockEl: HTMLElement | null = null;
   let cursorEl: SVGCircleElement | null = null;
   let profileEl: HTMLElement | null = null;
+  let unbindProfileDrag: (() => void) | null = null;
+  let profileBound: HTMLElement | null = null;
 
   const st = {
     sunT: null as number | null,
@@ -821,16 +838,23 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     let tx = lerp(PW / 2, PW / 2 - 10, p);
     let ty = lerp(PH / 2 + RAISE / fit, PH / 2 - 10, p);
     let tz = lerp(0, top * 0.4, p);
-    const dir: Vec3 = [Math.sin(tilt) * Math.sin(yaw), Math.sin(tilt) * Math.cos(yaw), Math.cos(tilt)];
-    const r: Vec3 = [Math.cos(yaw), -Math.sin(yaw), 0];
-    const u: Vec3 = [-Math.cos(tilt) * Math.sin(yaw), -Math.cos(tilt) * Math.cos(yaw), Math.sin(tilt)];
+    const axesOf = (a: number) => ({
+      dir: [Math.sin(tilt) * Math.sin(a), Math.sin(tilt) * Math.cos(a), Math.cos(tilt)] as Vec3,
+      r: [Math.cos(a), -Math.sin(a), 0] as Vec3,
+      u: [-Math.cos(tilt) * Math.sin(a), -Math.cos(tilt) * Math.cos(a), Math.sin(tilt)] as Vec3,
+    });
+    const { dir, r, u } = axesOf(yaw);
+    // The distance and the point looked at are fitted for the view as it stands without the user's turn, so turning
+    // the model swings it round that point at the same distance (its corners may leave the frame) instead of
+    // pulling back to keep every corner in.
+    const fitAxes = axesOf(HERO.yaw * p);
     const m = new Float32Array(16);
     let eye: Vec3 = [0, 0, 1];
-    const build = (D: number, x: number, y: number, z: number) => {
-      eye = [x + dir[0] * D, y + dir[1] * D, z + dir[2] * D];
+    const build = (D: number, x: number, y: number, z: number, axes: { dir: Vec3; r: Vec3; u: Vec3 } = { dir, r, u }) => {
+      eye = [x + axes.dir[0] * D, y + axes.dir[1] * D, z + axes.dir[2] * D];
       // far enough for the whole model even from low down and close in, and for the table to have faded into the
       // background by the time it is cut off
-      viewProjection(m, eye, r, u, dir, D * 0.05, Math.max(D * 14, D + Math.hypot(PW, PH) * 1.5, 12000), FOV);
+      viewProjection(m, eye, axes.r, axes.u, axes.dir, D * 0.05, Math.max(D * 14, D + Math.hypot(PW, PH) * 1.5, 12000), FOV);
     };
     let D = D0;
     if (p > 0.001) {
@@ -855,7 +879,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const ty0 = ty;
       const tz0 = tz;
       for (let it = 0; it < 4; it += 1) {
-        build(D, tx, ty, tz);
+        build(D, tx, ty, tz, fitAxes);
         let mx = 0;
         let y0 = 9;
         let y1 = -9;
@@ -869,9 +893,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         }
         mx = Math.max(mx, (y1 - y0) / (hi - lo));
         const off = ((y1 + y0) / 2 - (hi + lo) / 2) * D * Math.tan(FOV / 2) * 0.9;
-        tx += u[0] * off;
-        ty += u[1] * off;
-        tz += u[2] * off;
+        tx += fitAxes.u[0] * off;
+        ty += fitAxes.u[1] * off;
+        tz += fitAxes.u[2] * off;
         D *= lerp(1, mx, 0.9);
       }
       tx = lerp(tx0, tx, p);
@@ -2693,10 +2717,75 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       ...pops,
       ...rows,
     ];
-    sunEl = page.querySelector<HTMLInputElement>('input[data-sun]');
-    clockEl = page.querySelector<HTMLElement>('[data-clock]');
-    cursorEl = page.querySelector<SVGCircleElement>('[data-cursor]');
-    profileEl = page.querySelector<HTMLElement>('[data-profile]');
+    bindUi();
+  }
+  /** Find the slider, the clock and the profile again (the app replaces them as the view changes). */
+  function bindUi() {
+    sunEl = findUi<HTMLInputElement>('input[data-sun]');
+    clockEl = findUi<HTMLElement>('[data-clock]');
+    cursorEl = findUi<SVGCircleElement>('[data-cursor]');
+    profileEl = findUi<HTMLElement>('[data-profile]');
+    bindProfileDrag();
+  }
+  /**
+   * Fallback: the profile is ordinary HTML beside the canvas, so a press on it never reaches the canvas code that
+   * carries the runner along. It is handled on the profile itself: a press anywhere on it puts the runner there,
+   * and dragging carries it along the route.
+   */
+  function bindProfileDrag() {
+    const el = profileEl;
+    // the same profile again (the panel is looked up after every change): keep its listeners and any drag under way
+    if (el === profileBound) return;
+    unbindProfileDrag?.();
+    unbindProfileDrag = null;
+    profileBound = null;
+    if (!fallback || !el) return;
+    profileBound = el;
+    let active: number | null = null;
+    const kmAtPointer = (ev: PointerEvent) => {
+      const svg = el.querySelector('svg');
+      const ctm = svg?.getScreenCTM();
+      if (!model || !ctm) return null;
+      return model.profileKm(new DOMPoint(ev.clientX, ev.clientY).matrixTransform(ctm.inverse()).x);
+    };
+    const carry = (ev: PointerEvent) => {
+      const km = kmAtPointer(ev);
+      if (km !== null) runTo(km);
+    };
+    const onDown = (ev: PointerEvent) => {
+      if (ev.button !== 0 || !model?.route.length) return;
+      ev.preventDefault();
+      if (flight) leaveFlightAtCurrentView();
+      active = ev.pointerId;
+      el.setPointerCapture(ev.pointerId);
+      setHover(null);
+      carry(ev);
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId === active) carry(ev);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== active) return;
+      active = null;
+      if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+    };
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+    unbindProfileDrag = () => {
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+    };
+  }
+  /** Fallback: the visible panel changed; look the controls up again and bring them up to date. */
+  function refreshUi() {
+    bindUi();
+    updateSun();
+    walkTo(st.km);
+    need();
   }
 
   function offsetIn(el: HTMLElement) {
@@ -2801,20 +2890,27 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     return ways[ways.length - 1].km;
   }
+  /** The profile's cursor, at `km` along the route. */
+  function moveProfileCursor(km: number) {
+    if (!cursorEl || !model) return;
+    const [cx, cy] = model.profilePoint(km);
+    cursorEl.setAttribute('cx', cx.toFixed(1));
+    cursorEl.setAttribute('cy', cy.toFixed(1));
+  }
   function walkTo(km: number) {
     const route = model?.route ?? [];
-    if (!hiker || route.length < 2) return;
+    if (!hiker || route.length < 2) {
+      // the fallback draws no runner, but its profile still has a cursor
+      if (fallback) moveProfileCursor(km);
+      return;
+    }
     let i = 1;
     while (i < route.length - 1 && route[i].km < km) i += 1;
     const a = route[i - 1];
     const b = route[i];
     const f = clamp((km - a.km) / Math.max(1e-6, b.km - a.km), 0, 1);
     hiker.at = { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f) };
-    if (cursorEl && model) {
-      const [cx, cy] = model.profilePoint(km);
-      cursorEl.setAttribute('cx', cx.toFixed(1));
-      cursorEl.setAttribute('cy', cy.toFixed(1));
-    }
+    moveProfileCursor(km);
   }
   /** The time the plan has the runner `km` along the route. */
   function minutesAt(km: number) {
@@ -5013,13 +5109,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       updateSun();
     }
   };
-  page.addEventListener('input', onInput);
+  for (const root of uiRoots) root.addEventListener('input', onInput);
 
   // waypoint rows and map pins light each other up
   function hotWay(id: string | null) {
-    for (const el of page.querySelectorAll<HTMLElement>('[data-way]')) {
-      if (el.dataset.way === id) el.setAttribute('data-hot', '');
-      else el.removeAttribute('data-hot');
+    for (const root of uiRoots) {
+      for (const el of root.querySelectorAll<HTMLElement>('[data-way]')) {
+        if (el.dataset.way === id) el.setAttribute('data-hot', '');
+        else el.removeAttribute('data-hot');
+      }
     }
   }
   const onOver = (ev: PointerEvent) => {
@@ -5207,7 +5305,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('pointerleave', onLeave);
     window.removeEventListener('keydown', onKey);
-    page.removeEventListener('input', onInput);
+    for (const root of uiRoots) root.removeEventListener('input', onInput);
+    unbindProfileDrag?.();
     page.removeEventListener('pointerover', onOver);
     page.removeEventListener('pointerout', onOut);
     resizeObserver.disconnect();
@@ -5257,6 +5356,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     capture,
     captureFrame,
     refreshHud,
+    refreshUi,
     transitionPanels,
     dispose,
     need,

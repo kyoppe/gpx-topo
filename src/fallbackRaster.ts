@@ -1,7 +1,7 @@
 import type { ElementTextureSource } from './renderer';
 
-/** Pieces the fallback can reproduce with plain 2D drawing: a fill, canvases, and SVG paths. */
-export const FALLBACK_PIECE_KINDS: ReadonlySet<string> = new Set(['sheet', 'terrain', 'relief', 'detail']);
+/** Pieces the fallback can reproduce with plain 2D drawing: a fill (with inset rings), canvases, and SVG paths. */
+export const FALLBACK_PIECE_KINDS: ReadonlySet<string> = new Set(['sheet', 'terrain', 'relief', 'detail', 'hiker']);
 
 type Box = { left: number; top: number; width: number; height: number };
 
@@ -79,19 +79,70 @@ function cornerRadius(value: string, boxWidth: number, boxHeight: number) {
   return { x: length(x, boxWidth), y: length(y, boxHeight) };
 }
 
+/** The four corner radii of an element in texture px (top left, top right, bottom right, bottom left). */
+function radiiOf(style: CSSStyleDeclaration, root: DOMRect, sx: number, sy: number): Radius[] {
+  return [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius].map((value) => {
+    const r = cornerRadius(value ?? '', root.width, root.height);
+    return { x: r.x * sx, y: r.y * sy };
+  });
+}
+
 /** Starts a path along the element's rounded box, in texture px. False when no corner is rounded. */
 function roundedBox(ctx: CanvasRenderingContext2D, style: CSSStyleDeclaration, root: DOMRect, sx: number, sy: number, width: number, height: number) {
   if (typeof ctx.roundRect !== 'function') return false;
-  const radii: Radius[] = [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius].map(
-    (value) => {
-      const r = cornerRadius(value ?? '', root.width, root.height);
-      return { x: r.x * sx, y: r.y * sy };
-    },
-  );
+  const radii = radiiOf(style, root, sx, sy);
   if (!radii.some((r) => r.x > 0 || r.y > 0)) return false;
   ctx.beginPath();
   ctx.roundRect(0, 0, width, height, radii);
   return true;
+}
+
+/** The inset, unblurred, unshifted `box-shadow`s of an element: `inset 0 0 0 3px #fff` is a ring along its edge. */
+export function insetRings(shadow: string): { color: string; spread: number }[] {
+  if (!shadow || shadow === 'none') return [];
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < shadow.length; i += 1) {
+    if (shadow[i] === '(') depth += 1;
+    else if (shadow[i] === ')') depth -= 1;
+    else if (shadow[i] === ',' && depth === 0) {
+      parts.push(shadow.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(shadow.slice(start));
+  const rings: { color: string; spread: number }[] = [];
+  for (const part of parts) {
+    if (!/\binset\b/.test(part)) continue;
+    const color = part.match(/rgba?\([^)]*\)|#[0-9a-f]{3,8}\b/i)?.[0];
+    if (!color) continue;
+    const [x = 0, y = 0, blur = 0, spread = 0] = (part.replace(color, '').match(/-?\d*\.?\d+/g) ?? []).map(Number);
+    if (x !== 0 || y !== 0 || blur !== 0 || spread <= 0) continue;
+    rings.push({ color, spread });
+  }
+  return rings;
+}
+
+/** Paints the rings of an element's inset shadows over its fill. The first shadow listed lies on top. */
+function paintInsetRings(ctx: CanvasRenderingContext2D, style: CSSStyleDeclaration, root: DOMRect, sx: number, sy: number, width: number, height: number) {
+  const rings = insetRings(style.boxShadow);
+  if (!rings.length) return;
+  const radii = radiiOf(style, root, sx, sy);
+  const box = (x: number, y: number, w: number, h: number, r: Radius[]) => {
+    if (typeof ctx.roundRect === 'function' && r.some((c) => c.x > 0 || c.y > 0)) ctx.roundRect(x, y, w, h, r);
+    else ctx.rect(x, y, w, h);
+  };
+  for (const ring of [...rings].reverse()) {
+    const ix = ring.spread * sx;
+    const iy = ring.spread * sy;
+    if (width - 2 * ix <= 0 || height - 2 * iy <= 0) continue;
+    ctx.beginPath();
+    box(0, 0, width, height, radii);
+    box(ix, iy, width - 2 * ix, height - 2 * iy, radii.map((c) => ({ x: Math.max(0, c.x - ix), y: Math.max(0, c.y - iy) })));
+    ctx.fillStyle = ring.color;
+    ctx.fill('evenodd');
+  }
 }
 
 /** Draws an element's own fill, its child canvases and its SVG paths into a width x height 2D canvas. */
@@ -109,6 +160,7 @@ export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, wid
     if (roundedBox(ctx, own, root, sx, sy, width, height)) ctx.fill();
     else ctx.fillRect(0, 0, width, height);
   }
+  paintInsetRings(ctx, own, root, sx, sy, width, height);
   const clipsChildren = own.overflow.split(' ').some((value) => value !== '' && value !== 'visible');
   const clipped = clipsChildren && roundedBox(ctx, own, root, sx, sy, width, height);
   if (clipped) {

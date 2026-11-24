@@ -157,6 +157,13 @@ export type Copy = {
     xHintVideo: string;
     xHintMapPin: string;
     helpLinks: string;
+    showPanel: string;
+    panelRoute: string;
+    panelSearch: string;
+    hidePanel: string;
+    hoursAria: string;
+    minutesAria: string;
+    closeDialog: string;
   };
   flag: {
     lead: string;
@@ -321,6 +328,13 @@ function makeCopy(language: Language): Copy {
         xHintVideo: '動画を添付してXに投稿できます。',
         xHintMapPin: 'ピンをドロップしました。\nピンのラベルは編集できます。',
         helpLinks: '使い方とリンク',
+        showPanel: '設定パネルを開く',
+        panelRoute: 'ルート',
+        panelSearch: '検索',
+        hidePanel: '設定パネルを閉じる',
+        hoursAria: '時',
+        minutesAria: '分',
+        closeDialog: '閉じる',
       },
       flag: {
         lead: 'GPX のルートを、国土地理院の地図と標高から作った立体模型の上で見るアプリです。',
@@ -489,6 +503,13 @@ function makeCopy(language: Language): Copy {
       xHintVideo: 'Attach the video to your post on X.',
       xHintMapPin: 'Pin dropped.\nYou can edit its label.',
       helpLinks: 'Help and links',
+      showPanel: 'Show the panel',
+      panelRoute: 'Route',
+      panelSearch: 'Search',
+      hidePanel: 'Hide the panel',
+      hoursAria: 'Hours',
+      minutesAria: 'Minutes',
+      closeDialog: 'Close',
     },
     flag: {
       lead: 'View GPX routes on a 3D model built from Geospatial Information Authority of Japan maps and elevation data.',

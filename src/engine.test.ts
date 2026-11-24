@@ -551,6 +551,67 @@ describe('render path', () => {
   });
 });
 
+describe('fallback controls outside the stage', () => {
+  function panel() {
+    const root = document.createElement('div');
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '1440';
+    slider.dataset.sun = '';
+    slider.value = '630';
+    const clock = document.createElement('output');
+    clock.dataset.clock = '';
+    const profile = document.createElement('div');
+    profile.dataset.profile = '';
+    const cursor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    cursor.dataset.cursor = '';
+    profile.append(cursor);
+    root.append(slider, clock, profile);
+    document.body.append(root);
+    return { root, slider, clock, cursor };
+  }
+
+  it('fallback: the sun slider and the clock live in the visible panel, and the slider drives the light', () => {
+    const ui = panel();
+    const scene = setup(100, { renderPath: 'fallback', uiRoot: ui.root });
+    scene.engine.setModel(model);
+    expect(ui.clock.textContent).toBe('10:30');
+    ui.slider.value = '720';
+    ui.slider.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(ui.clock.textContent).toBe('12:00');
+  });
+
+  it('fallback: the profile cursor follows the route although no runner is drawn', () => {
+    const ui = panel();
+    const scene = setup(100, { renderPath: 'fallback', uiRoot: ui.root });
+    scene.engine.setModel({ ...model, profilePoint: () => [12, 34] });
+    expect(ui.cursor.getAttribute('cx')).toBe('12.0');
+    expect(ui.cursor.getAttribute('cy')).toBe('34.0');
+  });
+
+  it('fallback: finds a slider the app puts in the panel later', () => {
+    const ui = panel();
+    ui.slider.remove();
+    const scene = setup(100, { renderPath: 'fallback', uiRoot: ui.root });
+    scene.engine.setModel(model);
+    expect(ui.clock.textContent).toBe('');
+    ui.root.append(ui.slider);
+    scene.engine.refreshUi();
+    expect(ui.clock.textContent).toBe('10:30');
+  });
+
+  it('native: the panel option is ignored, so the scene keeps looking only inside its own page', () => {
+    const ui = panel();
+    const scene = setup(100, { renderPath: 'native', uiRoot: ui.root });
+    scene.engine.setModel(model);
+    expect(ui.clock.textContent).toBe('');
+    ui.slider.value = '720';
+    ui.slider.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(ui.clock.textContent).toBe('');
+  });
+});
+
 describe('browsers without device-pixel-content-box (Safari)', () => {
   it.each([undefined, 'native', 'fallback'] as const)('still builds the engine when observe rejects the box option (%s)', (renderPath) => {
     const observe = vi.fn((_target: Element, options?: ResizeObserverOptions) => {
