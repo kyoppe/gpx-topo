@@ -550,3 +550,24 @@ describe('render path', () => {
     expect(vi.mocked(scene.renderer.layer).mock.calls.length).toBe(callsBefore);
   });
 });
+
+describe('browsers without device-pixel-content-box (Safari)', () => {
+  it.each([undefined, 'native', 'fallback'] as const)('still builds the engine when observe rejects the box option (%s)', (renderPath) => {
+    const observe = vi.fn((_target: Element, options?: ResizeObserverOptions) => {
+      // WebKit rejects the unknown enum value with a bare "Type error"
+      if (options?.box === ('device-pixel-content-box' as ResizeObserverBoxOptions)) throw new TypeError('Type error');
+    });
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element, options?: ResizeObserverOptions) {
+        observe(target, options);
+        this.callback([{} as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      disconnect() {}
+    });
+
+    expect(() => setup(100, renderPath ? { renderPath } : undefined)).not.toThrow();
+    // asked for the exact device pixels first, then plainly
+    expect(observe.mock.calls.map(([, options]) => options?.box)).toEqual(['device-pixel-content-box', undefined]);
+  });
+});

@@ -4412,7 +4412,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (info) fitFlag();
     need();
   });
-  resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+  try {
+    resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+  } catch {
+    // Safari rejects the unknown box value with a TypeError; the CSS size times devicePixelRatio does instead
+    resizeObserver.observe(canvas);
+  }
 
   // ---------------------------------------------------------------- input
   function apart(v: number, bouncy = false) {
