@@ -5,6 +5,8 @@ export type MapPermalinkSun = 'auto' | 'off' | 'time' | null;
 export type MapPermalinkSunSpeed = 'slow' | 'normal' | 'fast';
 export type MapPermalinkPin = { lat: number; lon: number; label: string };
 export type MapPermalinkPan = { x: number; y: number; z: number };
+/** The display area the permalink was made in: the map frame's size (px) and its ground scale (px per world unit). */
+export type MapPermalinkArea = { width: number; height: number; scale: number };
 export type MapPermalinkFpv = { lat: number; lon: number; bearing: number; pitch: number; zoom: number };
 
 export type MapPermalink = {
@@ -19,6 +21,7 @@ export type MapPermalink = {
   hillshade: boolean | null;
   pin: MapPermalinkPin | null;
   fpv: MapPermalinkFpv | null;
+  area: MapPermalinkArea | null;
   sun: MapPermalinkSun;
   sunSpeed: MapPermalinkSunSpeed;
   timeMinutes: number | null;
@@ -38,11 +41,17 @@ export type MapPermalinkBuildState = {
   hillshade: boolean;
   pin: MapPermalinkPin | null;
   fpv?: MapPermalinkFpv | null;
+  area?: MapPermalinkArea | null;
   sunlight: boolean;
   sunAuto: boolean;
   sunSpeed: MapPermalinkSunSpeed;
   timeMinutes: number;
 };
+
+const AREA_MIN_SIZE = 16;
+const AREA_MAX_SIZE = 100_000;
+const AREA_MIN_SCALE = 1e-3;
+const AREA_MAX_SCALE = 2 ** 30;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CLOCK = /^(\d{1,2}):(\d{2})$/;
@@ -68,6 +77,9 @@ const KNOWN_PARAMETERS = new Set([
   'fpv_bearing',
   'fpv_pitch',
   'fpv_zoom',
+  'area_w',
+  'area_h',
+  'area_scale',
   'sun',
   'sun_speed',
   'time',
@@ -246,6 +258,15 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     if (params.has('pin_label')) ignoredParameters.push('pin_label');
   }
 
+  const areaWidth = numberParameter(params, 'area_w', AREA_MIN_SIZE, AREA_MAX_SIZE);
+  const areaHeight = numberParameter(params, 'area_h', AREA_MIN_SIZE, AREA_MAX_SIZE);
+  const areaScale = numberParameter(params, 'area_scale', AREA_MIN_SCALE, AREA_MAX_SCALE);
+  const area: MapPermalinkArea | null =
+    center && areaWidth != null && areaHeight != null && areaScale != null ? { width: areaWidth, height: areaHeight, scale: areaScale } : null;
+  const areaParameters = ['area_w', 'area_h', 'area_scale'];
+  if (area) usedParameters.push(...areaParameters);
+  else for (const name of areaParameters) if (params.has(name)) ignoredParameters.push(name);
+
   const sunValue = params.get('sun');
   let sun: MapPermalinkSun = null;
   let time = timeMinutes(params.get('time'));
@@ -295,6 +316,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     hillshade,
     pin,
     fpv,
+    area,
     sun,
     sunSpeed,
     timeMinutes: time,
@@ -338,6 +360,11 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
     params.set('fpv_pitch', fixed(state.fpv.pitch, 2).toFixed(2));
     params.set('fpv_zoom', fixed(Math.max(0.01, state.fpv.zoom), 3).toFixed(3));
   }
+  if (state.area) {
+    params.set('area_w', String(Math.round(state.area.width)));
+    params.set('area_h', String(Math.round(state.area.height)));
+    params.set('area_scale', String(Number(state.area.scale.toPrecision(8))));
+  }
   if (!state.sunlight) params.set('sun', 'off');
   else if (state.sunAuto) {
     params.set('sun', 'auto');
@@ -346,4 +373,19 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
   else params.set('time', clock(state.timeMinutes));
   url.search = params.toString();
   return url.toString();
+}
+
+/**
+ * Fits the view a permalink was made in to the map frame at hand: the ground scale at which the whole saved
+ * area is still in the frame (the other way it shows more map around it). `ratio` is the new scale over the
+ * saved one, which is also what the saved pan (in frame px) is multiplied by.
+ */
+export function fitPermalinkArea(area: MapPermalinkArea, width: number, height: number) {
+  const ratio = Math.min(width / area.width, height / area.height);
+  const scale = Math.min(AREA_MAX_SCALE, Math.max(AREA_MIN_SCALE, area.scale * ratio));
+  return { scale, ratio: scale / area.scale };
+}
+
+export function scalePermalinkPan(pan: MapPermalinkPan, ratio: number): MapPermalinkPan {
+  return { x: pan.x * ratio, y: pan.y * ratio, z: pan.z * ratio };
 }

@@ -7,6 +7,7 @@ import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
 import { hudDepthPlanes } from './hudDepth';
 import { holdLean } from './lean';
+import { narrowViewDistanceScale } from './narrowView';
 import {
   MAP_MANEUVERS,
   MAP_MANEUVR_APPROACH_SECONDS,
@@ -1207,7 +1208,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function closeMapManeuverRig(target: Vec3, base: Rig): Rig {
     const pitch = 0.62;
-    const requested = clamp(Math.min(base.dist * 0.32, Math.min(MW, MH) * 0.55), 140, 360);
+    const requested = clamp(Math.min(base.dist * 0.32, Math.min(MW, MH) * 0.55), 140, 360) * narrowViewDistanceScale(vw / vh);
     const edge = Math.min(target[0] - MAPX, MAPX + MW - target[0], target[1] - MAPY, MAPY + MH - target[1]);
     const horizontal = Math.min(Math.cos(pitch) * requested, Math.max(24, edge * 0.75));
     return {
@@ -1568,7 +1569,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function chaseDist() {
     const { start, end } = routeSpan();
-    return clamp((end - start) * 1000 * CHASE_SHARE, 600, CHASE_DIST_M) * pxPerM();
+    return clamp((end - start) * 1000 * CHASE_SHARE, 600, CHASE_DIST_M) * pxPerM() * narrowViewDistanceScale(vw / vh);
   }
 
   function groundAt(X: number, Y: number, lift: number): number {

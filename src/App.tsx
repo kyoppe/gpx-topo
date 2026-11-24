@@ -24,7 +24,7 @@ import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
-import { buildMapPermalink, parseMapPermalink, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { buildMapPermalink, fitPermalinkArea, parseMapPermalink, scalePermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
@@ -342,7 +342,8 @@ export default function App() {
   const [apart, setApart] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => (permalink ? 'map' : savedView?.viewMode ?? 'gpx'));
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
-    if (permalink?.center && savedView?.mapViewport) return { ...savedView.mapViewport, ...permalink.center };
+    // a permalink with its display area sets the scale itself (below), from the frame this window has
+    if (permalink?.center && savedView?.mapViewport && !permalink.area) return { ...savedView.mapViewport, ...permalink.center };
     if (permalink?.center) return null;
     return savedView?.mapViewport ?? null;
   });
@@ -419,6 +420,8 @@ export default function App() {
   const modeTransitionSeqRef = useRef(0);
   const viewRestoredRef = useRef(false);
   const permalinkApplyingRef = useRef(false);
+  // what the permalink's saved pan is multiplied by: this frame's ground scale over the one it was made at
+  const permalinkPanRatioRef = useRef(1);
   const permalinkAppliedRef = useRef(false);
   const permalinkDetachedRef = useRef(false);
   const mapPinPlacedAtRef = useRef<number | null>(null);
@@ -955,10 +958,13 @@ export default function App() {
     if (viewRestoredRef.current) return;
     if (viewMode === 'map' && !mapViewport) {
       if (!gpxProjection) return;
+      // opened in a window of another size: keep the area the permalink showed in view, at the scale that fits it here
+      const fitted = permalink?.center && permalink.area ? fitPermalinkArea(permalink.area, layout.mapWidth, layout.mapHeight) : null;
+      if (fitted) permalinkPanRatioRef.current = fitted.ratio;
       setMapViewport({
         lat: permalink?.center?.lat ?? gpxProjection.centerLat,
         lon: permalink?.center?.lon ?? gpxProjection.centerLon,
-        scale: permalink?.center ? gpxProjection.scale : savedView?.mapViewport?.scale ?? gpxProjection.scale,
+        scale: fitted ? fitted.scale : permalink?.center ? gpxProjection.scale : savedView?.mapViewport?.scale ?? gpxProjection.scale,
       });
       return;
     }
@@ -969,7 +975,7 @@ export default function App() {
       map_viewport: !!mapViewport,
       map_style: savedView?.baseMapStyle ?? 'pale',
     });
-  }, [gpxProjection, mapViewport, permalink, savedView, viewMode]);
+  }, [gpxProjection, layout.mapHeight, layout.mapWidth, mapViewport, permalink, savedView, viewMode]);
 
   useEffect(() => {
     if (!viewRestoredRef.current) return;
@@ -1571,7 +1577,7 @@ export default function App() {
           bearing: permalink.bearing ?? 0,
           pitch: permalink.pitch ?? undefined,
           zoom: permalink.zoom ?? undefined,
-          pan: permalink.pan ?? undefined,
+          pan: permalink.pan ? scalePermalinkPan(permalink.pan, permalinkPanRatioRef.current) : undefined,
         });
       } else {
         engine.setViewState({
@@ -1579,7 +1585,7 @@ export default function App() {
           bearing: permalink.bearing ?? undefined,
           pitch: permalink.pitch ?? undefined,
           zoom: permalink.zoom ?? undefined,
-          pan: permalink.pan ?? undefined,
+          pan: permalink.pan ? scalePermalinkPan(permalink.pan, permalinkPanRatioRef.current) : undefined,
         });
       }
       if (permalink.sun === 'auto' && permalink.view === '3d') {
@@ -2252,6 +2258,7 @@ export default function App() {
                 zoom: currentFpv.zoom,
               }
             : null,
+        area: mapProjection ? { width: layout.mapWidth, height: layout.mapHeight, scale: mapProjection.scale } : null,
         sunlight: mapSunlight,
         sunAuto: mapSunAuto,
         sunSpeed: MAP_SUN_SPEED_NAMES[mapSunSpeed] ?? 'normal',

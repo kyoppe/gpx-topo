@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildMapPermalink, parseMapPermalink } from './mapPermalink';
+import { buildMapPermalink, fitPermalinkArea, parseMapPermalink, scalePermalinkPan } from './mapPermalink';
 
 describe('parseMapPermalink', () => {
   it('parses a flat map permalink and keeps the date optional', () => {
@@ -206,5 +206,109 @@ describe('parseMapPermalink', () => {
     );
     expect(normal).toContain('&sun=auto');
     expect(normal).not.toContain('sun_speed=');
+  });
+});
+
+describe('the display area of a permalink', () => {
+  const base = '?mode=map&lat=35.68&lon=139.76&view=3d&zoom=1.5&pan_x=10&pan_y=-20&pan_z=2';
+
+  it('reads the frame size and the ground scale together with the centre', () => {
+    const result = parseMapPermalink(`${base}&area_w=1000&area_h=640&area_scale=52428.8`);
+    expect(result?.area).toEqual({ width: 1000, height: 640, scale: 52428.8 });
+    expect(result?.usedParameters).toEqual(expect.arrayContaining(['area_w', 'area_h', 'area_scale']));
+  });
+
+  it('needs all three, and a centre, or ignores them', () => {
+    const partial = parseMapPermalink(`${base}&area_w=1000&area_h=640`);
+    expect(partial?.area).toBeNull();
+    expect(partial?.ignoredParameters).toEqual(expect.arrayContaining(['area_w', 'area_h']));
+    const noCentre = parseMapPermalink('?mode=map&area_w=1000&area_h=640&area_scale=500');
+    expect(noCentre?.area).toBeNull();
+    expect(noCentre?.ignoredParameters).toEqual(expect.arrayContaining(['area_w', 'area_h', 'area_scale']));
+    expect(parseMapPermalink(`${base}&area_w=0&area_h=640&area_scale=500`)?.area).toBeNull();
+  });
+
+  it('leaves an old permalink (no area) as it was', () => {
+    expect(parseMapPermalink(base)?.area).toBeNull();
+  });
+
+  it('writes the area in a built permalink, rounded, and round-trips it', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 35.68, lon: 139.76 },
+        view: 'flat',
+        bearing: 0,
+        pitch: 0,
+        zoom: 1,
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        area: { width: 1000.4, height: 639.6, scale: 52428.80000001 },
+        sunlight: true,
+        sunAuto: false,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+    const params = new URL(url).searchParams;
+    expect(params.get('area_w')).toBe('1000');
+    expect(params.get('area_h')).toBe('640');
+    expect(params.get('area_scale')).toBe('52428.8');
+    expect(parseMapPermalink(new URL(url).search)?.area).toEqual({ width: 1000, height: 640, scale: 52428.8 });
+  });
+
+  it('omits the area when there is none', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 35.68, lon: 139.76 },
+        view: 'flat',
+        bearing: 0,
+        pitch: 0,
+        zoom: 1,
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        sunlight: true,
+        sunAuto: false,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+    expect(new URL(url).searchParams.has('area_w')).toBe(false);
+  });
+});
+
+describe('fitPermalinkArea', () => {
+  const area = { width: 1000, height: 600, scale: 1000 };
+
+  it('keeps the saved area whole in a taller, narrower frame: the width decides', () => {
+    // a phone frame 400 x 800: the width is 0.4 of the saved one, the height would allow 1.33
+    const fit = fitPermalinkArea(area, 400, 800);
+    expect(fit.ratio).toBeCloseTo(0.4);
+    expect(fit.scale).toBeCloseTo(400);
+  });
+
+  it('keeps it whole in a wider, shorter frame: the height decides', () => {
+    const fit = fitPermalinkArea(area, 2000, 300);
+    expect(fit.ratio).toBeCloseTo(0.5);
+    expect(fit.scale).toBeCloseTo(500);
+  });
+
+  it('is the same scale for the same frame', () => {
+    expect(fitPermalinkArea(area, 1000, 600)).toEqual({ scale: 1000, ratio: 1 });
+  });
+
+  it('keeps the scale in range', () => {
+    expect(fitPermalinkArea({ width: 1000, height: 600, scale: 1 }, 1, 1).scale).toBeGreaterThanOrEqual(1e-3);
+  });
+});
+
+describe('scalePermalinkPan', () => {
+  it('multiplies the pan on every axis', () => {
+    expect(scalePermalinkPan({ x: 10, y: -20, z: 2 }, 0.4)).toEqual({ x: 4, y: -8, z: 0.8 });
   });
 });
