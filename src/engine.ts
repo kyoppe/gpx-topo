@@ -441,6 +441,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let clockEl: HTMLElement | null = null;
   let cursorEl: SVGCircleElement | null = null;
   let profileEl: HTMLElement | null = null;
+  let unbindProfileDrag: (() => void) | null = null;
+  let profileBound: HTMLElement | null = null;
 
   const st = {
     sunT: null as number | null,
@@ -2723,6 +2725,60 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     clockEl = findUi<HTMLElement>('[data-clock]');
     cursorEl = findUi<SVGCircleElement>('[data-cursor]');
     profileEl = findUi<HTMLElement>('[data-profile]');
+    bindProfileDrag();
+  }
+  /**
+   * Fallback: the profile is ordinary HTML beside the canvas, so a press on it never reaches the canvas code that
+   * carries the runner along. It is handled on the profile itself: a press anywhere on it puts the runner there,
+   * and dragging carries it along the route.
+   */
+  function bindProfileDrag() {
+    const el = profileEl;
+    // the same profile again (the panel is looked up after every change): keep its listeners and any drag under way
+    if (el === profileBound) return;
+    unbindProfileDrag?.();
+    unbindProfileDrag = null;
+    profileBound = null;
+    if (!fallback || !el) return;
+    profileBound = el;
+    let active: number | null = null;
+    const kmAtPointer = (ev: PointerEvent) => {
+      const svg = el.querySelector('svg');
+      const ctm = svg?.getScreenCTM();
+      if (!model || !ctm) return null;
+      return model.profileKm(new DOMPoint(ev.clientX, ev.clientY).matrixTransform(ctm.inverse()).x);
+    };
+    const carry = (ev: PointerEvent) => {
+      const km = kmAtPointer(ev);
+      if (km !== null) runTo(km);
+    };
+    const onDown = (ev: PointerEvent) => {
+      if (ev.button !== 0 || !model?.route.length) return;
+      ev.preventDefault();
+      if (flight) leaveFlightAtCurrentView();
+      active = ev.pointerId;
+      el.setPointerCapture(ev.pointerId);
+      setHover(null);
+      carry(ev);
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId === active) carry(ev);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== active) return;
+      active = null;
+      if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+    };
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+    unbindProfileDrag = () => {
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+    };
   }
   /** Fallback: the visible panel changed; look the controls up again and bring them up to date. */
   function refreshUi() {
@@ -5250,6 +5306,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.removeEventListener('pointerleave', onLeave);
     window.removeEventListener('keydown', onKey);
     for (const root of uiRoots) root.removeEventListener('input', onInput);
+    unbindProfileDrag?.();
     page.removeEventListener('pointerover', onOver);
     page.removeEventListener('pointerout', onOut);
     resizeObserver.disconnect();

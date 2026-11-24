@@ -2696,6 +2696,12 @@ html[data-fb-drag] .fb-panel-body {
   flex: 0 1 auto;
 }
 
+/* a press on the profile carries the runner along the route, so the page must not scroll under the finger */
+.fb-panel [data-profile] {
+  cursor: ew-resize;
+  touch-action: none;
+}
+
 /* docked: always there, the whole height beside the map; no grip, no tabs, every card */
 .fb-ui[data-dock='true'] .fb-sheet {
   display: contents;

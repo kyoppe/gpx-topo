@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createRasterTextureSource, rasterizeElement } from './fallbackRaster';
+import { createRasterTextureSource, FALLBACK_PIECE_KINDS, insetRings, rasterizeElement } from './fallbackRaster';
 
 const paths: string[] = [];
 
@@ -158,6 +158,44 @@ describe('route opacity', () => {
     expect(alphas[0]).toBeCloseTo(0.25);
     const hidden = routeScene((svg) => { svg.style.opacity = '0'; });
     expect(hidden.ctx.stroke).not.toHaveBeenCalled();
+  });
+});
+
+describe('insetRings', () => {
+  it('reads an inset ring and ignores outer, shifted and blurred shadows', () => {
+    expect(insetRings('none')).toEqual([]);
+    expect(insetRings('rgb(255, 255, 255) 0px 0px 0px 3px inset, rgba(24, 32, 43, 0.3) 0px 0px 0px 1px')).toEqual([{ color: 'rgb(255, 255, 255)', spread: 3 }]);
+    expect(insetRings('inset 0 0 0 2px #fff')).toEqual([{ color: '#fff', spread: 2 }]);
+    expect(insetRings('rgb(0, 0, 0) 1px 0px 0px 2px inset')).toEqual([]);
+    expect(insetRings('rgb(0, 0, 0) 0px 0px 4px 2px inset')).toEqual([]);
+  });
+});
+
+describe('the runner dot', () => {
+  it('is a piece the fallback draws', () => {
+    expect(FALLBACK_PIECE_KINDS.has('hiker')).toBe(true);
+  });
+
+  it('is a filled circle with its white ring laid inside, scaled to the texture', () => {
+    const dot = document.createElement('div');
+    dot.style.backgroundColor = 'rgb(214, 59, 70)';
+    for (const side of ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'] as const) dot.style[`border${side}Radius`] = '50%';
+    dot.style.boxShadow = 'rgb(255, 255, 255) 0px 0px 0px 3px inset';
+    document.body.append(dot);
+    rect(dot, 0, 0, 16, 16);
+    const ctx = Object.assign(fakeContext(), { rect: vi.fn() });
+    const fills: string[] = [];
+    ctx.fill.mockImplementation(() => { fills.push(ctx.fillStyle); });
+
+    rasterizeElement(ctx, dot, 32, 32);
+
+    const r = { x: 16, y: 16 };
+    // the fill, then the ring: the whole circle and the circle 3px (6 texture px) in, filled even-odd
+    expect(ctx.roundRect).toHaveBeenNthCalledWith(1, 0, 0, 32, 32, [r, r, r, r]);
+    expect(ctx.roundRect).toHaveBeenNthCalledWith(2, 0, 0, 32, 32, [r, r, r, r]);
+    expect(ctx.roundRect).toHaveBeenNthCalledWith(3, 6, 6, 20, 20, [{ x: 10, y: 10 }, { x: 10, y: 10 }, { x: 10, y: 10 }, { x: 10, y: 10 }]);
+    expect(ctx.fill).toHaveBeenLastCalledWith('evenodd');
+    expect(fills).toEqual(['rgb(214, 59, 70)', 'rgb(255, 255, 255)']);
   });
 });
 
