@@ -146,7 +146,7 @@ describe('SheetGrip', () => {
 });
 
 describe('PanelTabs', () => {
-  const labels = { route: 'Route', search: 'Search', sun: 'Sun', ways: 'Ways' };
+  const labels = { route: 'Route', search: 'Search', pin: 'Pin', sun: 'Sun', ways: 'Ways' };
 
   it('shows the groups on offer, marks the active one, and selects on a tap', () => {
     const onSelect = vi.fn();

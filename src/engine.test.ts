@@ -115,6 +115,128 @@ function fpvSetup() {
   return scene;
 }
 
+type DebugState = { eT: number; zoomT: number; yawT: number; tiltT: number; panT: number[] };
+
+function touchScene(pose: { e?: number; zoom?: number } = {}, options: EngineOptions = { renderPath: 'fallback' }, mapMode = false) {
+  const scene = setup(100, options);
+  scene.engine.setModel({ ...model, mapMode });
+  const debug = (window as unknown as { __gpxTopo: { pose(value: typeof pose): void; st: DebugState } }).__gpxTopo;
+  debug.pose({ e: 0, zoom: 1, ...pose });
+  scene.paint();
+  const touch = (type: string, id: number, x: number, y: number) =>
+    pointer(scene.canvas, type, x, y, { pointerId: id, pointerType: 'touch' });
+  return { ...scene, debug, st: debug.st, touch };
+}
+
+describe('fallback touch gestures', () => {
+  it('pinching out raises a flat page, and what the rise does not use goes on into the zoom', () => {
+    const { touch, st } = touchScene();
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 400, 400);
+    touch('pointermove', 2, 800, 400);
+    // twice the spread: ln 2 = 0.69 of the rise, and no zoom yet
+    expect(st.eT).toBeCloseTo(Math.log(2), 3);
+    expect(st.zoomT).toBe(1);
+    touch('pointermove', 1, 200, 400);
+    touch('pointermove', 2, 1000, 400);
+    expect(st.eT).toBe(1);
+    expect(st.zoomT).toBeGreaterThan(1.3);
+  });
+
+  it('pinching in zooms out first, then lowers the model back to the page', () => {
+    const { touch, st } = touchScene({ e: 1, zoom: 2 });
+    touch('pointerdown', 1, 400, 400);
+    touch('pointerdown', 2, 800, 400);
+    touch('pointermove', 1, 500, 400);
+    touch('pointermove', 2, 700, 400);
+    expect(st.zoomT).toBeCloseTo(1, 3);
+    expect(st.eT).toBe(1);
+    touch('pointermove', 1, 550, 400);
+    touch('pointermove', 2, 650, 400);
+    expect(st.eT).toBeLessThan(1);
+    expect(st.eT).toBeGreaterThan(0.3);
+    touch('pointermove', 1, 599, 400);
+    touch('pointermove', 2, 601, 400);
+    // too close to be a steady spread: nothing more happens
+    const eT = st.eT;
+    touch('pointermove', 1, 598, 400);
+    expect(st.eT).toBe(eT);
+  });
+
+  it('two fingers moving together move a raised model, as the right button does, and report it once on release', () => {
+    const { touch, st, callbacks } = touchScene({ e: 1 });
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 560, 400);
+    touch('pointermove', 2, 760, 400);
+    expect(st.panT[0] !== 0 || st.panT[1] !== 0).toBe(true);
+    expect(st.zoomT).toBe(1);
+    touch('pointerup', 1, 560, 400);
+    expect(callbacks.onCameraPan).toHaveBeenCalledOnce();
+    touch('pointerup', 2, 760, 400);
+    expect(callbacks.onCameraPan).toHaveBeenCalledOnce();
+  });
+
+  it('two fingers moving together over a flat map move the map', () => {
+    const { touch, callbacks } = touchScene({ e: 0 }, { renderPath: 'fallback' }, true);
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 530, 420);
+    touch('pointermove', 2, 730, 420);
+    // the middle of the two fingers moved 30 and 20 (in two steps, one per finger)
+    expect(callbacks.onMapDrag).toHaveBeenCalledTimes(2);
+    touch('pointerup', 1, 530, 420);
+    expect(callbacks.onMapPan).toHaveBeenCalledWith(30, 20);
+  });
+
+  it('a second finger ends the first finger\'s turn; the turn is not carried into the pinch', () => {
+    const { touch, st } = touchScene({ e: 1 });
+    touch('pointerdown', 1, 500, 400);
+    touch('pointermove', 1, 520, 400);
+    const yaw = st.yawT;
+    expect(yaw).not.toBe(0);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 560, 400);
+    touch('pointermove', 2, 760, 400);
+    expect(st.yawT).toBe(yaw);
+  });
+
+  it('lifting one finger ends the pinch, and the finger left does nothing', () => {
+    const { touch, st, callbacks } = touchScene({ e: 1 });
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointerup', 1, 500, 400);
+    const before = { yaw: st.yawT, tilt: st.tiltT, pan: [...st.panT], zoom: st.zoomT };
+    touch('pointermove', 2, 760, 450);
+    expect(st.yawT).toBe(before.yaw);
+    expect(st.tiltT).toBe(before.tilt);
+    expect(st.panT).toEqual(before.pan);
+    expect(st.zoomT).toBe(before.zoom);
+    touch('pointerup', 2, 760, 450);
+    expect(callbacks.onCameraRotate).not.toHaveBeenCalled();
+  });
+
+  it('a third finger is left out of the pinch', () => {
+    const { touch, st } = touchScene({ e: 1 });
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointerdown', 3, 600, 300);
+    touch('pointermove', 3, 600, 100);
+    expect(st.zoomT).toBe(1);
+    expect(st.panT).toEqual([0, 0, 0]);
+  });
+
+  it('native: touches are not read as a pinch (the page keeps its own handling)', () => {
+    const { touch, st } = touchScene({ e: 1 }, { renderPath: 'native' });
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 400, 400);
+    touch('pointermove', 2, 800, 400);
+    expect(st.zoomT).toBe(1);
+  });
+});
+
 describe('camera gesture completion', () => {
   it('reports rotation and tilt once on release, including duration and reversals', () => {
     const { canvas, callbacks } = cameraSetup();
@@ -609,6 +731,24 @@ describe('fallback controls outside the stage', () => {
     ui.slider.value = '720';
     ui.slider.dispatchEvent(new Event('input', { bubbles: true }));
     expect(ui.clock.textContent).toBe('');
+  });
+});
+
+describe('drawing resolution', () => {
+  const drawnWidth = (options?: EngineOptions) => {
+    vi.stubGlobal('devicePixelRatio', 3);
+    return setup(100, options).canvas.width;
+  };
+
+  it('native: draws at most 2 device pixels per css pixel, whatever is asked', () => {
+    expect(drawnWidth()).toBe(2400);
+    expect(drawnWidth({ renderPath: 'native', maxPixelRatio: 1 })).toBe(2400);
+  });
+
+  it('fallback: draws at most 2 by default, and at the lower ratio it is given', () => {
+    expect(drawnWidth({ renderPath: 'fallback' })).toBe(2400);
+    expect(drawnWidth({ renderPath: 'fallback', maxPixelRatio: 1.5 })).toBe(1800);
+    expect(drawnWidth({ renderPath: 'fallback', maxPixelRatio: 5 })).toBe(2400);
   });
 });
 

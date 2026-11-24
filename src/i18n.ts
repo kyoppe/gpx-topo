@@ -160,6 +160,7 @@ export type Copy = {
     showPanel: string;
     panelRoute: string;
     panelSearch: string;
+    panelPin: string;
     hidePanel: string;
     hoursAria: string;
     minutesAria: string;
@@ -331,6 +332,7 @@ function makeCopy(language: Language): Copy {
         showPanel: '設定パネルを開く',
         panelRoute: 'ルート',
         panelSearch: '検索',
+        panelPin: 'ピン',
         hidePanel: '設定パネルを閉じる',
         hoursAria: '時',
         minutesAria: '分',
@@ -506,6 +508,7 @@ function makeCopy(language: Language): Copy {
       showPanel: 'Show the panel',
       panelRoute: 'Route',
       panelSearch: 'Search',
+      panelPin: 'Pin',
       hidePanel: 'Hide the panel',
       hoursAria: 'Hours',
       minutesAria: 'Minutes',

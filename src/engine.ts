@@ -403,10 +403,20 @@ export type EngineOptions = {
    * slider, the clock, the profile and the waypoint rows are looked up here as well as in the page.
    */
   uiRoot?: HTMLElement | null;
+  /**
+   * Fallback only: the most device pixels the scene draws per CSS pixel (default and ceiling: 2). A phone's
+   * screen has more pixels than its GPU can fill at 60 fps, and the map textures follow it.
+   */
+  maxPixelRatio?: number;
+  /** Fallback only: the most frames per second while moving (default and ceiling: 60). It still drops to 30 when frames run long. */
+  maxFps?: number;
 };
 
 export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks, options: EngineOptions = {}) {
   const fallback = options.renderPath === 'fallback';
+  // the native path keeps its fixed limits: only the fallback may ask for less
+  const PIXEL_RATIO_MAX = fallback ? clamp(options.maxPixelRatio ?? 2, 1, 2) : 2;
+  const FPS_MAX = fallback ? clamp(options.maxFps ?? 60, 10, 60) : 60;
   const R = fallback ? createRenderer(canvas, createRasterTextureSource()) : createRenderer(canvas);
   const stage = page.parentElement as HTMLElement;
   // the roots the app's controls live in: the page, and (fallback) the visible panel beside the canvas
@@ -481,6 +491,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     | 'drum'
     | 'runner'
     | 'fpv-turn'
+    | 'pinch'
     | null = null;
   let activeWay: string | null = null;
   let flight: Flight | null = null;
@@ -3483,7 +3494,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let touched = false;
   let qs = 1;
   let slow = 0;
-  const motionFrameRate = createAdaptiveFrameRate({ highFps: 60, lowFps: 30 });
+  const motionFrameRate = createAdaptiveFrameRate({ highFps: FPS_MAX, lowFps: Math.min(30, FPS_MAX) });
   let wasBusy = false;
   let fullW = 1;
   let fullH = 1;
@@ -4395,7 +4406,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     window.setTimeout(late, 90);
   }
 
-  const TS = clamp(window.devicePixelRatio || 1, 1, 2);
+  const TS = clamp(window.devicePixelRatio || 1, 1, PIXEL_RATIO_MAX);
   const detailSide = () => Math.min(R.maxTexture, DETAIL_MAX_SIDE * TS);
   let retries = 0;
   let painted = false;
@@ -4504,7 +4515,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     vw = canvas.clientWidth;
     vh = canvas.clientHeight;
     xHintAnchor = null;
-    const s = Math.min(window.devicePixelRatio || 1, 2);
+    const s = Math.min(window.devicePixelRatio || 1, PIXEL_RATIO_MAX);
     const exact =
       box && s === window.devicePixelRatio && Math.abs(box.inlineSize - vw * s) < 2 && Math.abs(box.blockSize - vh * s) < 2;
     fullW = exact ? box.inlineSize : Math.round(vw * s);
@@ -4649,6 +4660,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onViewInteraction?.(reason);
   };
   const onPointerDown = (ev: PointerEvent) => {
+    if (fallback && ev.pointerType === 'touch' && ev.target === canvas && touchDown(ev)) {
+      ev.preventDefault();
+      return;
+    }
     if (cameraDrag) {
       if (cameraDrag.pointerId !== ev.pointerId) return;
       // A new press from the same pointer means its previous release was missed.
@@ -4745,6 +4760,13 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.classList.add('turning');
   };
   const onPointerMove = (ev: PointerEvent) => {
+    if (fallback && ev.pointerType === 'touch' && touchPoints.has(ev.pointerId)) {
+      touchPoints.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pinch) {
+        updatePinch();
+        return;
+      }
+    }
     if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
     if (fpvDragPointerId !== null && fpvDragPointerId !== ev.pointerId) return;
     flagHover = !!(ev.target as Element).closest?.('[data-piece="flag"]');
@@ -4851,6 +4873,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   const onPointerUp = (ev: PointerEvent) => {
+    if (fallback && ev.pointerType === 'touch' && touchPoints.delete(ev.pointerId) && pinch) {
+      // lifting either finger ends the pinch; the one left on the glass does nothing until it is lifted too
+      if (pinch.ids.includes(ev.pointerId)) endPinch();
+      return;
+    }
     if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
     if (fpvDragPointerId !== null && fpvDragPointerId !== ev.pointerId) return;
     if (!drag) return;
@@ -4928,6 +4955,36 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   // stays there; risen, it zooms toward the point under the pointer; zoomed all the way out, it lowers
   // the model back to the page.
   const WHEEL_GAP = 200;
+
+  /** Zooms toward `target` (kept within the limits) so that the ground under the canvas point stays under it; returns the zoom reached. */
+  function zoomToward(target: number, sx: number, sy: number): number {
+    const z0 = st.zoomT;
+    const z1 = clamp(target, ZOOM_MIN, Math.max(z0, zoomCap()));
+    if (Math.abs(z1 - z0) < 1e-6) return z0;
+    const tc = targetCam();
+    const P = pick(tc, sx, sy, liftOf(st.eT));
+    if (P) {
+      const f = 1 - z0 / z1;
+      const T = [tc.base[0] + st.panT[0], tc.base[1] + st.panT[1], tc.base[2] + st.panT[2]];
+      st.panT = [0, 1, 2].map((i) => st.panT[i] + (P[i] - T[i]) * f) as Vec3;
+    }
+    st.zoomT = z1;
+    if (P) {
+      // the camera stands up as it closes in, which moves the point off the pointer: put it back
+      for (let it = 0; it < 3; it += 1) {
+        const { o, d } = ray(targetCam(), sx, sy);
+        if (Math.abs(d[2]) < 1e-6) break;
+        const t = (P[2] - o[2]) / d[2];
+        st.panT[0] += P[0] - (o[0] + d[0] * t);
+        st.panT[1] += P[1] - (o[1] + d[1] * t);
+      }
+    }
+    if (z1 <= ZOOM_MIN + 1e-6) st.panT = [0, 0, 0];
+    clampPan();
+    keepAboveGround();
+    return z1;
+  }
+
   let wheelAt = 0;
   let wheelPhase: 'rise' | 'zoom' | null = null;
   let cameraZoom: { startedAt: number; lastAt: number; change: Omit<CameraZoom, 'duration_ms'> } | null = null;
@@ -5022,30 +5079,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       return;
     }
     const z0 = st.zoomT;
-    const z1 = clamp(z0 * Math.exp(-dy * rate), ZOOM_MIN, Math.max(z0, zoomCap()));
-    if (Math.abs(z1 - z0) < 1e-6) return;
-    const tc = targetCam();
     const [sx, sy] = canvasPoint(ev);
-    const P = pick(tc, sx, sy, liftOf(st.eT));
-    if (P) {
-      const f = 1 - z0 / z1;
-      const T = [tc.base[0] + st.panT[0], tc.base[1] + st.panT[1], tc.base[2] + st.panT[2]];
-      st.panT = [0, 1, 2].map((i) => st.panT[i] + (P[i] - T[i]) * f) as Vec3;
-    }
-    st.zoomT = z1;
-    if (P) {
-      // the camera stands up as it closes in, which moves the point off the pointer: put it back
-      for (let it = 0; it < 3; it += 1) {
-        const { o, d } = ray(targetCam(), sx, sy);
-        if (Math.abs(d[2]) < 1e-6) break;
-        const t = (P[2] - o[2]) / d[2];
-        st.panT[0] += P[0] - (o[0] + d[0] * t);
-        st.panT[1] += P[1] - (o[1] + d[1] * t);
-      }
-    }
-    if (z1 <= ZOOM_MIN + 1e-6) st.panT = [0, 0, 0];
-    clampPan();
-    keepAboveGround();
+    const z1 = zoomToward(z0 * Math.exp(-dy * rate), sx, sy);
+    if (Math.abs(z1 - z0) < 1e-6) return;
     cameraZoom ??= {
       startedAt: now,
       lastAt: now,
@@ -5058,6 +5094,175 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     setHover(null);
     need();
   };
+  // ---------------------------------------------------------------- touch (fallback)
+  // One finger does what the left button does (the drag handlers above). A second finger makes it a pinch: the
+  // spread does what the wheel does (a flat page rises first, a risen one zooms on, and the other way round
+  // lowers it again), and the middle of the two fingers does what the right button does (moves the model).
+  const touchPoints = new Map<number, { x: number; y: number }>();
+  let pinch: {
+    ids: [number, number];
+    dist: number;
+    x: number;
+    y: number;
+    startedAt: number;
+    zoom: Omit<CameraZoom, 'duration_ms'> | null;
+    pan: Omit<CameraPan, 'duration_ms'> | null;
+  } | null = null;
+  /** How much of the page's rise one natural-log unit of spread makes: about 2.7x apart (or together) is all of it. */
+  const PINCH_RISE = 1;
+  /** Fingers closer than this (css px) give no steady spread. */
+  const PINCH_MIN_DIST = 8;
+
+  /** Tracks a touch that went down on the canvas; true when it is the second finger and a pinch has begun. */
+  function touchDown(ev: PointerEvent): boolean {
+    touchPoints.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (touchPoints.size < 2) return false;
+    if (pinch) {
+      // a third finger is left out of it
+      touchPoints.delete(ev.pointerId);
+      return true;
+    }
+    if (mapManeuver || drag === 'drum' || drag === 'runner') {
+      touchPoints.delete(ev.pointerId);
+      return false;
+    }
+    const ids = [...touchPoints.keys()].slice(0, 2) as [number, number];
+    if (flight) leaveFlightAtCurrentView();
+    // the first finger's drag ends here, as if it had been lifted
+    finishCameraDrag(true);
+    if (drag === 'map' && Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapPan(...mapDragTotal);
+    mapDragTotal = [0, 0];
+    fpvDragPointerId = null;
+    panFrom = null;
+    moved = 1e6;
+    drag = 'pinch';
+    const a = touchPoints.get(ids[0])!;
+    const b = touchPoints.get(ids[1])!;
+    pinch = {
+      ids,
+      dist: Math.hypot(a.x - b.x, a.y - b.y),
+      x: (a.x + b.x) / 2,
+      y: (a.y + b.y) / 2,
+      startedAt: performance.now(),
+      zoom: null,
+      pan: null,
+    };
+    viewInteractionNotified = false;
+    setHover(null);
+    canvas.classList.add('turning');
+    return true;
+  }
+
+  /** Moves the ground under the canvas point `from` to the point `to` (what the right button does, a step at a time). */
+  function dragGroundTo(from: readonly number[], to: readonly number[]) {
+    const tc = targetCam();
+    const P = pick(tc, from[0], from[1], liftOf(st.eT));
+    if (!P) return;
+    const { o, d } = ray(tc, to[0], to[1]);
+    if (d[2] >= -1e-4) return;
+    const t = (P[2] - o[2]) / d[2];
+    const before = [...st.panT];
+    st.panT = [st.panT[0] + P[0] - (o[0] + d[0] * t), st.panT[1] + P[1] - (o[1] + d[1] * t), st.panT[2]];
+    clampPan();
+    if (pinch) {
+      pinch.pan ??= { delta_x_px: 0, delta_y_px: 0, delta_z_px: 0, distance_px: 0 };
+      const delta = st.panT.map((v, i) => v - before[i]);
+      pinch.pan.delta_x_px += delta[0];
+      pinch.pan.delta_y_px += delta[1];
+      pinch.pan.delta_z_px += delta[2];
+      pinch.pan.distance_px += Math.hypot(...delta);
+    }
+  }
+
+  /** A spread of `ln` (natural log of the new distance over the old) about the canvas point: rise, zoom, or lower. */
+  function pinchZoom(ln: number, sx: number, sy: number) {
+    if (fpv) {
+      if (fpv.phase !== 'active') return;
+      const zoom = clamp(fpv.zoomT * Math.exp(ln), FPV_ZOOM_MIN, FPV_ZOOM_MAX);
+      if (Math.abs(zoom - fpv.zoomT) > 1e-6) {
+        fpv.zoomT = zoom;
+        notifyViewInteraction('fpv_zoom');
+        need();
+      }
+      return;
+    }
+    notifyViewInteraction('camera_zoom_or_raise');
+    let left = ln;
+    if (left > 0 && st.eT < 1) {
+      // a flat page is raised first; what the rise does not use goes on into the zoom
+      const eT = st.eT + left * PINCH_RISE;
+      apart(Math.min(1, eT));
+      left = Math.max(0, eT - 1) / PINCH_RISE;
+    } else if (left < 0 && st.zoomT > ZOOM_MIN + 1e-6) {
+      // a zoomed model zooms out first; what that does not use goes on into lowering it
+      const z0 = st.zoomT;
+      const z1 = zoomToward(z0 * Math.exp(left), sx, sy);
+      trackPinchZoom(z0, z1);
+      left = Math.min(0, left - Math.log(z1 / z0));
+      if (st.zoomT > ZOOM_MIN + 1e-6) left = 0;
+    }
+    if (left > 0) {
+      const z0 = st.zoomT;
+      trackPinchZoom(z0, zoomToward(z0 * Math.exp(left), sx, sy));
+    } else if (left < 0 && st.eT > 0) {
+      apart(st.eT + left * PINCH_RISE);
+      if (st.eT === 0) home();
+    }
+    setHover(null);
+    need();
+  }
+
+  function trackPinchZoom(z0: number, z1: number) {
+    if (!pinch || Math.abs(z1 - z0) < 1e-6) return;
+    pinch.zoom ??= { input: 'pinch', start_zoom: z0, end_zoom: z0, delta_zoom: 0, total_zoom_change: 0 };
+    pinch.zoom.end_zoom = z1;
+    pinch.zoom.delta_zoom += z1 - z0;
+    pinch.zoom.total_zoom_change += Math.abs(z1 - z0);
+  }
+
+  function updatePinch() {
+    if (!pinch) return;
+    const a = touchPoints.get(pinch.ids[0]);
+    const b = touchPoints.get(pinch.ids[1]);
+    if (!a || !b) return;
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const mid: [number, number] = [(a.x + b.x) / 2, (a.y + b.y) / 2];
+    const from = canvasPoint({ clientX: pinch.x, clientY: pinch.y });
+    const to = canvasPoint({ clientX: mid[0], clientY: mid[1] });
+    if (pinch.dist >= PINCH_MIN_DIST && dist >= PINCH_MIN_DIST) pinchZoom(Math.log(dist / pinch.dist), from[0], from[1]);
+    if (dist >= PINCH_MIN_DIST) pinch.dist = dist;
+    if (!fpv && (mid[0] !== pinch.x || mid[1] !== pinch.y)) {
+      if (st.eT >= 0.5) {
+        notifyViewInteraction('camera_pan');
+        dragGroundTo(from, to);
+      } else if (model?.mapMode && st.e < 0.03) {
+        // laid flat, the map under the fingers is moved, as one finger does
+        notifyViewInteraction('map_pan');
+        callbacks.onMapDrag(mid[0] - pinch.x, mid[1] - pinch.y);
+        mapDragTotal[0] += mid[0] - pinch.x;
+        mapDragTotal[1] += mid[1] - pinch.y;
+      }
+    }
+    pinch.x = mid[0];
+    pinch.y = mid[1];
+    need();
+  }
+
+  function endPinch() {
+    const gesture = pinch;
+    pinch = null;
+    drag = null;
+    canvas.classList.remove('turning');
+    if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapPan(...mapDragTotal);
+    mapDragTotal = [0, 0];
+    if (gesture) {
+      const now = performance.now();
+      if (gesture.zoom) callbacks.onCameraZoom({ ...gesture.zoom, duration_ms: Math.round(now - gesture.startedAt) });
+      if (gesture.pan && gesture.pan.distance_px > 0) callbacks.onCameraPan({ ...gesture.pan, duration_ms: Math.round(now - gesture.startedAt) });
+    }
+    need();
+  }
+
   const onKey = (ev: KeyboardEvent) => {
     if (fpvSelection) {
       if (ev.key === 'Escape') fpvCancel();

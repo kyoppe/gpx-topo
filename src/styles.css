@@ -2870,47 +2870,48 @@ html[data-fb-drag] .fb-panel-body {
   display: none;
 }
 
-/* the map pin's name, edited here rather than on the pin */
-.fb-pin-editor {
+/* the sheet shows the pin's name card alone when its tab is picked */
+.fb-ui[data-dock='false'][data-tab='pin'] .fb-panel .slot:not([data-section='pin']) {
+  display: none;
+}
+
+/* the map pin's name, typed here: the pin on the map is only drawn */
+.map-pin-field {
   display: flex;
-  width: min(420px, 100%);
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow:
-    0 6px 22px rgba(24, 32, 43, 0.2),
-    inset 0 0 0 1px var(--rule);
-  pointer-events: auto;
-  animation: fb-rise var(--fb-duration) var(--fb-ease) both;
 }
 
-.fb-pin-editor .map-pin-marker {
-  flex: none;
+.map-pin-field .map-pin-marker {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
 }
 
-.fb-pin-editor input {
+.map-pin-field input {
   min-width: 0;
   flex: 1;
   height: 36px;
+  padding: 0 8px;
   border: 0;
-  background: transparent;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--rule);
   color: var(--ink);
+  /* 16px keeps iOS from zooming the page when the field is focused */
   font: 600 16px var(--sans);
   outline: none;
 }
 
-.fb-pin-editor input::placeholder {
-  color: var(--ink3);
-  font-weight: 400;
+.map-pin-field input:focus {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-@keyframes fb-rise {
-  from {
-    opacity: 0;
-    transform: translateY(14px) scale(0.96);
-  }
+.map-pin-field input::placeholder {
+  color: var(--ink3);
+  font-weight: 400;
 }
 
 /* the (i) button sits at the top right here, clear of the bar */
@@ -3133,7 +3134,6 @@ html[data-fb-drag] .fb-panel-body {
 
 @media (prefers-reduced-motion: reduce) {
   .fb-ui[data-panel='open'] .fb-panel,
-  .fb-pin-editor,
   .fb-modal .pop,
   .fb-dialog,
   .fb-modal .pop-layer,
