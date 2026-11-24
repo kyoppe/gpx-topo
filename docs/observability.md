@@ -45,6 +45,13 @@ workflow performs the build or deployment.
 - Browser Logs also receive `service`, `env`, and `version` when the SDK event
   does not already contain them.
 
+Immediately after RUM initialization, the feature probe sets the global boolean
+`html_in_canvas_supported`. Filter or group views, actions, errors, resources,
+and long tasks by `@context.html_in_canvas_supported` (`true` or `false`), without
+depending on LCP selectors. This reports API support; use the existing
+`html_in_canvas_ready` and `html_in_canvas_painted` actions to measure readiness
+and painting success.
+
 User-entered values are not masked. Waypoint names, GPX file names, and GPX
 content may be included in RUM context or Browser Logs when they are relevant
 to the operation being recorded.
@@ -209,6 +216,33 @@ requires a non-throwing upload with no WebGL error or lost context on the first
 successful upload; fallback animation frames and failed uploads do not emit it.
 It confirms an element snapshot was uploaded, not that every element or final
 screen pixel rendered correctly.
+
+## Custom RUM duration vitals
+
+Filter or group custom vitals by `@vital.name`. Each completed measurement
+includes `@context.status`: `ok`, `error`, or `aborted`.
+
+| `@vital.name` | Measured interval | Context fields |
+| --- | --- | --- |
+| `gpx_parse` | The `parseGpx()` call, excluding fetching, file reads, and waypoint preparation | `source`: `file`, `restore`, or `fixture`; `point_count` on success |
+| `dem_load` | Each `loadDemGrid()` call | `phase`: `coarse` or `fine`; `nx`, `ny` |
+| `html_in_canvas_engine_start` | From just before `createEngine()` to its return or throw | `is_webview`, `user_agent_data_brands` when available |
+| `html_in_canvas_first_paint` | Engine ready to the existing first successful paint callback | `is_webview`, `user_agent_data_brands` when available |
+| `video_recording` | From just before `recorder.start()` to `recorder.onstop`, or a synchronous start failure | `mime_type`, `capture_source: canvas`; `reason`, `file_size` when stopped |
+
+The helper uses Browser SDK v7's string `vitalKey` option for both
+`startDurationVital` and `stopDurationVital`. Each invocation gets a separate
+key, including overlapping DEM loads. Stop callbacks run at most once, never
+throw, and do nothing when RUM is not initialized.
+
+An in-flight DEM vital stops with `status: aborted` as soon as its AbortSignal
+fires; later settlement cannot overwrite that outcome. A call whose signal is
+already aborted starts no vital. Disposing an engine before its first paint
+also stops the pending first-paint vital with `status: aborted`. A failed engine
+construction records an engine-start error without starting a first-paint vital.
+Video recording reports `error` for start failures, recorder errors, or empty
+recordings; saving the resulting download is outside the measured interval.
+The existing actions and errors retain their names, contexts, and behavior.
 
 ## Browser Logs
 

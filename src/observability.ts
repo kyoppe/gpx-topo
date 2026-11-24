@@ -2,6 +2,7 @@ import { datadogLogs, type LogsEvent } from '@datadog/browser-logs';
 import { datadogRum } from '@datadog/browser-rum';
 import { reactPlugin } from '@datadog/browser-rum-react';
 
+import { supportsHtmlInCanvas } from './htmlInCanvas';
 import { startViewEngagement } from './viewEngagement';
 
 const APPLICATION_ID = 'd5807eba-5947-4933-b5e1-b25c996dfe32';
@@ -12,8 +13,11 @@ const ENV = import.meta.env.DEV ? 'dev' : 'kyo';
 const VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown';
 
 type Context = Record<string, unknown>;
+type VitalStatus = 'ok' | 'error' | 'aborted';
+type StopVital = (status: VitalStatus, context?: Context) => void;
 
 let started = false;
+let vitalSequence = 0;
 
 const ERROR_STATUSES = new Set(['error', 'critical', 'alert', 'emerg']);
 
@@ -53,6 +57,7 @@ export function startObservability(): void {
       trackLongTasks: true,
       plugins: [reactPlugin()],
     });
+    datadogRum.setGlobalContextProperty('html_in_canvas_supported', supportsHtmlInCanvas());
     startViewEngagement();
   } catch (error) {
     console.error('gpx_topo_rum_init_failed', error);
@@ -75,6 +80,36 @@ export function startObservability(): void {
 
 export function addAction(name: string, context: Context = {}): void {
   datadogRum.addAction(name, context);
+}
+
+/** Starts an independent duration vital and returns an idempotent, non-throwing stop callback. */
+export function startVital(name: string, context: Context = {}, signal?: AbortSignal): StopVital {
+  const vitalKey = `${name}_${++vitalSequence}`;
+  let active = false;
+  const stop: StopVital = (status, stopContext = {}) => {
+    if (!active) return;
+    active = false;
+    try {
+      signal?.removeEventListener('abort', onAbort);
+      if (!datadogRum.getInitConfiguration()) return;
+      datadogRum.stopDurationVital(name, {
+        vitalKey,
+        context: { ...context, ...stopContext, status },
+      });
+    } catch {
+      // Observability must not interrupt the operation being measured.
+    }
+  };
+  const onAbort = () => stop('aborted');
+  try {
+    if (signal?.aborted || !datadogRum.getInitConfiguration()) return stop;
+    datadogRum.startDurationVital(name, { vitalKey, context });
+    active = true;
+    signal?.addEventListener('abort', onAbort, { once: true });
+  } catch {
+    // RUM may be unavailable or the SDK may reject the measurement.
+  }
+  return stop;
 }
 
 export function reportError(operation: string, error: unknown, context: Context = {}): void {
