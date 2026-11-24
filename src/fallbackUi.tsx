@@ -195,6 +195,22 @@ export function KeyFace({ icon, label }: { icon: keyof typeof KEY_ICONS; label: 
   );
 }
 
+/**
+ * Esc for a dialog that is up. It listens in the capture phase and stops the key there, so the engine's own
+ * window listener (which would lay the model flat for an Esc it does not recognise) never sees it.
+ * Returns the function that removes it.
+ */
+export function listenDialogEscape(onEscape: () => void): () => void {
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    onEscape();
+  };
+  window.addEventListener('keydown', onKey, true);
+  return () => window.removeEventListener('keydown', onKey, true);
+}
+
 /** A dialog over the map: a scrim that closes it, and a card that springs up. */
 export function FallbackDialog({ children, label, closeLabel, onClose, className = '' }: { children: ReactNode; label: string; closeLabel: string; onClose: () => void; className?: string }) {
   return (

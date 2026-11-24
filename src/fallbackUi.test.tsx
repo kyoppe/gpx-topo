@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFallbackUi, FallbackTimePicker, KeyFace, PanelTabs, SheetGrip } from './fallbackUi';
+import { createFallbackUi, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip } from './fallbackUi';
 import { getCopy } from './i18n';
 
 const copy = getCopy('en');
@@ -156,6 +156,57 @@ describe('PanelTabs', () => {
     expect(tabs.map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false']);
     click(tabs[2]);
     expect(onSelect).toHaveBeenCalledWith('ways');
+  });
+});
+
+describe('listenDialogEscape', () => {
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    window.dispatchEvent(event);
+    return event;
+  };
+
+  it('closes the dialog on Esc before the engine hears it, so the model is not laid flat', () => {
+    // the engine's listener is on window in the bubble phase and is added first (in a layout effect)
+    const engine = vi.fn();
+    window.addEventListener('keydown', engine);
+    const close = vi.fn();
+    const stop = listenDialogEscape(close);
+
+    const event = press('Escape');
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(engine).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+
+    stop();
+    window.removeEventListener('keydown', engine);
+  });
+
+  it('leaves other keys to the engine', () => {
+    const engine = vi.fn();
+    window.addEventListener('keydown', engine);
+    const close = vi.fn();
+    const stop = listenDialogEscape(close);
+
+    press('a');
+    expect(close).not.toHaveBeenCalled();
+    expect(engine).toHaveBeenCalledTimes(1);
+
+    stop();
+    window.removeEventListener('keydown', engine);
+  });
+
+  it('stops listening once removed', () => {
+    const engine = vi.fn();
+    window.addEventListener('keydown', engine);
+    const close = vi.fn();
+    listenDialogEscape(close)();
+
+    press('Escape');
+    expect(close).not.toHaveBeenCalled();
+    expect(engine).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener('keydown', engine);
   });
 });
 

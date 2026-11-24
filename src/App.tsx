@@ -19,7 +19,7 @@ import { createCenteredProjection, createMapProjection, pathD, projectTrack, typ
 import { searchGsiAddress } from './gsiSearch';
 import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
-import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
+import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
 import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
@@ -1793,19 +1793,16 @@ export default function App() {
     addAction('info_flag_toggled', { open: next });
     setInfoOpen(next);
   };
-  // Fallback: Esc closes the dialog that is up (the engine's own Esc handling knows nothing of these).
+  // Fallback: Esc closes the dialog that is up. The engine's own Esc handling knows nothing of these dialogs and
+  // would lay the model flat, so this listens first and keeps the key from reaching it.
   useEffect(() => {
     if (!fb || (!infoOpen && !pop)) return;
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
+    return listenDialogEscape(() => {
       if (infoOpen) {
         addAction('info_flag_toggled', { open: false });
         setInfoOpen(false);
       } else setPop(null);
-    };
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
+    });
   }, [fb, infoOpen, pop]);
 
   // ---------------------------------------------------------------- actions
