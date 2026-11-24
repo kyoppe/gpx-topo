@@ -2446,3 +2446,476 @@ main[lang='en'] .bar-hint {
   opacity: 0.22;
   filter: grayscale(1);
 }
+
+/* ---------------------------------------------------------------- fallback controls */
+/* Without HTML-in-Canvas the side cards, the bar and the pickers are not drawn into the scene: they are ordinary
+   HTML over the canvas. The same elements, so the same look; only where they sit changes. */
+.fb-mount {
+  display: contents;
+}
+
+.fb-ui {
+  --fb-ease: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --fb-duration: 480ms;
+  --fb-panel-width: 400px;
+  --fb-hud-height: 72px;
+  --fb-edge: 12px;
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.fb-ui ::selection {
+  background: rgba(48, 84, 240, 0.22);
+}
+
+/* the map style switch floats at the top left of the map */
+.fb-map-controls {
+  position: absolute;
+  top: max(var(--fb-edge), env(safe-area-inset-top));
+  left: max(var(--fb-edge), env(safe-area-inset-left));
+}
+
+.fb-map-controls .map-switch {
+  position: relative;
+  right: auto;
+  bottom: auto;
+}
+
+/* the side panel: the cards of the sheet, floated over the map and folded away behind the right edge */
+.fb-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: var(--fb-hud-height);
+  display: flex;
+  width: calc(var(--fb-panel-width) + var(--fb-edge) * 2);
+  max-width: 100%;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: calc(max(var(--fb-edge), env(safe-area-inset-top)) + 44px) max(var(--fb-edge), env(safe-area-inset-right)) var(--fb-edge) var(--fb-edge);
+  overscroll-behavior: contain;
+  pointer-events: none;
+  scrollbar-width: none;
+  transform: translateX(calc(100% + 24px));
+  transition:
+    transform 260ms cubic-bezier(0.4, 0, 1, 1),
+    visibility 0s linear 260ms;
+  visibility: hidden;
+}
+
+.fb-panel::-webkit-scrollbar {
+  display: none;
+}
+
+.fb-ui[data-panel='open'] .fb-panel {
+  transform: none;
+  transition: transform var(--fb-duration) var(--fb-ease);
+  visibility: visible;
+}
+
+.fb-panel .side {
+  position: static;
+  width: 100%;
+  min-height: 0;
+  flex: none;
+}
+
+.fb-panel .slot {
+  pointer-events: auto;
+}
+
+.fb-panel .slot-fill {
+  flex: none;
+}
+
+.fb-panel .card {
+  box-shadow:
+    0 6px 22px rgba(24, 32, 43, 0.18),
+    inset 0 0 0 1px var(--rule);
+}
+
+.fb-panel .in-ways {
+  height: auto;
+}
+
+.fb-panel .ways {
+  flex: none;
+  max-height: min(34vh, 260px);
+}
+
+.fb-panel .profile {
+  width: 100%;
+  height: auto;
+}
+
+/* the bar along the bottom: the keys of the sheet's bar, in a row that wraps on a narrow window */
+.fb-hud {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 max(var(--fb-edge), env(safe-area-inset-right)) max(var(--fb-edge), env(safe-area-inset-bottom)) max(var(--fb-edge), env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.fb-hud .hud {
+  position: relative;
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 16px;
+  background: linear-gradient(#f6f7f8, #eceef1);
+  box-shadow:
+    0 6px 22px rgba(24, 32, 43, 0.2),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.09);
+  pointer-events: auto;
+}
+
+.fb-hud .bar {
+  display: none;
+}
+
+.fb-hud .key {
+  position: relative;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 11px;
+  touch-action: manipulation;
+}
+
+.fb-hud .key-mode,
+.fb-hud .key-permalink,
+.fb-hud .key-pin,
+.fb-hud .key-fly,
+.fb-hud .key-stop,
+.fb-hud .key-panel {
+  width: auto;
+}
+
+.fb-hud .key-flip {
+  width: auto;
+  min-width: 104px;
+}
+
+/* what the scene alone can do (the photo, the video, the drone moves, the first person view) is left out here */
+.fb-hud .key-camera,
+.fb-hud .key-video,
+.fb-hud .key-x,
+.fb-hud .key-maneuver,
+.fb-hud .key-maneuver-cancel,
+.fb-hud .key-fpv {
+  display: none;
+}
+
+/* raise and lay flat are one key with two faces; only the one that does something now is shown */
+.fb-ui[data-apart='false'] .key-flip[data-face='back'],
+.fb-ui[data-apart='true'] .key-flip[data-face='front'] {
+  display: none;
+}
+
+.key-panel {
+  display: grid;
+  place-items: center;
+}
+
+.key[data-latched] .panel-icon {
+  stroke: #fff;
+}
+
+.panel-icon {
+  display: block;
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+/* the map pin's name, edited here rather than on the pin */
+.fb-pin-editor {
+  display: flex;
+  width: min(420px, 100%);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow:
+    0 6px 22px rgba(24, 32, 43, 0.2),
+    inset 0 0 0 1px var(--rule);
+  pointer-events: auto;
+  animation: fb-rise var(--fb-duration) var(--fb-ease) both;
+}
+
+.fb-pin-editor .map-pin-marker {
+  flex: none;
+}
+
+.fb-pin-editor input {
+  min-width: 0;
+  flex: 1;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 600 16px var(--sans);
+  outline: none;
+}
+
+.fb-pin-editor input::placeholder {
+  color: var(--ink3);
+  font-weight: 400;
+}
+
+@keyframes fb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+}
+
+/* the (i) button sits at the top right here, clear of the bar */
+.fallback-ui .info-button {
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  bottom: auto;
+  width: 40px;
+  height: 40px;
+  box-shadow: 0 4px 14px rgba(24, 32, 43, 0.2);
+}
+
+/* the bar's keys do the work of the hit layer, which the scene needs to put real buttons over drawn keys */
+.fallback-ui .hud-hit-layer {
+  display: none;
+}
+
+/* dialogs: the pickers and the help flag */
+.fb-modal {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.fb-modal .pop-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--fb-edge);
+  background: rgba(24, 32, 43, 0.4);
+  pointer-events: auto;
+  animation: fb-fade 200ms ease-out both;
+}
+
+.fb-modal .pop {
+  position: relative;
+  max-width: 100%;
+  box-shadow:
+    0 14px 44px rgba(24, 32, 43, 0.32),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.1);
+  animation: fb-pop var(--fb-duration) var(--fb-ease) both;
+}
+
+.fb-modal .pop-date {
+  width: min(320px, 100%);
+}
+
+.fb-modal .cal-day {
+  min-height: 38px;
+}
+
+.fb-modal .pop-time {
+  width: min(300px, 100%);
+}
+
+.fb-time-fields {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+
+.fb-stepper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.fb-step {
+  display: grid;
+  width: 74px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #eef0f3;
+  appearance: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.fb-step:hover {
+  background: #e3e6eb;
+}
+
+.fb-step svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--ink2);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.fb-step-value {
+  width: 74px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #d6dae1;
+  box-shadow:
+    inset 0 3px 6px rgba(24, 32, 43, 0.3),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.1);
+  color: var(--ink);
+  font: 800 24px var(--mono);
+  text-align: center;
+}
+
+.fb-step-value:focus {
+  outline: none;
+  box-shadow:
+    inset 0 3px 6px rgba(24, 32, 43, 0.3),
+    inset 0 0 0 2px var(--accent);
+}
+
+.fb-dialog-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--fb-edge);
+  pointer-events: auto;
+}
+
+.fb-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(24, 32, 43, 0.5);
+  animation: fb-fade 200ms ease-out both;
+  appearance: none;
+  cursor: default;
+}
+
+.fb-dialog {
+  position: relative;
+  display: flex;
+  max-width: 100%;
+  max-height: calc(100% - var(--fb-edge) * 2);
+  animation: fb-pop var(--fb-duration) var(--fb-ease) both;
+}
+
+/* the help flag, as plain black cloth: not hung in the wind, so its text can be read and selected */
+.fb-flag-dialog {
+  width: min(720px, 100%);
+  border-radius: 14px;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.flag-static {
+  position: relative;
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - var(--fb-edge) * 4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+
+.flag-static .flag-text {
+  height: auto;
+  overflow: visible;
+  padding: 24px 28px 20px;
+}
+
+.flag-static .flag-art {
+  right: 12px;
+}
+
+@media (max-width: 640px) {
+  .flag-static .flag-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .flag-static ul.flag-continuation {
+    margin-top: 0;
+  }
+
+  .flag-static .flag-foot {
+    flex-direction: column;
+  }
+}
+
+.fb-dialog-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #f2efe6;
+  font: 400 24px/1 var(--sans);
+  cursor: pointer;
+}
+
+@keyframes fb-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fb-pop {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.92);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-ui[data-panel='open'] .fb-panel,
+  .fb-pin-editor,
+  .fb-modal .pop,
+  .fb-dialog,
+  .fb-modal .pop-layer,
+  .fb-scrim {
+    animation-duration: 1ms;
+    transition-duration: 1ms;
+  }
+}

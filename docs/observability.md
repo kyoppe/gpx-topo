@@ -69,6 +69,14 @@ result. The fallback is on in dev builds, and in production only when the build
 sets `VITE_ENABLE_FALLBACK=true`; until then production browsers without
 HTML-in-Canvas report `unsupported`.
 
+On the `fallback` path the controls are ordinary HTML (a side panel, a bottom bar,
+dialogs) instead of being drawn into the scene. They fire the same actions as the
+native controls, with no new names: `date_picker_opened`, `date_changed`,
+`elapsed_time_picker_opened`, `elapsed_time_committed` and `info_flag_toggled`
+(the help dialog opens and closes as the flag does). Split them by
+`@context.render_path`. Folding the side panel away is not a separate action;
+the click is already captured by automatic user-interaction tracking.
+
 User-entered values are not masked. Waypoint names, GPX file names, and GPX
 content may be included in RUM context or Browser Logs when they are relevant
 to the operation being recorded.

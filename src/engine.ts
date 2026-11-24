@@ -393,12 +393,27 @@ export type EngineOptions = {
    * Omitted or `native`: the HTML-in-Canvas behavior, unchanged.
    */
   renderPath?: 'native' | 'fallback';
+  /**
+   * Fallback only: the element that holds the app's ordinary (visible) controls, outside the stage. The sun
+   * slider, the clock, the profile and the waypoint rows are looked up here as well as in the page.
+   */
+  uiRoot?: HTMLElement | null;
 };
 
 export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks, options: EngineOptions = {}) {
   const fallback = options.renderPath === 'fallback';
   const R = fallback ? createRenderer(canvas, createRasterTextureSource()) : createRenderer(canvas);
   const stage = page.parentElement as HTMLElement;
+  // the roots the app's controls live in: the page, and (fallback) the visible panel beside the canvas
+  const uiRoot = fallback ? options.uiRoot ?? null : null;
+  const uiRoots: HTMLElement[] = uiRoot ? [page, uiRoot] : [page];
+  const findUi = <T extends Element>(selector: string): T | null => {
+    for (const root of uiRoots) {
+      const found = root.querySelector<T>(selector);
+      if (found) return found;
+    }
+    return null;
+  };
   // where the pieces must live: inside the canvas for HTML-in-Canvas, in the stage for the fallback
   const inScene = (el: Element) => (fallback ? stage : canvas).contains(el);
 
@@ -2693,10 +2708,21 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       ...pops,
       ...rows,
     ];
-    sunEl = page.querySelector<HTMLInputElement>('input[data-sun]');
-    clockEl = page.querySelector<HTMLElement>('[data-clock]');
-    cursorEl = page.querySelector<SVGCircleElement>('[data-cursor]');
-    profileEl = page.querySelector<HTMLElement>('[data-profile]');
+    bindUi();
+  }
+  /** Find the slider, the clock and the profile again (the app replaces them as the view changes). */
+  function bindUi() {
+    sunEl = findUi<HTMLInputElement>('input[data-sun]');
+    clockEl = findUi<HTMLElement>('[data-clock]');
+    cursorEl = findUi<SVGCircleElement>('[data-cursor]');
+    profileEl = findUi<HTMLElement>('[data-profile]');
+  }
+  /** Fallback: the visible panel changed; look the controls up again and bring them up to date. */
+  function refreshUi() {
+    bindUi();
+    updateSun();
+    walkTo(st.km);
+    need();
   }
 
   function offsetIn(el: HTMLElement) {
@@ -2801,20 +2827,27 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     return ways[ways.length - 1].km;
   }
+  /** The profile's cursor, at `km` along the route. */
+  function moveProfileCursor(km: number) {
+    if (!cursorEl || !model) return;
+    const [cx, cy] = model.profilePoint(km);
+    cursorEl.setAttribute('cx', cx.toFixed(1));
+    cursorEl.setAttribute('cy', cy.toFixed(1));
+  }
   function walkTo(km: number) {
     const route = model?.route ?? [];
-    if (!hiker || route.length < 2) return;
+    if (!hiker || route.length < 2) {
+      // the fallback draws no runner, but its profile still has a cursor
+      if (fallback) moveProfileCursor(km);
+      return;
+    }
     let i = 1;
     while (i < route.length - 1 && route[i].km < km) i += 1;
     const a = route[i - 1];
     const b = route[i];
     const f = clamp((km - a.km) / Math.max(1e-6, b.km - a.km), 0, 1);
     hiker.at = { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f) };
-    if (cursorEl && model) {
-      const [cx, cy] = model.profilePoint(km);
-      cursorEl.setAttribute('cx', cx.toFixed(1));
-      cursorEl.setAttribute('cy', cy.toFixed(1));
-    }
+    moveProfileCursor(km);
   }
   /** The time the plan has the runner `km` along the route. */
   function minutesAt(km: number) {
@@ -5013,13 +5046,15 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       updateSun();
     }
   };
-  page.addEventListener('input', onInput);
+  for (const root of uiRoots) root.addEventListener('input', onInput);
 
   // waypoint rows and map pins light each other up
   function hotWay(id: string | null) {
-    for (const el of page.querySelectorAll<HTMLElement>('[data-way]')) {
-      if (el.dataset.way === id) el.setAttribute('data-hot', '');
-      else el.removeAttribute('data-hot');
+    for (const root of uiRoots) {
+      for (const el of root.querySelectorAll<HTMLElement>('[data-way]')) {
+        if (el.dataset.way === id) el.setAttribute('data-hot', '');
+        else el.removeAttribute('data-hot');
+      }
     }
   }
   const onOver = (ev: PointerEvent) => {
@@ -5207,7 +5242,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('pointerleave', onLeave);
     window.removeEventListener('keydown', onKey);
-    page.removeEventListener('input', onInput);
+    for (const root of uiRoots) root.removeEventListener('input', onInput);
     page.removeEventListener('pointerover', onOver);
     page.removeEventListener('pointerout', onOut);
     resizeObserver.disconnect();
@@ -5257,6 +5292,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     capture,
     captureFrame,
     refreshHud,
+    refreshUi,
     transitionPanels,
     dispose,
     need,

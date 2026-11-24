@@ -19,6 +19,8 @@ import { createCenteredProjection, createMapProjection, pathD, projectTrack, typ
 import { searchGsiAddress } from './gsiSearch';
 import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
+import { createFallbackUi, FallbackDialog, FallbackTimePicker, PanelKey } from './fallbackUi';
+import { defaultPanelOpen, fallbackLayoutFor } from './fallbackLayout';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
@@ -265,6 +267,11 @@ function StageHost({ host, children }: { host: HTMLElement | null; children: Rea
   return host ? createPortal(children, host) : <>{children}</>;
 }
 
+/** The sun slider, wherever the page keeps it: in the sheet (native), or in the visible side panel (fallback). */
+function sunInput(root: ParentNode | null): HTMLInputElement | null {
+  return root?.querySelector<HTMLInputElement>('input[data-sun]') ?? null;
+}
+
 function Fallback({ copy }: { copy: Copy }) {
   return (
     <main lang={copy.language} className="unsupported">
@@ -290,6 +297,20 @@ export default function App() {
     mount.append(fallbackHost);
     return () => fallbackHost.remove();
   }, [fallbackHost]);
+  // The fallback's visible controls (side panel, bar, dialogs); null on the native path, where they are in the scene.
+  const [fb] = useState(() => (renderPath === 'fallback' ? createFallbackUi() : null));
+  const fbMountRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const mount = fbMountRef.current;
+    if (!fb || !mount) return;
+    mount.append(fb.root);
+    const stop = fb.connect();
+    return () => {
+      stop();
+      fb.root.remove();
+    };
+  }, [fb]);
+  const [panelOpen, setPanelOpen] = useState(() => defaultPanelOpen(window.innerWidth, window.innerHeight));
   const [language] = useState(detectLanguage);
   const copy = useMemo(() => getCopy(language), [language]);
   useEffect(() => {
@@ -462,7 +483,12 @@ export default function App() {
   routeNameRef.current = route?.name ?? null;
   apartRef.current = apart;
 
-  const layout = useMemo(() => layoutFor(viewport.width, viewport.height), [viewport]);
+  // Fallback: turning the device brings the panel to its default for the new shape (open in landscape, folded in portrait).
+  const windowShape = viewport.width > viewport.height ? 'landscape' : 'portrait';
+  useEffect(() => {
+    if (fb) setPanelOpen(defaultPanelOpen(window.innerWidth, window.innerHeight));
+  }, [fb, windowShape]);
+  const layout = useMemo(() => (fb ? fallbackLayoutFor(viewport.width, viewport.height) : layoutFor(viewport.width, viewport.height)), [fb, viewport]);
   const points = route?.points ?? null;
   const gpxProjection = useMemo(
     () => (points ? createMapProjection({ points }, layout.mapWidth, layout.mapHeight) : null),
@@ -774,7 +800,7 @@ export default function App() {
     return { min: startMinutes - 60, max: Math.max(startMinutes + 120, lastMinutes + 60) };
   }, [plan, startMinutes, viewMode]);
   useLayoutEffect(() => {
-    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    const sun = sunInput(fb?.root ?? pageRef.current);
     if (!sun) return;
     const current = Number(sun.value);
     const bounded = Number.isFinite(current) ? Math.max(sunRange.min, Math.min(sunRange.max, current)) : 630;
@@ -782,7 +808,7 @@ export default function App() {
   }, [sunRange]);
   useEffect(() => {
     if (viewMode !== 'map' || !apart || !mapSunAuto || !mapSunlight) return;
-    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    const sun = sunInput(fb?.root ?? pageRef.current);
     if (!sun) return;
     let frame = 0;
     let previous = performance.now();
@@ -809,7 +835,7 @@ export default function App() {
     if (viewMode !== 'map' || !apart || !mapSunlight) setMapSunAuto(false);
   }, [apart, mapSunlight, viewMode]);
   useEffect(() => {
-    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    const sun = sunInput(fb?.root ?? pageRef.current);
     if (!sun) return;
     autoSunDispatchRef.current = true;
     sun.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1372,7 +1398,7 @@ export default function App() {
           else setOverrides((current) => ({ ...current, [target]: minutes }));
         },
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
-      }, native ? undefined : { renderPath: 'fallback' });
+      }, native ? undefined : { renderPath: 'fallback', uiRoot: fb?.root ?? null });
     } catch (error) {
       stopEngineStart('error');
       fallbackPaint?.dispose();
@@ -1391,7 +1417,7 @@ export default function App() {
       engine.dispose();
       fallbackPaint?.dispose();
     };
-  }, [detachPermalink, native, renderPath]);
+  }, [detachPermalink, native, renderPath, fb]);
 
   useEffect(() => {
     if (!mapPinSelecting) return;
@@ -1452,6 +1478,30 @@ export default function App() {
     });
     return () => observer.disconnect();
   }, [native]);
+
+  // Fallback: the visible panel is replaced as the view changes; the engine finds its slider and profile again.
+  useEffect(() => {
+    if (!fb) return;
+    let frame = 0;
+    const observer = new MutationObserver(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        engineRef.current?.refreshUi();
+      });
+    });
+    observer.observe(fb.panel, { subtree: true, childList: true });
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [fb]);
+  // Fallback: the shell's state, as attributes its CSS reads.
+  useLayoutEffect(() => {
+    if (!fb) return;
+    fb.root.dataset.panel = panelOpen ? 'open' : 'closed';
+    fb.root.dataset.apart = apart ? 'true' : 'false';
+  }, [apart, fb, panelOpen]);
 
   useEffect(() => {
     engineRef.current?.refreshHud();
@@ -1521,7 +1571,7 @@ export default function App() {
         });
       }
       if (permalink.sun === 'auto' && permalink.view === '3d') {
-        const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+        const sun = sunInput(fb?.root ?? pageRef.current);
         if (sun) {
           const start = daylight?.rise == null ? 0 : Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET);
           autoSunDispatchRef.current = true;
@@ -1709,6 +1759,42 @@ export default function App() {
     engineRef.current?.previewDate(iso);
   };
   const isOpen = (anchor: string) => (pop?.anchor === anchor ? '' : undefined);
+  /** Fold the open picker away: the engine does it in the scene; in the fallback it is a dialog and simply goes. */
+  const dismissPop = () => {
+    if (native) engineRef.current?.closePop(false);
+    else setPop(null);
+  };
+  /** Fallback: the picker's own fields chose a time (the scene's drums report it through the engine instead). */
+  const commitPopTime = (target: string, minutes: number) => {
+    addAction('elapsed_time_committed', { target, minutes });
+    if (target === 'start') setStartTime(clockInput(minutes));
+    else setOverrides((current) => ({ ...current, [target]: minutes }));
+    setPop(null);
+  };
+  /** Fallback: the help flag is a static dialog; in the scene the engine flies it in. */
+  const toggleInfo = () => {
+    if (native) {
+      engineRef.current?.toggleInfo();
+      return;
+    }
+    const next = !infoOpen;
+    addAction('info_flag_toggled', { open: next });
+    setInfoOpen(next);
+  };
+  // Fallback: Esc closes the dialog that is up (the engine's own Esc handling knows nothing of these).
+  useEffect(() => {
+    if (!fb || (!infoOpen && !pop)) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (infoOpen) {
+        addAction('info_flag_toggled', { open: false });
+        setInfoOpen(false);
+      } else setPop(null);
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [fb, infoOpen, pop]);
 
   // ---------------------------------------------------------------- actions
   const onFile = async (file: File | undefined) => {
@@ -2099,7 +2185,7 @@ export default function App() {
     detachPermalink('sun_auto');
     const next = !mapSunAuto;
     if (next) {
-      const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+      const sun = sunInput(fb?.root ?? pageRef.current);
       if (sun) {
         const start = daylight?.rise == null ? 0 : Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET);
         autoSunDispatchRef.current = true;
@@ -2133,7 +2219,7 @@ export default function App() {
     const currentFpv = engine.getFpvState() ?? fpvView;
     const fpvLocation = currentFpv && mapProjection ? mapProjection.inverse(currentFpv.x, currentFpv.y) : null;
     const permalinkView = currentFpv ? 'fpv' : view.raised ? '3d' : 'flat';
-    const sun = pageRef.current?.querySelector<HTMLInputElement>('input[data-sun]');
+    const sun = sunInput(fb?.root ?? pageRef.current);
     const timeMinutes = Number(sun?.value);
     const url = buildMapPermalink(
       {
@@ -2187,7 +2273,7 @@ export default function App() {
   return (
     <main
       lang={language}
-      className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}`}
+      className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}${fb ? ' fallback-ui' : ''}`}
     >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <StageHost host={fallbackHost}>
@@ -2241,6 +2327,7 @@ export default function App() {
             </div>
 
             <div className="map" data-map="" style={mapStyle}>
+              <StageHost host={fb?.mapControls ?? null}>
               <div
                 className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
                 data-piece="content"
@@ -2293,6 +2380,7 @@ export default function App() {
                   </>
                 )}
               </div>
+              </StageHost>
               {viewMode === 'map' && mapPin && (
                 <div className={`pin map-pin${mapPin.label.trim() ? ' map-pin-labeled' : ''}`} data-piece="pin" data-map-pin="" drawable="">
                   <span className="pin-label">
@@ -2348,7 +2436,8 @@ export default function App() {
               </div>
             </div>
 
-            <aside className="side" style={{ left: layout.sideX, top: PAD, width: PANEL_WIDTH, height: layout.pageHeight - PAD * 2 }}>
+            <StageHost host={fb?.panel ?? null}>
+            <aside className="side" style={fb ? undefined : { left: layout.sideX, top: PAD, width: PANEL_WIDTH, height: layout.pageHeight - PAD * 2 }}>
               {(viewMode === 'gpx' || !apart) && (
                 <section className="slot">
                   <div className="card" data-piece="card" drawable="" />
@@ -2648,10 +2737,18 @@ export default function App() {
                 </section>
               )}
             </aside>
+            </StageHost>
 
-            {/* pickers: laid out here, raised off the panel by the engine */}
+            {/* pickers: laid out here, raised off the panel by the engine (fallback: a dialog over the map) */}
+            <StageHost host={fb?.modal ?? null}>
             {pop && (
-              <div className="pop-layer" key={pop.seq}>
+              <div
+                className="pop-layer"
+                key={pop.seq}
+                onClick={(event) => {
+                  if (!native && event.target === event.currentTarget) dismissPop();
+                }}
+              >
                 {pop.kind === 'date' && calendar && (
                   <div
                     className="pop pop-date"
@@ -2702,7 +2799,7 @@ export default function App() {
                             setDateExplicit(true);
                             setDate(c.iso);
                             setMonth(c.iso.slice(0, 7));
-                            engineRef.current?.closePop();
+                            dismissPop();
                           }}
                         >
                           <span>{c.day}</span>
@@ -2734,7 +2831,27 @@ export default function App() {
                     })()}
                   </div>
                 )}
-                {pop.kind === 'time' && (
+                {pop.kind === 'time' && !native && (
+                  <FallbackTimePicker
+                    key={pop.seq}
+                    clock={pop.target === 'start'}
+                    minutes={pop.minutes}
+                    copy={copy}
+                    head={
+                      <div className="pop-head">
+                        <strong>{pop.label}</strong>
+                        <small>{pop.target === 'start' ? copy.ui.startTime : copy.ui.elapsedTime}</small>
+                        <small>
+                          {copy.ui.sunrise} {daylight?.rise != null ? formatClock(daylight.rise) : '-'} · {copy.ui.sunset}{' '}
+                          {daylight?.set != null ? formatClock(daylight.set) : '-'}
+                        </small>
+                      </div>
+                    }
+                    onCancel={dismissPop}
+                    onCommit={(minutes) => commitPopTime(pop.target, minutes)}
+                  />
+                )}
+                {pop.kind === 'time' && native && (
                   <>
                     <div
                       className="pop pop-time"
@@ -2780,6 +2897,7 @@ export default function App() {
                 )}
               </div>
             )}
+            </StageHost>
             {mapManeuverAvailable && mapManeuverMenuOpen && !mapManeuverActive && (
               <div className="maneuver-menu-layer" data-hud="">
                 <div
@@ -2898,7 +3016,27 @@ export default function App() {
           </div>
 
           {/* the bar: each button is drawn as a key on a slab in front of the camera, and still is the button */}
+          <StageHost host={fb?.hud ?? null}>
+          {fb && viewMode === 'map' && mapPin && (
+            <div className="fb-pin-editor">
+              <b className="map-pin-marker" aria-hidden="true">●</b>
+              <input
+                key={`${mapPin.lat}:${mapPin.lon}`}
+                type="text"
+                defaultValue={mapPin.label.replace(/\n/g, ' ')}
+                maxLength={40}
+                placeholder={copy.ui.mapPinNameAria}
+                aria-label={copy.ui.mapPinNameAria}
+                enterKeyHint="done"
+                onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) event.currentTarget.blur();
+                }}
+              />
+            </div>
+          )}
           <nav className="hud" data-hud="" aria-label={copy.ui.controls}>
+            {fb && <PanelKey open={panelOpen} copy={copy} onToggle={() => setPanelOpen((open) => !open)} />}
             <div className="bar" data-piece="bar" drawable="">
               <span className="well" data-well="mode" />
               {viewMode === 'map' && (
@@ -3188,10 +3326,24 @@ export default function App() {
               </button>
             )}
           </nav>
+          </StageHost>
         </div>
         </StageHost>
       </canvas>
       {!native && <div ref={fallbackMountRef} className="fallback-host" aria-hidden="true" />}
+      {fb && <div ref={fbMountRef} className="fb-mount" />}
+      {fb && infoOpen && (
+        <StageHost host={fb.modal}>
+          <FallbackDialog label={`${copy.appName} ${copy.about}`} closeLabel={copy.ui.closeDialog} className="fb-flag-dialog" onClose={toggleInfo}>
+            <div className="flag flag-static">
+              <FlagContent brushes={[]} copy={copy} />
+            </div>
+            <button type="button" className="fb-dialog-close" aria-label={copy.ui.closeDialog} onClick={toggleInfo}>
+              ×
+            </button>
+          </FallbackDialog>
+        </StageHost>
+      )}
 
       <div ref={hudHitLayerRef} className="hud-hit-layer" aria-hidden="true">
         {!mapManeuverActive && (
@@ -3308,7 +3460,7 @@ export default function App() {
         title={copy.ui.helpLinks}
         aria-pressed={infoOpen}
         disabled={flyoverPlaying || flyoverReturning || mapManeuverActive}
-        onClick={() => engineRef.current?.toggleInfo()}
+        onClick={toggleInfo}
       >
         i
       </button>
