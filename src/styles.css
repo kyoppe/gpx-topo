@@ -2064,6 +2064,8 @@ main[lang='en'] .bar-hint {
   top: 18px;
   left: 50%;
   z-index: 4;
+  /* centred with left: 50%, a box shrinks to the right half of the window and wraps early: size it by its text */
+  width: max-content;
   max-width: min(560px, calc(100vw - 40px));
   padding: 9px 16px;
   border-radius: 10px;

@@ -278,6 +278,10 @@ const smooth = (t: number) => {
 // The page is laid out to fill the window above a minimum size; these margins leave room for the bar.
 export const FRAME_X = 40;
 export const FRAME_Y = 120;
+/** How many screen px one page px takes at zoom 1: the page is fitted into the window less the bar's margins. */
+export function pageFit(viewWidth: number, viewHeight: number, pageWidth: number, pageHeight: number) {
+  return Math.min((viewWidth - FRAME_X) / pageWidth, (viewHeight - FRAME_Y) / pageHeight, 1.3);
+}
 const RAISE = 40;
 const FOV = 0.5;
 /** The model stands on a plinth this many px thick. */
@@ -834,7 +838,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const top = topZ(lift);
     const yaw = (HERO.yaw + yawOff) * p;
     const tilt = clamp(HERO.tilt * standOf(zoom) + tiltOff, 0.02, TILT_MAX) * p;
-    const fit = Math.min((vw - FRAME_X) / PW, (vh - FRAME_Y) / PH, 1.3);
+    const fit = pageFit(vw, vh, PW, PH);
     const D0 = vh / 2 / Math.tan(FOV / 2) / fit;
     let tx = lerp(PW / 2, PW / 2 - 10, p);
     let ty = lerp(PH / 2 + RAISE / fit, PH / 2 - 10, p);
