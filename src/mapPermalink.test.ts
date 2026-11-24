@@ -5,7 +5,6 @@ import {
   fitPermalinkArea,
   MAP_PERMALINK_PARAMETERS,
   parseMapPermalink,
-  scalePermalinkPan,
   stripMapPermalinkParameters,
 } from './mapPermalink';
 
@@ -355,11 +354,5 @@ describe('fitPermalinkArea', () => {
 
   it('keeps the scale in range', () => {
     expect(fitPermalinkArea({ width: 1000, height: 600, scale: 1 }, 1, 1).scale).toBeGreaterThanOrEqual(1e-3);
-  });
-});
-
-describe('scalePermalinkPan', () => {
-  it('multiplies the pan on every axis', () => {
-    expect(scalePermalinkPan({ x: 10, y: -20, z: 2 }, 0.4)).toEqual({ x: 4, y: -8, z: 0.8 });
   });
 });

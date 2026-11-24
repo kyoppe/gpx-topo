@@ -7,6 +7,7 @@ import {
   createEngine,
   FRAME_X,
   FRAME_Y,
+  pageFit,
   type DetailRequest,
   type Engine,
   type EngineModel,
@@ -24,7 +25,8 @@ import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
-import { buildMapPermalink, fitPermalinkArea, parseMapPermalink, scalePermalinkPan, stripMapPermalinkParameters, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { buildMapPermalink, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
@@ -421,7 +423,8 @@ export default function App() {
   const viewRestoredRef = useRef(false);
   const permalinkApplyingRef = useRef(false);
   // what the permalink's saved pan is multiplied by: this frame's ground scale over the one it was made at
-  const permalinkPanRatioRef = useRef(1);
+  // the pan of a permalink made with a display area, put back for this window (set when the map viewport is made)
+  const permalinkFitRef = useRef<{ pan: MapPermalinkPan | null } | null>(null);
   const permalinkAppliedRef = useRef(false);
   const permalinkDetachedRef = useRef(false);
   const mapPinPlacedAtRef = useRef<number | null>(null);
@@ -467,6 +470,19 @@ export default function App() {
   const layout = useMemo(
     () => (fb ? fallbackLayoutFor(viewport.width - (docked ? DOCK_WIDTH : 0), viewport.height) : layoutFor(viewport.width, viewport.height)),
     [docked, fb, viewport],
+  );
+  // what a permalink needs to know of this window: the sheet, the map on it, and how the sheet is fitted to the stage
+  const permalinkFrame = useMemo<PermalinkFrame>(
+    () => ({
+      pageWidth: layout.pageWidth,
+      pageHeight: layout.pageHeight,
+      mapX: layout.mapX,
+      mapY: layout.mapY,
+      mapWidth: layout.mapWidth,
+      mapHeight: layout.mapHeight,
+      fit: pageFit(viewport.width - (docked ? DOCK_WIDTH : 0), viewport.height, layout.pageWidth, layout.pageHeight),
+    }),
+    [docked, layout, viewport],
   );
   const points = route?.points ?? null;
   const gpxProjection = useMemo(
@@ -933,8 +949,8 @@ export default function App() {
     if (viewMode === 'map' && !mapViewport) {
       if (!gpxProjection) return;
       // opened in a window of another size: keep the area the permalink showed in view, at the scale that fits it here
-      const fitted = permalink?.center && permalink.area ? fitPermalinkArea(permalink.area, layout.mapWidth, layout.mapHeight) : null;
-      if (fitted) permalinkPanRatioRef.current = fitted.ratio;
+      const fitted = permalink?.center && permalink.area ? fromPermalinkView(permalinkFrame, permalink.area, permalink.pan) : null;
+      if (fitted) permalinkFitRef.current = { pan: fitted.pan };
       setMapViewport({
         lat: permalink?.center?.lat ?? gpxProjection.centerLat,
         lon: permalink?.center?.lon ?? gpxProjection.centerLon,
@@ -949,7 +965,7 @@ export default function App() {
       map_viewport: !!mapViewport,
       map_style: savedView?.baseMapStyle ?? 'pale',
     });
-  }, [gpxProjection, layout.mapHeight, layout.mapWidth, mapViewport, permalink, savedView, viewMode]);
+  }, [gpxProjection, mapViewport, permalink, permalinkFrame, savedView, viewMode]);
 
   useEffect(() => {
     if (!viewRestoredRef.current) return;
@@ -1551,7 +1567,7 @@ export default function App() {
           bearing: permalink.bearing ?? 0,
           pitch: permalink.pitch ?? undefined,
           zoom: permalink.zoom ?? undefined,
-          pan: permalink.pan ? scalePermalinkPan(permalink.pan, permalinkPanRatioRef.current) : undefined,
+          pan: (permalinkFitRef.current ? permalinkFitRef.current.pan : permalink.pan) ?? undefined,
         });
       } else {
         engine.setViewState({
@@ -1559,7 +1575,7 @@ export default function App() {
           bearing: permalink.bearing ?? undefined,
           pitch: permalink.pitch ?? undefined,
           zoom: permalink.zoom ?? undefined,
-          pan: permalink.pan ? scalePermalinkPan(permalink.pan, permalinkPanRatioRef.current) : undefined,
+          pan: (permalinkFitRef.current ? permalinkFitRef.current.pan : permalink.pan) ?? undefined,
         });
       }
       if (permalink.sun === 'auto' && permalink.view === '3d') {
@@ -2210,6 +2226,8 @@ export default function App() {
     const permalinkView = currentFpv ? 'fpv' : view.raised ? '3d' : 'flat';
     const sun = sunInput(fb?.root ?? pageRef.current);
     const timeMinutes = Number(sun?.value);
+    // the display area and the pan from the map centre, so a window of another shape can show the same view
+    const saved = mapProjection ? toPermalinkView(permalinkFrame, mapProjection.scale, view.pan) : null;
     const url = buildMapPermalink(
       {
         center,
@@ -2217,7 +2235,7 @@ export default function App() {
         bearing: view.bearing,
         pitch: view.pitch,
         zoom: view.zoom,
-        pan: view.pan,
+        pan: saved ? saved.pan : view.pan,
         date: dateExplicit ? date : null,
         mapStyle: baseMapStyle,
         hillshade,
@@ -2232,7 +2250,7 @@ export default function App() {
                 zoom: currentFpv.zoom,
               }
             : null,
-        area: mapProjection ? { width: layout.mapWidth, height: layout.mapHeight, scale: mapProjection.scale } : null,
+        area: saved ? saved.area : null,
         sunlight: mapSunlight,
         sunAuto: mapSunAuto,
         sunSpeed: MAP_SUN_SPEED_NAMES[mapSunSpeed] ?? 'normal',
@@ -2253,7 +2271,9 @@ export default function App() {
         input.remove();
       }
       addAction('map_permalink_copied', { view: permalinkView, sunlight: mapSunlight, sun_auto: mapSunAuto });
-      showXHint('permalink');
+      // the hint is a card drawn in the scene above the key, which the fallback does not draw: it gets the toast
+      if (fb) setToast(copy.toast.permalinkCopied);
+      else showXHint('permalink');
     } catch (error) {
       reportWarning('copy_map_permalink', error);
       setToast(copy.toast.permalinkCopyFailed);

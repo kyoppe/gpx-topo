@@ -5,7 +5,10 @@ export type MapPermalinkSun = 'auto' | 'off' | 'time' | null;
 export type MapPermalinkSunSpeed = 'slow' | 'normal' | 'fast';
 export type MapPermalinkPin = { lat: number; lon: number; label: string };
 export type MapPermalinkPan = { x: number; y: number; z: number };
-/** The display area the permalink was made in: the map frame's size (px) and its ground scale (px per world unit). */
+/**
+ * The display area the permalink was made in, in screen px at zoom 1: the map frame's size and its ground scale
+ * (px per world unit). When it is there, `pan` is also in those units, taken from the map centre (see `permalinkView`).
+ */
 export type MapPermalinkArea = { width: number; height: number; scale: number };
 export type MapPermalinkFpv = { lat: number; lon: number; bearing: number; pitch: number; zoom: number };
 
@@ -384,16 +387,13 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
 }
 
 /**
- * Fits the view a permalink was made in to the map frame at hand: the ground scale at which the whole saved
- * area is still in the frame (the other way it shows more map around it). `ratio` is the new scale over the
- * saved one, which is also what the saved pan (in frame px) is multiplied by.
+ * Fits the display area a permalink was made with to a frame of `width` x `height` (all in the same units as the
+ * area, screen px at zoom 1): the ground scale at which the whole saved area is still in the frame (the other way
+ * it shows more map around it). `ratio` is the new scale over the saved one, which is also what the saved pan is
+ * multiplied by.
  */
 export function fitPermalinkArea(area: MapPermalinkArea, width: number, height: number) {
   const ratio = Math.min(width / area.width, height / area.height);
   const scale = Math.min(AREA_MAX_SCALE, Math.max(AREA_MIN_SCALE, area.scale * ratio));
   return { scale, ratio: scale / area.scale };
-}
-
-export function scalePermalinkPan(pan: MapPermalinkPan, ratio: number): MapPermalinkPan {
-  return { x: pan.x * ratio, y: pan.y * ratio, z: pan.z * ratio };
 }
