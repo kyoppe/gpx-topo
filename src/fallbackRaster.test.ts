@@ -21,6 +21,7 @@ function fakeContext() {
   const ctx = {
     clearRect: vi.fn(), fillRect: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(),
     translate: vi.fn(), scale: vi.fn(), fill: vi.fn(), stroke: vi.fn(),
+    beginPath: vi.fn(), roundRect: vi.fn(), clip: vi.fn(),
     fillStyle: '', strokeStyle: '', lineWidth: 0, lineJoin: '', lineCap: '', globalAlpha: 1,
   };
   return ctx as typeof ctx & CanvasRenderingContext2D;
@@ -157,5 +158,53 @@ describe('route opacity', () => {
     expect(alphas[0]).toBeCloseTo(0.25);
     const hidden = routeScene((svg) => { svg.style.opacity = '0'; });
     expect(hidden.ctx.stroke).not.toHaveBeenCalled();
+  });
+});
+
+describe('rounded corners', () => {
+  function sheetScene(setup: (root: HTMLElement) => void) {
+    const root = document.createElement('div');
+    root.style.backgroundColor = 'rgb(247, 247, 245)';
+    setup(root);
+    document.body.append(root);
+    rect(root, 0, 0, 100, 50);
+    const ctx = fakeContext();
+    rasterizeElement(ctx, root, 200, 100);
+    return { ctx, root };
+  }
+  const corners = (root: HTMLElement, value: string) => {
+    for (const side of ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'] as const) root.style[`border${side}Radius`] = value;
+  };
+
+  it('keeps the transparent corners of a rounded sheet, scaled to the texture', () => {
+    const { ctx } = sheetScene((root) => corners(root, '14px'));
+    const r = { x: 28, y: 28 };
+    expect(ctx.roundRect).toHaveBeenCalledWith(0, 0, 200, 100, [r, r, r, r]);
+    expect(ctx.fill).toHaveBeenCalledOnce();
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.fillStyle).toBe('rgb(247, 247, 245)');
+  });
+
+  it('reads each corner and elliptical radii, with percentages of the box', () => {
+    const { ctx } = sheetScene((root) => {
+      root.style.borderTopLeftRadius = '10px';
+      root.style.borderTopRightRadius = '10%';
+      root.style.borderBottomRightRadius = '4px 8px';
+      root.style.borderBottomLeftRadius = '0px';
+    });
+    expect(ctx.roundRect).toHaveBeenCalledWith(0, 0, 200, 100, [
+      { x: 20, y: 20 }, { x: 20, y: 10 }, { x: 8, y: 16 }, { x: 0, y: 0 },
+    ]);
+  });
+
+  it('clips children to a rounded box that hides overflow', () => {
+    const { ctx } = sheetScene((root) => { corners(root, '14px'); root.style.overflow = 'hidden'; });
+    expect(ctx.clip).toHaveBeenCalledOnce();
+  });
+
+  it('fills a plain rectangle when no corner is rounded', () => {
+    const { ctx } = sheetScene(() => {});
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 200, 100);
+    expect(ctx.roundRect).not.toHaveBeenCalled();
   });
 });

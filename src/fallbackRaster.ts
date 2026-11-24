@@ -70,6 +70,30 @@ function paintSvg(ctx: CanvasRenderingContext2D, svg: SVGSVGElement, box: Box, r
   }
 }
 
+type Radius = { x: number; y: number };
+
+/** `14px`, `4px 8px`, or `10%` (of the box side) from a computed corner radius, in CSS px. */
+function cornerRadius(value: string, boxWidth: number, boxHeight: number) {
+  const [x = '0', y = x] = value.trim().split(/\s+/);
+  const length = (token: string, base: number) => (token.endsWith('%') ? (parseFloat(token) / 100) * base : parseFloat(token)) || 0;
+  return { x: length(x, boxWidth), y: length(y, boxHeight) };
+}
+
+/** Starts a path along the element's rounded box, in texture px. False when no corner is rounded. */
+function roundedBox(ctx: CanvasRenderingContext2D, style: CSSStyleDeclaration, root: DOMRect, sx: number, sy: number, width: number, height: number) {
+  if (typeof ctx.roundRect !== 'function') return false;
+  const radii: Radius[] = [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius].map(
+    (value) => {
+      const r = cornerRadius(value ?? '', root.width, root.height);
+      return { x: r.x * sx, y: r.y * sy };
+    },
+  );
+  if (!radii.some((r) => r.x > 0 || r.y > 0)) return false;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, width, height, radii);
+  return true;
+}
+
 /** Draws an element's own fill, its child canvases and its SVG paths into a width x height 2D canvas. */
 export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, width: number, height: number) {
   ctx.clearRect(0, 0, width, height);
@@ -77,10 +101,19 @@ export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, wid
   if (root.width <= 0 || root.height <= 0) return;
   const sx = width / root.width;
   const sy = height / root.height;
-  const background = getComputedStyle(el).backgroundColor;
+  const own = getComputedStyle(el);
+  const background = own.backgroundColor;
   if (background && background !== 'transparent' && background !== 'rgba(0, 0, 0, 0)') {
     ctx.fillStyle = background;
-    ctx.fillRect(0, 0, width, height);
+    // a rounded sheet keeps its corners transparent, as it does when the browser draws it
+    if (roundedBox(ctx, own, root, sx, sy, width, height)) ctx.fill();
+    else ctx.fillRect(0, 0, width, height);
+  }
+  const clipsChildren = own.overflow.split(' ').some((value) => value !== '' && value !== 'visible');
+  const clipped = clipsChildren && roundedBox(ctx, own, root, sx, sy, width, height);
+  if (clipped) {
+    ctx.save();
+    ctx.clip();
   }
   for (const child of el.querySelectorAll('canvas, svg')) {
     if (!isDrawn(child)) continue;
@@ -90,6 +123,7 @@ export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, wid
       if (child.width > 0 && child.height > 0) ctx.drawImage(child, box.left, box.top, box.width, box.height);
     } else paintSvg(ctx, child as SVGSVGElement, box, el);
   }
+  if (clipped) ctx.restore();
 }
 
 /** Uploads rasterized elements as ordinary textures. One scratch canvas is reused for every piece. */
