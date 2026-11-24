@@ -158,6 +158,8 @@ export type Copy = {
     xHintMapPin: string;
     helpLinks: string;
     showPanel: string;
+    panelRoute: string;
+    panelSearch: string;
     hidePanel: string;
     hoursAria: string;
     minutesAria: string;
@@ -327,6 +329,8 @@ function makeCopy(language: Language): Copy {
         xHintMapPin: 'ピンをドロップしました。\nピンのラベルは編集できます。',
         helpLinks: '使い方とリンク',
         showPanel: '設定パネルを開く',
+        panelRoute: 'ルート',
+        panelSearch: '検索',
         hidePanel: '設定パネルを閉じる',
         hoursAria: '時',
         minutesAria: '分',
@@ -500,6 +504,8 @@ function makeCopy(language: Language): Copy {
       xHintMapPin: 'Pin dropped.\nYou can edit its label.',
       helpLinks: 'Help and links',
       showPanel: 'Show the panel',
+      panelRoute: 'Route',
+      panelSearch: 'Search',
       hidePanel: 'Hide the panel',
       hoursAria: 'Hours',
       minutesAria: 'Minutes',

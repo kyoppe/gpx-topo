@@ -7,7 +7,7 @@
 import { useId, useState, type ReactNode } from 'react';
 
 import type { Copy } from './i18n';
-import { orientationOf, panelWidthFor } from './fallbackLayout';
+import { panelWidthFor } from './fallbackLayout';
 import { springEasing } from './spring';
 
 export type FallbackUi = {
@@ -15,10 +15,16 @@ export type FallbackUi = {
   root: HTMLDivElement;
   /** the map style switch, floated over the map */
   mapControls: HTMLDivElement;
-  /** the side panel (its cards), folded away or shown */
+  /** under the drawer: a tap beside it folds it away */
+  backdrop: HTMLDivElement;
+  /** the side panel: the body of cards, and the drawer's tabs above them */
   panel: HTMLDivElement;
+  /** the cards, and the drawer's tabs above them */
+  panelBody: HTMLDivElement;
   /** the bar of keys (and the map pin's name field above it) */
   hud: HTMLDivElement;
+  /** the key at the bar's right end that pulls the drawer out */
+  panelKey: HTMLDivElement;
   /** dialogs: the pickers and the help flag */
   modal: HTMLDivElement;
   /** keeps the panel's size and the bar's height in sync with the window; returns the function that stops it */
@@ -35,10 +41,14 @@ function div(className: string): HTMLDivElement {
 export function createFallbackUi(): FallbackUi {
   const root = div('fb-ui');
   const mapControls = div('fb-map-controls');
+  const backdrop = div('fb-backdrop-host');
   const panel = div('fb-panel');
+  const panelBody = div('fb-panel-body');
   const hud = div('fb-hud');
+  const panelKey = div('fb-panel-key-host');
   const modal = div('fb-modal');
-  root.append(mapControls, panel, hud, modal);
+  panel.append(panelBody);
+  root.append(backdrop, mapControls, panel, hud, panelKey, modal);
 
   // the panel and the bar move as the engine's pop does: a spring with a little overshoot
   const spring = springEasing();
@@ -48,16 +58,18 @@ export function createFallbackUi(): FallbackUi {
   const sync = () => {
     const width = window.innerWidth;
     root.style.setProperty('--fb-panel-width', `${panelWidthFor(width)}px`);
-    root.dataset.orientation = orientationOf(width, window.innerHeight);
     root.style.setProperty('--fb-hud-height', `${hud.offsetHeight}px`);
   };
   sync();
 
   return {
     root,
+    backdrop,
     mapControls,
     panel,
+    panelBody,
     hud,
+    panelKey,
     modal,
     connect() {
       sync();
@@ -72,17 +84,55 @@ export function createFallbackUi(): FallbackUi {
   };
 }
 
-/** The key that folds the side panel away and brings it back. */
+/** The drawer's key, at the right end of the bar: it pulls the panel out, and pushes it back. */
 export function PanelKey({ open, copy, onToggle }: { open: boolean; copy: Copy; onToggle: () => void }) {
   const label = open ? copy.ui.hidePanel : copy.ui.showPanel;
   return (
-    <button type="button" className="key key-panel" data-latched={open ? '' : undefined} aria-label={label} aria-expanded={open} title={label} onClick={onToggle}>
-      <svg className="panel-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <button type="button" className="fb-panel-key" aria-label={label} aria-expanded={open} title={label} onClick={onToggle}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <rect x="3" y="4.5" width="18" height="15" rx="2.4" />
         <path d="M14.5 4.5v15" />
         <path d="M17 9h2M17 12h2M17 15h2" />
       </svg>
     </button>
+  );
+}
+
+/** The groups of cards the drawer shows, one at a time. */
+export type PanelTabId = 'route' | 'search' | 'sun' | 'ways';
+
+export function PanelTabs({ tabs, active, labels, onSelect }: { tabs: readonly PanelTabId[]; active: PanelTabId; labels: Record<PanelTabId, string>; onSelect: (tab: PanelTabId) => void }) {
+  return (
+    <div className="fb-tabs" role="tablist">
+      {tabs.map((tab) => (
+        <button key={tab} type="button" role="tab" aria-selected={tab === active} onClick={() => onSelect(tab)}>
+          {labels[tab]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const KEY_ICONS = {
+  open: <path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.2h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.5Z" />,
+  place: (
+    <>
+      <path d="M11 20s-6-5.2-6-10a6 6 0 0 1 12 0" />
+      <circle cx="11" cy="10" r="2.1" />
+      <path d="M18 14v6M15 17h6" />
+    </>
+  ),
+} as const;
+
+/** What a key shows in the fallback: a picture (on a narrow bar) and its words (on a wide one, or for a screen reader). */
+export function KeyFace({ icon, label }: { icon: keyof typeof KEY_ICONS; label: string }) {
+  return (
+    <>
+      <svg className="key-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        {KEY_ICONS[icon]}
+      </svg>
+      <span className="key-label">{label}</span>
+    </>
   );
 }
 

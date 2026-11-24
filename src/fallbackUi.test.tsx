@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFallbackUi, FallbackTimePicker, PanelKey } from './fallbackUi';
+import { createFallbackUi, FallbackTimePicker, KeyFace, PanelKey, PanelTabs } from './fallbackUi';
 import { getCopy } from './i18n';
 
 const copy = getCopy('en');
@@ -31,7 +31,8 @@ const click = (el: Element) => act(() => void el.dispatchEvent(new MouseEvent('c
 describe('createFallbackUi', () => {
   it('makes the hosts the controls are rendered into, inside one root', () => {
     const ui = createFallbackUi();
-    for (const host of [ui.mapControls, ui.panel, ui.hud, ui.modal]) expect(ui.root.contains(host)).toBe(true);
+    for (const host of [ui.backdrop, ui.mapControls, ui.panel, ui.hud, ui.panelKey, ui.modal]) expect(ui.root.contains(host)).toBe(true);
+    expect(ui.panel.contains(ui.panelBody)).toBe(true);
     expect(ui.root.className).toBe('fb-ui');
   });
 
@@ -41,7 +42,7 @@ describe('createFallbackUi', () => {
     expect(ui.root.style.getPropertyValue('--fb-duration')).toMatch(/^\d+ms$/);
   });
 
-  it('follows the window: its orientation and the panel width, until stopped', () => {
+  it('follows the window: the panel width and the bar height, until stopped', () => {
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
     const ui = createFallbackUi();
     const set = (width: number, height: number) => {
@@ -50,19 +51,17 @@ describe('createFallbackUi', () => {
     };
     const stop = ui.connect();
     set(390, 844);
-    expect(ui.root.dataset.orientation).toBe('portrait');
     expect(parseInt(ui.root.style.getPropertyValue('--fb-panel-width'), 10)).toBeLessThan(390);
     set(1366, 768);
-    expect(ui.root.dataset.orientation).toBe('landscape');
     expect(ui.root.style.getPropertyValue('--fb-panel-width')).toBe('400px');
     stop();
     set(390, 844);
-    expect(ui.root.dataset.orientation).toBe('landscape');
+    expect(ui.root.style.getPropertyValue('--fb-panel-width')).toBe('400px');
   });
 });
 
 describe('PanelKey', () => {
-  it('says what it will do, and whether the panel is open', () => {
+  it('says what it will do, and whether the drawer is open', () => {
     const onToggle = vi.fn();
     render(<PanelKey open={false} copy={copy} onToggle={onToggle} />);
     const button = container.querySelector('button')!;
@@ -72,7 +71,29 @@ describe('PanelKey', () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
     render(<PanelKey open copy={copy} onToggle={onToggle} />);
     expect(container.querySelector('button')!.getAttribute('aria-label')).toBe(copy.ui.hidePanel);
-    expect(container.querySelector('button')!.hasAttribute('data-latched')).toBe(true);
+    expect(container.querySelector('button')!.getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
+describe('PanelTabs', () => {
+  const labels = { route: 'Route', search: 'Search', sun: 'Sun', ways: 'Ways' };
+
+  it('shows the groups on offer, marks the active one, and selects on a tap', () => {
+    const onSelect = vi.fn();
+    render(<PanelTabs tabs={['route', 'sun', 'ways']} active="sun" labels={labels} onSelect={onSelect} />);
+    const tabs = Array.from(container.querySelectorAll('[role="tab"]'));
+    expect(tabs.map((t) => t.textContent)).toEqual(['Route', 'Sun', 'Ways']);
+    expect(tabs.map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false']);
+    click(tabs[2]);
+    expect(onSelect).toHaveBeenCalledWith('ways');
+  });
+});
+
+describe('KeyFace', () => {
+  it('keeps the words for screen readers beside the picture', () => {
+    render(<KeyFace icon="open" label="Open GPX" />);
+    expect(container.querySelector('.key-label')!.textContent).toBe('Open GPX');
+    expect(container.querySelector('svg.key-icon')!.getAttribute('aria-hidden')).toBe('true');
   });
 });
 

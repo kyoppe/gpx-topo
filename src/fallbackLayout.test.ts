@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FRAME_X, FRAME_Y } from './engine';
-import { defaultPanelOpen, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, orientationOf, panelWidthFor } from './fallbackLayout';
+import { DOCK_WIDTH, FALLBACK_EDGE, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, isDocked, orientationOf, panelWidthFor } from './fallbackLayout';
 
 describe('fallback layout', () => {
   it('fills a tall phone with a tall map, inset by the pad', () => {
@@ -39,11 +39,20 @@ describe('fallback layout', () => {
     expect(orientationOf(800, 800)).toBe('portrait');
   });
 
-  it('opens the panel at first only on a wide landscape window', () => {
-    expect(defaultPanelOpen(1366, 768)).toBe(true);
-    expect(defaultPanelOpen(844, 390)).toBe(false);
-    expect(defaultPanelOpen(390, 844)).toBe(false);
-    expect(defaultPanelOpen(820, 1180)).toBe(false);
+  it('docks the panel only on a window that is wide, tall enough and held wide', () => {
+    expect(isDocked(1366, 768)).toBe(true);
+    expect(isDocked(1024, 768)).toBe(true);
+    expect(isDocked(844, 390)).toBe(false); // a phone held sideways: too short
+    expect(isDocked(390, 844)).toBe(false);
+    expect(isDocked(820, 1180)).toBe(false); // a tablet held upright
+    expect(isDocked(700, 600)).toBe(false); // too narrow
+  });
+
+  it('leaves the panel its own room, so the 3D view never runs under it', () => {
+    expect(DOCK_WIDTH).toBe(FALLBACK_PANEL_WIDTH + FALLBACK_EDGE * 2);
+    const docked = fallbackLayoutFor(1366 - DOCK_WIDTH, 768);
+    const whole = fallbackLayoutFor(1366, 768);
+    expect(whole.pageWidth - docked.pageWidth).toBe(DOCK_WIDTH);
   });
 
   it('keeps the panel to its width, or a share of a narrow window', () => {

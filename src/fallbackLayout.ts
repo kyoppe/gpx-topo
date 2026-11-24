@@ -24,11 +24,16 @@ export const FALLBACK_PAD = 12;
 /** The smallest sheet: below this a phone is held in a way the map would be unreadable anyway. */
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 320;
-/** The width of the side panel when it floats over the map (it never takes more than this share of a narrow window). */
+/** The width of the side panel (it never takes more than this share of a narrow window). */
 export const FALLBACK_PANEL_WIDTH = 400;
 const PANEL_SHARE = 0.92;
-/** From this window width up the panel is shown at first; narrower, it waits behind its button. */
-const PANEL_DEFAULT_MIN_WIDTH = 900;
+/** The margin either side of the panel. */
+export const FALLBACK_EDGE = 12;
+/** What a docked panel takes from the window: its width and its margins. Keep in step with `--fb-dock-width`. */
+export const DOCK_WIDTH = FALLBACK_PANEL_WIDTH + FALLBACK_EDGE * 2;
+/** A window this wide and this tall, held wide, has room for the panel beside the map; anything less does not. */
+const DOCK_MIN_WIDTH = 760;
+const DOCK_MIN_HEIGHT = 560;
 
 export function orientationOf(width: number, height: number): Orientation {
   return width > height ? 'landscape' : 'portrait';
@@ -49,9 +54,9 @@ export function fallbackLayoutFor(width: number, height: number): FallbackLayout
   };
 }
 
-/** The panel starts open on a wide landscape window, and folded away on a phone (either way up). */
-export function defaultPanelOpen(width: number, height: number): boolean {
-  return orientationOf(width, height) === 'landscape' && width >= PANEL_DEFAULT_MIN_WIDTH;
+/** Wide enough, tall enough and held wide: the panel stays beside the map, and the 3D view is the rest of the window. */
+export function isDocked(width: number, height: number): boolean {
+  return orientationOf(width, height) === 'landscape' && width >= DOCK_MIN_WIDTH && height >= DOCK_MIN_HEIGHT;
 }
 
 /** How wide the panel is in a window of this width. */

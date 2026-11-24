@@ -19,8 +19,8 @@ import { createCenteredProjection, createMapProjection, pathD, projectTrack, typ
 import { searchGsiAddress } from './gsiSearch';
 import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
-import { createFallbackUi, FallbackDialog, FallbackTimePicker, PanelKey } from './fallbackUi';
-import { defaultPanelOpen, fallbackLayoutFor } from './fallbackLayout';
+import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, PanelKey, PanelTabs, type PanelTabId } from './fallbackUi';
+import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
@@ -310,7 +310,9 @@ export default function App() {
       fb.root.remove();
     };
   }, [fb]);
-  const [panelOpen, setPanelOpen] = useState(() => defaultPanelOpen(window.innerWidth, window.innerHeight));
+  // the drawer (a window too small for a docked panel): folded away at first, and showing the route's cards
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<PanelTabId>('route');
   const [language] = useState(detectLanguage);
   const copy = useMemo(() => getCopy(language), [language]);
   useEffect(() => {
@@ -483,12 +485,12 @@ export default function App() {
   routeNameRef.current = route?.name ?? null;
   apartRef.current = apart;
 
-  // Fallback: turning the device brings the panel to its default for the new shape (open in landscape, folded in portrait).
-  const windowShape = viewport.width > viewport.height ? 'landscape' : 'portrait';
-  useEffect(() => {
-    if (fb) setPanelOpen(defaultPanelOpen(window.innerWidth, window.innerHeight));
-  }, [fb, windowShape]);
-  const layout = useMemo(() => (fb ? fallbackLayoutFor(viewport.width, viewport.height) : layoutFor(viewport.width, viewport.height)), [fb, viewport]);
+  // Fallback: a wide, tall window keeps the panel beside the map (the canvas gives it room); a smaller one has a drawer.
+  const docked = fb !== null && isDocked(viewport.width, viewport.height);
+  const layout = useMemo(
+    () => (fb ? fallbackLayoutFor(viewport.width - (docked ? DOCK_WIDTH : 0), viewport.height) : layoutFor(viewport.width, viewport.height)),
+    [docked, fb, viewport],
+  );
   const points = route?.points ?? null;
   const gpxProjection = useMemo(
     () => (points ? createMapProjection({ points }, layout.mapWidth, layout.mapHeight) : null),
@@ -1490,18 +1492,23 @@ export default function App() {
         engineRef.current?.refreshUi();
       });
     });
-    observer.observe(fb.panel, { subtree: true, childList: true });
+    observer.observe(fb.panelBody, { subtree: true, childList: true });
     return () => {
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
   }, [fb]);
+  // Fallback drawer: the groups of cards on offer (the map's search card is only there while the map lies flat).
+  const panelTabs: PanelTabId[] = viewMode === 'gpx' ? ['route', 'sun', 'ways'] : apart ? ['sun'] : ['search', 'sun'];
+  const activePanelTab = panelTabs.includes(panelTab) ? panelTab : panelTabs[0];
   // Fallback: the shell's state, as attributes its CSS reads.
   useLayoutEffect(() => {
     if (!fb) return;
     fb.root.dataset.panel = panelOpen ? 'open' : 'closed';
     fb.root.dataset.apart = apart ? 'true' : 'false';
-  }, [apart, fb, panelOpen]);
+    fb.root.dataset.dock = docked ? 'true' : 'false';
+    fb.root.dataset.tab = activePanelTab;
+  }, [activePanelTab, apart, docked, fb, panelOpen]);
 
   useEffect(() => {
     engineRef.current?.refreshHud();
@@ -2273,7 +2280,7 @@ export default function App() {
   return (
     <main
       lang={language}
-      className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}${fb ? ' fallback-ui' : ''}`}
+      className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}${fb ? ' fallback-ui' : ''}${docked ? ' fb-docked' : ''}`}
     >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <StageHost host={fallbackHost}>
@@ -2436,10 +2443,18 @@ export default function App() {
               </div>
             </div>
 
-            <StageHost host={fb?.panel ?? null}>
+            <StageHost host={fb?.panelBody ?? null}>
+            {fb && !docked && panelTabs.length > 1 && (
+              <PanelTabs
+                tabs={panelTabs}
+                active={activePanelTab}
+                labels={{ route: copy.ui.panelRoute, search: copy.ui.panelSearch, sun: copy.ui.sunlight, ways: copy.ui.waypoints }}
+                onSelect={setPanelTab}
+              />
+            )}
             <aside className="side" style={fb ? undefined : { left: layout.sideX, top: PAD, width: PANEL_WIDTH, height: layout.pageHeight - PAD * 2 }}>
               {(viewMode === 'gpx' || !apart) && (
-                <section className="slot">
+                <section className="slot" data-section={viewMode === 'gpx' ? 'route' : 'search'}>
                   <div className="card" data-piece="card" drawable="" />
                   {viewMode === 'gpx' ? (
                     <div className="in in-title" data-piece="content" drawable="">
@@ -2505,7 +2520,7 @@ export default function App() {
               )}
 
               {viewMode === 'gpx' && (
-                <section className="slot">
+                <section className="slot" data-section="route">
                   <div className="card" data-piece="card" drawable="" />
                   <div className="in in-stats" data-piece="content" drawable="">
                     <dl className="stats" data-selectable="">
@@ -2558,7 +2573,7 @@ export default function App() {
                 </section>
               )}
 
-              <section className="slot">
+              <section className="slot" data-section="sun">
                 <div className="card" data-piece="card" drawable="" />
                 <div className="in in-sun" data-piece="content" drawable="">
                   <div className="row">
@@ -2655,7 +2670,7 @@ export default function App() {
               </section>
 
               {viewMode === 'gpx' && (
-                <section className="slot slot-fill">
+                <section className="slot slot-fill" data-section="ways">
                 <div className="card" data-piece="card" drawable="" />
                 <div className="in in-ways" data-piece="content" drawable="">
                   <div className="row">
@@ -3036,7 +3051,6 @@ export default function App() {
             </div>
           )}
           <nav className="hud" data-hud="" aria-label={copy.ui.controls}>
-            {fb && <PanelKey open={panelOpen} copy={copy} onToggle={() => setPanelOpen((open) => !open)} />}
             <div className="bar" data-piece="bar" drawable="">
               <span className="well" data-well="mode" />
               {viewMode === 'map' && (
@@ -3160,7 +3174,7 @@ export default function App() {
                 fileRef.current?.click();
               }}
             >
-              {copy.ui.openGpx}
+              {fb ? <KeyFace icon="open" label={copy.ui.openGpx} /> : copy.ui.openGpx}
             </button>
             <button
               type="button"
@@ -3175,7 +3189,7 @@ export default function App() {
                 setPlacing((on) => !on);
               }}
             >
-              {placing ? copy.ui.clickRouteMode : copy.ui.addWaypoint}
+              {fb ? <KeyFace icon="place" label={placing ? copy.ui.clickRouteMode : copy.ui.addWaypoint} /> : placing ? copy.ui.clickRouteMode : copy.ui.addWaypoint}
             </button>
               </>
             )}
@@ -3332,6 +3346,18 @@ export default function App() {
       </canvas>
       {!native && <div ref={fallbackMountRef} className="fallback-host" aria-hidden="true" />}
       {fb && <div ref={fbMountRef} className="fb-mount" />}
+      {fb && !docked && (
+        <>
+          <StageHost host={fb.panelKey}>
+            <PanelKey open={panelOpen} copy={copy} onToggle={() => setPanelOpen((open) => !open)} />
+          </StageHost>
+          {panelOpen && (
+            <StageHost host={fb.backdrop}>
+              <button type="button" className="fb-backdrop" aria-label={copy.ui.hidePanel} tabIndex={-1} onClick={() => setPanelOpen(false)} />
+            </StageHost>
+          )}
+        </>
+      )}
       {fb && infoOpen && (
         <StageHost host={fb.modal}>
           <FallbackDialog label={`${copy.appName} ${copy.about}`} closeLabel={copy.ui.closeDialog} className="fb-flag-dialog" onClose={toggleInfo}>

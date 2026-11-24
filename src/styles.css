@@ -2461,7 +2461,11 @@ main[lang='en'] .bar-hint {
   --fb-hud-height: 72px;
   --fb-edge: 12px;
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 100vh;
+  height: 100dvh;
   z-index: 4;
   font-size: 13px;
   line-height: 1.4;
@@ -2485,52 +2489,63 @@ main[lang='en'] .bar-hint {
   bottom: auto;
 }
 
-/* the side panel: the cards of the sheet, floated over the map and folded away behind the right edge */
+/* the room a docked panel takes beside the canvas (its width and the margin either side) */
+.fallback-ui {
+  --fb-dock-width: 424px;
+}
+
+.fb-docked .stage-canvas {
+  /* a canvas is a replaced element: `auto` would keep its drawing-buffer width, so say the width outright */
+  width: calc(100% - var(--fb-dock-width));
+}
+
+.fb-docked .info-button {
+  right: calc(var(--fb-dock-width) + 12px);
+}
+
+/* the side panel: the cards of the sheet. On a wide window it is docked beside the map (the canvas is narrowed to
+   leave it room); otherwise it is a drawer behind the right edge, with a tab on its edge that pulls it out. */
 .fb-panel {
   position: absolute;
   top: 0;
   right: 0;
   bottom: var(--fb-hud-height);
-  display: flex;
   width: calc(var(--fb-panel-width) + var(--fb-edge) * 2);
-  max-width: 100%;
-  flex-direction: column;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: calc(max(var(--fb-edge), env(safe-area-inset-top)) + 44px) max(var(--fb-edge), env(safe-area-inset-right)) var(--fb-edge) var(--fb-edge);
-  overscroll-behavior: contain;
+  max-width: calc(100% - 24px); /* leaves a strip of the map beside the drawer to tap it away */
   pointer-events: none;
-  scrollbar-width: none;
-  transform: translateX(calc(100% + 24px));
-  transition:
-    transform 260ms cubic-bezier(0.4, 0, 1, 1),
-    visibility 0s linear 260ms;
-  visibility: hidden;
-}
-
-.fb-panel::-webkit-scrollbar {
-  display: none;
+  transform: translateX(100%);
+  transition: transform 260ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 .fb-ui[data-panel='open'] .fb-panel {
   transform: none;
   transition: transform var(--fb-duration) var(--fb-ease);
+}
+
+.fb-panel-body {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  gap: 10px;
+  padding: calc(max(var(--fb-edge), env(safe-area-inset-top)) + 44px) max(var(--fb-edge), env(safe-area-inset-right)) var(--fb-edge) var(--fb-edge);
+  visibility: hidden;
+  transition: visibility 0s linear 260ms;
+}
+
+.fb-ui[data-panel='open'] .fb-panel-body {
   visibility: visible;
+  transition: none;
 }
 
 .fb-panel .side {
   position: static;
   width: 100%;
   min-height: 0;
-  flex: none;
+  flex: 1;
 }
 
 .fb-panel .slot {
   pointer-events: auto;
-}
-
-.fb-panel .slot-fill {
-  flex: none;
 }
 
 .fb-panel .card {
@@ -2539,13 +2554,31 @@ main[lang='en'] .bar-hint {
     inset 0 0 0 1px var(--rule);
 }
 
-.fb-panel .in-ways {
-  height: auto;
+/* the waypoints' title keeps its words whole; the hint beside it goes under it when there is no room */
+.fb-panel .in-ways > .row {
+  flex-wrap: wrap;
+  gap: 2px 8px;
 }
 
-.fb-panel .ways {
-  flex: none;
-  max-height: min(34vh, 260px);
+.fb-panel .in-ways > .row .label {
+  white-space: nowrap;
+}
+
+/* start time and date: side by side when they fit, one under the other when they do not, and never past the card */
+.fb-panel .row-inputs {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.fb-panel .row-inputs label {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.fb-panel .row-inputs .field {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fb-panel .profile {
@@ -2553,7 +2586,132 @@ main[lang='en'] .bar-hint {
   height: auto;
 }
 
-/* the bar along the bottom: the keys of the sheet's bar, in a row that wraps on a narrow window */
+/* the drawer's key: its own button at the right end of the bar, below where the drawer comes from, so it is never covered */
+.fb-panel-key {
+  position: absolute;
+  right: max(var(--fb-edge), env(safe-area-inset-right));
+  bottom: max(var(--fb-edge), env(safe-area-inset-bottom));
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(#f6f7f8, #eceef1);
+  box-shadow:
+    0 6px 22px rgba(24, 32, 43, 0.2),
+    inset 0 0 0 1px rgba(24, 32, 43, 0.09);
+  color: var(--ink);
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.fb-panel-key[aria-expanded='true'] {
+  background: linear-gradient(#273140, #18202b);
+  color: #fff;
+}
+
+.fb-panel-key:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fb-panel-key svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+/* the bar gives the key its room, and centres itself in what is left */
+.fb-ui:not([data-dock='true']) .fb-hud {
+  padding-right: calc(max(var(--fb-edge), env(safe-area-inset-right)) + 56px + 8px);
+}
+
+/* the drawer's backdrop: taps on the map beside it fold the drawer away */
+.fb-backdrop {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border: 0;
+  background: rgba(24, 32, 43, 0.22);
+  appearance: none;
+  animation: fb-fade 200ms ease-out both;
+  pointer-events: auto;
+}
+
+/* the drawer shows one card group at a time, so it fits a phone's height */
+.fb-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 11px;
+  background: rgba(228, 232, 237, 0.92);
+  box-shadow: 0 2px 10px rgba(24, 32, 43, 0.16);
+  pointer-events: auto;
+}
+
+.fb-tabs button {
+  min-width: 0;
+  flex: 1;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink2);
+  font: 600 12.5px var(--sans);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.fb-tabs button[aria-selected='true'] {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(24, 32, 43, 0.2);
+  color: var(--ink);
+}
+
+.fb-ui[data-dock='false'][data-tab='route'] .fb-panel .slot:not([data-section='route']),
+.fb-ui[data-dock='false'][data-tab='search'] .fb-panel .slot:not([data-section='search']),
+.fb-ui[data-dock='false'][data-tab='sun'] .fb-panel .slot:not([data-section='sun']),
+.fb-ui[data-dock='false'][data-tab='ways'] .fb-panel .slot:not([data-section='ways']) {
+  display: none;
+}
+
+/* the waypoint card is as tall as its waypoints, up to what is left of the panel, and then its list scrolls */
+.fb-panel .slot-fill {
+  flex: 0 1 auto;
+}
+
+/* docked: always there, the whole height beside the map; no tab, no tabs, every card */
+.fb-ui[data-dock='true'] .fb-panel {
+  bottom: 0;
+  width: var(--fb-dock-width);
+  transform: none;
+}
+
+.fb-ui[data-dock='true'] .fb-panel-body {
+  visibility: visible;
+  padding-bottom: var(--fb-edge);
+}
+
+.fb-ui[data-dock='true'] .fb-panel-key,
+.fb-ui[data-dock='true'] .fb-tabs,
+.fb-ui[data-dock='true'] .fb-backdrop {
+  display: none;
+}
+
+/* the bar along the bottom: the keys of the sheet's bar, in one row */
 .fb-hud {
   position: absolute;
   right: 0;
@@ -2567,15 +2725,19 @@ main[lang='en'] .bar-hint {
   pointer-events: none;
 }
 
+.fb-ui[data-dock='true'] .fb-hud {
+  right: var(--fb-dock-width);
+}
+
 .fb-hud .hud {
   position: relative;
   display: flex;
   max-width: 100%;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 9px 12px;
+  padding: 8px 10px;
   border-radius: 16px;
   background: linear-gradient(#f6f7f8, #eceef1);
   box-shadow:
@@ -2590,8 +2752,11 @@ main[lang='en'] .bar-hint {
 
 .fb-hud .key {
   position: relative;
-  min-width: 44px;
-  height: 44px;
+  display: grid;
+  min-width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
   padding: 0 12px;
   border-radius: 11px;
   touch-action: manipulation;
@@ -2601,14 +2766,74 @@ main[lang='en'] .bar-hint {
 .fb-hud .key-permalink,
 .fb-hud .key-pin,
 .fb-hud .key-fly,
-.fb-hud .key-stop,
-.fb-hud .key-panel {
+.fb-hud .key-stop {
+  width: auto;
+  padding: 0 10px;
+}
+
+.fb-hud .key-open,
+.fb-hud .key-place {
   width: auto;
 }
 
 .fb-hud .key-flip {
   width: auto;
-  min-width: 104px;
+  min-width: 84px;
+}
+
+/* a key's picture and its words: a narrow bar shows the picture only (the words stay for screen readers) */
+.key-icon {
+  display: none;
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.key[data-latched] .key-icon {
+  stroke: #fff;
+}
+
+@media (max-width: 560px) {
+  .fb-hud .key-open,
+  .fb-hud .key-place {
+    padding: 0 10px;
+  }
+
+  .fb-hud .key-icon {
+    display: block;
+  }
+
+  .fb-hud .key-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* a phone's width, with the drawer's key beside the bar: the keys sit closer so that even the longest bar (the flyover's) fits */
+@media (max-width: 430px) {
+  .fb-hud .hud {
+    gap: 3px;
+    padding: 9px 5px; /* 38px keys: the bar stays as tall as the drawer's key */
+  }
+
+  .fb-hud .key {
+    min-width: 36px;
+    height: 38px;
+    padding: 0 8px;
+  }
+
+  .fb-hud .key-flip {
+    min-width: 64px;
+    padding: 0 6px;
+  }
 }
 
 /* what the scene alone can do (the photo, the video, the drone moves, the first person view) is left out here */
@@ -2625,26 +2850,6 @@ main[lang='en'] .bar-hint {
 .fb-ui[data-apart='false'] .key-flip[data-face='back'],
 .fb-ui[data-apart='true'] .key-flip[data-face='front'] {
   display: none;
-}
-
-.key-panel {
-  display: grid;
-  place-items: center;
-}
-
-.key[data-latched] .panel-icon {
-  stroke: #fff;
-}
-
-.panel-icon {
-  display: block;
-  width: 24px;
-  height: 24px;
-  fill: none;
-  stroke: var(--ink);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
 }
 
 /* the map pin's name, edited here rather than on the pin */
