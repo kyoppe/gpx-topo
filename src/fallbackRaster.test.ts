@@ -111,3 +111,51 @@ describe('createRasterTextureSource', () => {
     expect(gl.texImage2D).not.toHaveBeenCalled();
   });
 });
+
+describe('route opacity', () => {
+  function routeScene(setup: (svg: SVGSVGElement, path: SVGPathElement, root: HTMLElement) => void) {
+    const root = document.createElement('div');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M0 0L100 100');
+    path.style.stroke = 'rgb(255, 0, 0)';
+    path.style.fill = 'none';
+    svg.append(path);
+    root.append(svg);
+    document.body.append(root);
+    setup(svg, path, root);
+    rect(root, 0, 0, 100, 100);
+    rect(svg, 0, 0, 100, 100);
+    const ctx = fakeContext();
+    const alphas: number[] = [];
+    ctx.stroke.mockImplementation(() => { alphas.push(ctx.globalAlpha); });
+    rasterizeElement(ctx, root, 100, 100);
+    return { ctx, alphas };
+  }
+
+  it('does not draw a route whose opacity is 0 (the photo overlay hides it this way)', () => {
+    const { ctx } = routeScene((_svg, path) => { path.style.opacity = '0'; });
+    expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('keeps a fractional opacity', () => {
+    const { alphas } = routeScene((_svg, path) => { path.style.opacity = '0.4'; });
+    expect(alphas).toEqual([0.4]);
+  });
+
+  it('applies stroke-opacity, as the route CSS sets 0.9', () => {
+    const { alphas } = routeScene((_svg, path) => { path.style.strokeOpacity = '0.9'; });
+    expect(alphas[0]).toBeCloseTo(0.9);
+  });
+
+  it('multiplies the opacity of the ancestors up to the piece', () => {
+    const { alphas } = routeScene((svg, path) => {
+      svg.style.opacity = '0.5';
+      path.style.opacity = '0.5';
+    });
+    expect(alphas[0]).toBeCloseTo(0.25);
+    const hidden = routeScene((svg) => { svg.style.opacity = '0'; });
+    expect(hidden.ctx.stroke).not.toHaveBeenCalled();
+  });
+});

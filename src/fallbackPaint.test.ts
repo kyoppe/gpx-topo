@@ -115,4 +115,38 @@ describe('installFallbackPaint', () => {
     flush();
     expect(painted).toHaveLength(0);
   });
+
+  it('repaints every piece when a class changes on an ancestor of the stage (photo-route-overlay sits on the app root)', async () => {
+    const { canvas, page, sheet, terrain, painted, flush } = scene();
+    const root = document.createElement('main');
+    root.append(page.parentElement!);
+    document.body.append(root);
+    installFallbackPaint(canvas, page);
+    canvas.requestPaint();
+    flush();
+
+    root.classList.add('photo-route-overlay');
+    await tick();
+    flush();
+
+    expect(painted).toHaveLength(2);
+    expect(painted[1].changedElements).toEqual(expect.arrayContaining([sheet, terrain]));
+  });
+
+  it('ignores other attributes on an ancestor', async () => {
+    const { canvas, page, painted, flush } = scene();
+    const root = document.createElement('main');
+    root.append(page.parentElement!);
+    document.body.append(root);
+    installFallbackPaint(canvas, page);
+    canvas.requestPaint();
+    flush();
+
+    root.setAttribute('lang', 'ja');
+    await tick();
+    canvas.requestPaint();
+    flush();
+
+    expect(painted[1].changedElements).toEqual([]);
+  });
 });

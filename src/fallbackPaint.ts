@@ -101,15 +101,23 @@ export function installFallbackPaint(canvas: HtmlInCanvasElement, page: HTMLElem
       if (piece) {
         dirty.add(piece);
         touched = true;
-      } else if (record.type === 'attributes' && record.target === page) {
+      } else if (record.type === 'attributes' && record.target === page && record.attributeName === 'style') {
         // a style variable on the page itself (the route's line width) changes every piece that draws a route
         for (const el of withSvg()) dirty.add(el);
+        touched = true;
+      } else if (record.type === 'attributes' && (record.target === stage || record.target === page || !stage.contains(record.target))) {
+        // a class on an ancestor (photo-route-overlay sits on the app root) restyles pieces without touching them
+        for (const el of pieces()) dirty.add(el);
         touched = true;
       }
     }
     if (touched) canvas.requestPaint();
   });
   observer.observe(stage, { subtree: true, childList: true, attributes: true, characterData: true });
+  // Selectors like `.photo-route-overlay .terrain` depend on classes above the stage, which that observer cannot see.
+  for (let ancestor = stage.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    observer.observe(ancestor, { attributes: true, attributeFilter: ['class'] });
+  }
 
   invalidate();
 

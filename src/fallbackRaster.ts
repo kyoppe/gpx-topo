@@ -19,7 +19,23 @@ function relative(rect: DOMRect, root: DOMRect, sx: number, sy: number): Box {
   };
 }
 
-function paintSvg(ctx: CanvasRenderingContext2D, svg: SVGSVGElement, box: Box) {
+/** A number from a computed style, where 0 is a real value and only a missing or unparsable one falls back. */
+function numeric(value: string, fallback: number) {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/** Opacity is not inherited in CSS but it composites down the tree, so multiply it up to the piece. */
+function effectiveOpacity(node: Element, root: Element) {
+  let opacity = 1;
+  for (let n: Element | null = node; n; n = n.parentElement) {
+    opacity *= numeric(getComputedStyle(n).opacity, 1);
+    if (n === root) break;
+  }
+  return opacity;
+}
+
+function paintSvg(ctx: CanvasRenderingContext2D, svg: SVGSVGElement, box: Box, root: Element) {
   const view = svg.viewBox?.baseVal;
   const vw = view && view.width > 0 ? view.width : box.width;
   const vh = view && view.height > 0 ? view.height : box.height;
@@ -30,17 +46,20 @@ function paintSvg(ctx: CanvasRenderingContext2D, svg: SVGSVGElement, box: Box) {
   for (const path of svg.querySelectorAll<SVGPathElement>('path')) {
     const d = path.getAttribute('d');
     if (!d || !isDrawn(path)) continue;
+    const opacity = effectiveOpacity(path, root);
+    if (opacity <= 0) continue;
     const style = getComputedStyle(path);
     ctx.save();
     ctx.translate(ox, oy);
     ctx.scale(scale, scale);
-    ctx.globalAlpha = Number(style.opacity) || 1;
     const shape = new Path2D(d);
     if (style.fill && style.fill !== 'none') {
+      ctx.globalAlpha = opacity * numeric(style.fillOpacity, 1);
       ctx.fillStyle = style.fill;
       ctx.fill(shape);
     }
     if (style.stroke && style.stroke !== 'none') {
+      ctx.globalAlpha = opacity * numeric(style.strokeOpacity, 1);
       ctx.strokeStyle = style.stroke;
       ctx.lineWidth = parseFloat(style.strokeWidth) || 1;
       ctx.lineJoin = (style.strokeLinejoin as CanvasLineJoin) || 'miter';
@@ -69,7 +88,7 @@ export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, wid
     if (box.width <= 0 || box.height <= 0) continue;
     if (child instanceof HTMLCanvasElement) {
       if (child.width > 0 && child.height > 0) ctx.drawImage(child, box.left, box.top, box.width, box.height);
-    } else paintSvg(ctx, child as SVGSVGElement, box);
+    } else paintSvg(ctx, child as SVGSVGElement, box, el);
   }
 }
 
