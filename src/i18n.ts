@@ -351,10 +351,10 @@ function makeCopy(language: Language): Copy {
   return {
     language,
     locale,
-    appName: 'GPX Wallpaper Whratever',
-    photoAppName: 'GPX Wallpaper Whratever',
+    appName: 'GPX Diorama Whratever',
+    photoAppName: 'GPX Diorama Whratever',
     raceAppName: 'Race-Time Whatever',
-    shareText: 'Made with GPX Wallpaper Whratever.\nhttps://gpx-topo.pages.dev/\n#GPXWallpaperWhratever',
+    shareText: 'Made with GPX Diorama Whratever.\nhttps://gpx-topo.pages.dev/\n#GPXDioramaWhratever',
     about: 'about',
     week: WEEK.en,
     fallbackTitle: 'Open this app in a supported browser',
