@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 import { renderBasemaps, streamNames, streamRelief, type MapStyle } from './basemap';
 import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
@@ -16,7 +17,9 @@ import {
 import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
 import { createCenteredProjection, createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { searchGsiAddress } from './gsiSearch';
+import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
+import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, parseMapPermalink, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
@@ -254,6 +257,14 @@ function WayNameField({ name, label, onCommit }: { name: string; label: string; 
   );
 }
 
+/**
+ * Inside the canvas (native) the page renders where it always has. The fallback renders the same
+ * page into an ordinary element, because a browser without HTML-in-Canvas does not lay out canvas children.
+ */
+function StageHost({ host, children }: { host: HTMLElement | null; children: ReactNode }) {
+  return host ? createPortal(children, host) : <>{children}</>;
+}
+
 function Fallback({ copy }: { copy: Copy }) {
   return (
     <main lang={copy.language} className="unsupported">
@@ -267,7 +278,18 @@ function Fallback({ copy }: { copy: Copy }) {
 }
 
 export default function App() {
-  const [native] = useState(supportsHtmlInCanvas);
+  const [renderPath] = useState(() => resolveRenderPath(supportsHtmlInCanvas(), fallbackEnabled()));
+  const native = renderPath === 'native';
+  // The fallback renders the page into an ordinary element beside the canvas; null on the native path.
+  // It exists from the first render, so every ref in the page is set in the same commit as on the native path.
+  const [fallbackHost] = useState<HTMLDivElement | null>(() => (renderPath === 'fallback' ? document.createElement('div') : null));
+  const fallbackMountRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const mount = fallbackMountRef.current;
+    if (!fallbackHost || !mount) return;
+    mount.append(fallbackHost);
+    return () => fallbackHost.remove();
+  }, [fallbackHost]);
   const [language] = useState(detectLanguage);
   const copy = useMemo(() => getCopy(language), [language]);
   useEffect(() => {
@@ -1251,18 +1273,24 @@ export default function App() {
   useLayoutEffect(() => {
     const canvas = canvasRef.current as HtmlInCanvasElement | null;
     const page = pageRef.current;
-    if (!native || !canvas || !page) return;
-    canvas.setAttribute('content', 'drawable');
-    canvas.setAttribute('layoutsubtree', '');
+    if (renderPath === 'unsupported' || !canvas || !page) return;
+    const names = native
+      ? { start: 'html_in_canvas_engine_start', firstPaint: 'html_in_canvas_first_paint', ready: 'html_in_canvas_ready', painted: 'html_in_canvas_painted' }
+      : { start: 'fallback_render_engine_start', firstPaint: 'fallback_render_first_paint', ready: 'fallback_render_ready', painted: 'fallback_render_painted' };
+    let fallbackPaint: FallbackPaint | undefined;
+    if (native) {
+      canvas.setAttribute('content', 'drawable');
+      canvas.setAttribute('layoutsubtree', '');
+    } else fallbackPaint = installFallbackPaint(canvas, page);
     const htmlInCanvasContext = getHtmlInCanvasContext();
     let engine: Engine;
     let stopFirstPaint: ReturnType<typeof startVital> | undefined;
-    const stopEngineStart = startVital('html_in_canvas_engine_start', htmlInCanvasContext);
+    const stopEngineStart = startVital(names.start, htmlInCanvasContext);
     try {
       engine = createEngine(canvas, page, {
         onFirstPaint: () => {
           stopFirstPaint?.('ok');
-          addAction('html_in_canvas_painted', htmlInCanvasContext);
+          addAction(names.painted, htmlInCanvasContext);
         },
         onApartChange: (next) => {
           if (!permalinkApplyingRef.current) detachPermalink(next ? 'raise' : 'lay_flat');
@@ -1344,24 +1372,26 @@ export default function App() {
           else setOverrides((current) => ({ ...current, [target]: minutes }));
         },
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
-      });
+      }, native ? undefined : { renderPath: 'fallback' });
     } catch (error) {
       stopEngineStart('error');
-      reportError('create_html_in_canvas_engine', error);
+      fallbackPaint?.dispose();
+      reportError(native ? 'create_html_in_canvas_engine' : 'create_fallback_render_engine', error);
       setToast(error instanceof Error ? error.message : copy.toast.threeDStartFailed);
       return;
     }
     stopEngineStart('ok');
-    stopFirstPaint = startVital('html_in_canvas_first_paint', htmlInCanvasContext);
-    addAction('html_in_canvas_ready', htmlInCanvasContext);
+    stopFirstPaint = startVital(names.firstPaint, htmlInCanvasContext);
+    addAction(names.ready, htmlInCanvasContext);
     engineRef.current = engine;
     engine.refreshHud();
     return () => {
       stopFirstPaint?.('aborted');
       engineRef.current = null;
       engine.dispose();
+      fallbackPaint?.dispose();
     };
-  }, [detachPermalink, native]);
+  }, [detachPermalink, native, renderPath]);
 
   useEffect(() => {
     if (!mapPinSelecting) return;
@@ -1955,7 +1985,7 @@ export default function App() {
     if (latestMedia === 'photo') addAction('photo_post_opened', { route_name: route?.name || 'gpx-topo' });
   };
 
-  if (!native) return <Fallback copy={copy} />;
+  if (renderPath === 'unsupported') return <Fallback copy={copy} />;
 
   const permalinkSun =
     permalink?.sun === 'time'
@@ -2160,6 +2190,7 @@ export default function App() {
       className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}`}
     >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
+        <StageHost host={fallbackHost}>
         <div className="stage">
           <div ref={pageRef} className="page" style={{ width: layout.pageWidth, height: layout.pageHeight }}>
             <div className="sheet" data-piece="sheet" drawable="" />
@@ -3158,7 +3189,9 @@ export default function App() {
             )}
           </nav>
         </div>
+        </StageHost>
       </canvas>
+      {!native && <div ref={fallbackMountRef} className="fallback-host" aria-hidden="true" />}
 
       <div ref={hudHitLayerRef} className="hud-hit-layer" aria-hidden="true">
         {!mapManeuverActive && (

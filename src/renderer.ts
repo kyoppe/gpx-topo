@@ -505,7 +505,22 @@ void main(){ o=vec4(1.0); }`;
 
 export type Renderer = ReturnType<typeof createRenderer>;
 
-export function createRenderer(canvas: HtmlInCanvasElement) {
+/** How an element's picture reaches a texture that is already bound and sized. */
+export type ElementTextureSource = {
+  upload(gl: WebGL2RenderingContext, el: Element, width: number, height: number): void;
+  /** The error message when the first upload leaves a GL error behind. */
+  failure: string;
+};
+
+/** HTML-in-Canvas: the browser hands over the element's rendered picture itself. */
+export const nativeTextureSource: ElementTextureSource = {
+  failure: 'HTML-in-Canvas texture upload failed.',
+  upload(gl, el, width, height) {
+    (gl as HtmlInCanvasContext).texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, el, { width, height });
+  },
+};
+
+export function createRenderer(canvas: HtmlInCanvasElement, textureSource: ElementTextureSource = nativeTextureSource) {
   const context = canvas.getContext('webgl2', {
     alpha: false,
     antialias: true,
@@ -761,13 +776,13 @@ export function createRenderer(canvas: HtmlInCanvasElement) {
       L.w = w;
       L.h = h;
     }
-    gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, el, { width: w, height: h });
+    textureSource.upload(gl, el, w, h);
     gl.generateMipmap(gl.TEXTURE_2D);
     // WebGL errors need not throw. Verify the first upload before counting it as painted,
     // then avoid synchronous error checks on subsequent uploads.
     if (!uploadVerified) {
       if (gl.isContextLost() || gl.getError() !== gl.NO_ERROR) {
-        throw new Error('HTML-in-Canvas texture upload failed.');
+        throw new Error(textureSource.failure);
       }
       uploadVerified = true;
     }

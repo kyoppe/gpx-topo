@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createEngine, type Engine, type EngineCallbacks, type EngineModel } from './engine';
+import { createEngine, type Engine, type EngineCallbacks, type EngineModel, type EngineOptions } from './engine';
 import type { HtmlInCanvasElement } from './htmlInCanvas';
 import { createRenderer } from './renderer';
 import { buildTerrain } from './terrain';
@@ -38,7 +38,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup(width = 100) {
+function setup(width = 100, options?: EngineOptions) {
   const renderer = {
     layer: vi.fn(() => ({ tex: {}, w: 0, h: 0, ready: false })),
     setTerrain: vi.fn(),
@@ -65,7 +65,7 @@ function setup(width = 100) {
     onDetail: vi.fn(), onTimeCommit: vi.fn(), onPopClosed: vi.fn(),
     onFlightChange: vi.fn(), onMapManeuverChange: vi.fn(), onInfoChange: vi.fn(), onPhotoChange: vi.fn(),
   };
-  const engine = createEngine(canvas, page, callbacks);
+  const engine = options ? createEngine(canvas, page, callbacks, options) : createEngine(canvas, page, callbacks);
   engines.push(engine);
   const paint = () => canvas.dispatchEvent(Object.assign(new Event('paint'), { changedElements: [piece] }));
   return { engine, renderer, callbacks, paint, canvas, page };
@@ -493,5 +493,60 @@ describe('first HTML-in-Canvas paint', () => {
     vi.advanceTimersByTime(100);
     expect(renderer.upload).not.toHaveBeenCalled();
     expect(callbacks.onFirstPaint).not.toHaveBeenCalled();
+  });
+});
+
+describe('render path', () => {
+  function withExtraPiece(options?: EngineOptions) {
+    const scene = setup(100, options);
+    const extra = document.createElement('div');
+    extra.dataset.piece = 'content';
+    Object.defineProperties(extra, { offsetWidth: { value: 80 }, offsetHeight: { value: 40 } });
+    scene.page.append(extra);
+    scene.engine.setModel(model);
+    const sheet = scene.page.querySelector('[data-piece="sheet"]')!;
+    vi.mocked(scene.renderer.upload).mockClear();
+    scene.canvas.dispatchEvent(Object.assign(new Event('paint'), { changedElements: [sheet, extra] }));
+    const uploaded = vi.mocked(scene.renderer.upload).mock.calls.map((call) => call[1]);
+    return { ...scene, sheet, extra, uploaded };
+  }
+
+  it('native: builds the HTML-in-Canvas renderer with no texture source and uploads every piece', () => {
+    const { canvas, sheet, extra, uploaded } = withExtraPiece();
+    expect(createRenderer).toHaveBeenLastCalledWith(canvas);
+    expect(uploaded).toEqual(expect.arrayContaining([sheet, extra]));
+  });
+
+  it('native: an explicit native path behaves the same', () => {
+    const { canvas, sheet, extra, uploaded } = withExtraPiece({ renderPath: 'native' });
+    expect(createRenderer).toHaveBeenLastCalledWith(canvas);
+    expect(uploaded).toEqual(expect.arrayContaining([sheet, extra]));
+  });
+
+  it('fallback: rasterizes through its own texture source and only uploads the pieces it can reproduce', () => {
+    const { canvas, sheet, extra, uploaded } = withExtraPiece({ renderPath: 'fallback' });
+    expect(createRenderer).toHaveBeenLastCalledWith(canvas, expect.objectContaining({ failure: 'Fallback texture upload failed.' }));
+    expect(uploaded).toContain(sheet);
+    expect(uploaded).not.toContain(extra);
+  });
+
+  it('fallback: never asks the browser to move pieces for hit testing', () => {
+    const scene = setup(100, { renderPath: 'fallback' });
+    scene.canvas.updateElementGeometry = vi.fn();
+    scene.engine.setModel(model);
+    scene.paint();
+    vi.advanceTimersByTime(500);
+    expect(scene.canvas.updateElementGeometry).not.toHaveBeenCalled();
+  });
+
+  it('fallback: keeps its pieces outside the canvas without collecting them again every frame', () => {
+    const scene = setup(100, { renderPath: 'fallback' });
+    scene.engine.setModel(model);
+    const callsBefore = vi.mocked(scene.renderer.layer).mock.calls.length;
+    for (let i = 0; i < 5; i += 1) {
+      scene.paint();
+      vi.advanceTimersByTime(20);
+    }
+    expect(vi.mocked(scene.renderer.layer).mock.calls.length).toBe(callsBefore);
   });
 });

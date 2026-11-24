@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LogsEvent } from '@datadog/browser-logs';
+import { datadogLogs } from '@datadog/browser-logs';
 import { datadogRum } from '@datadog/browser-rum';
 
 import { supportsHtmlInCanvas } from './htmlInCanvas';
@@ -17,7 +18,7 @@ vi.mock('@datadog/browser-rum', () => ({
   },
 }));
 vi.mock('@datadog/browser-logs', () => ({
-  datadogLogs: { init: vi.fn() },
+  datadogLogs: { init: vi.fn(), setGlobalContextProperty: vi.fn() },
 }));
 vi.mock('@datadog/browser-rum-react', () => ({ reactPlugin: vi.fn() }));
 vi.mock('./htmlInCanvas', () => ({ supportsHtmlInCanvas: vi.fn() }));
@@ -72,10 +73,41 @@ describe('startObservability', () => {
     startObservability();
 
     expect(datadogRum.init).toHaveBeenCalledOnce();
-    expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledExactlyOnceWith('html_in_canvas_supported', supported);
+    expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledWith('html_in_canvas_supported', supported);
     expect(vi.mocked(datadogRum.init).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(datadogRum.setGlobalContextProperty).mock.invocationCallOrder[0],
     );
+  });
+
+  it.each([
+    { supported: true, enabled: true, path: 'native' },
+    { supported: true, enabled: false, path: 'native' },
+    { supported: false, enabled: true, path: 'fallback' },
+    { supported: false, enabled: false, path: 'unsupported' },
+  ])('tags RUM and Logs with render_path $path (supported $supported, fallback enabled $enabled)', async ({ supported, enabled, path }) => {
+    vi.stubEnv('DEV', enabled);
+    vi.stubEnv('VITE_ENABLE_FALLBACK', 'false');
+    vi.mocked(supportsHtmlInCanvas).mockReturnValue(supported);
+    const { startObservability } = await import('./observability');
+
+    startObservability();
+
+    expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledWith('render_path', path);
+    expect(datadogLogs.setGlobalContextProperty).toHaveBeenCalledWith('render_path', path);
+    vi.unstubAllEnvs();
+  });
+
+  it('sets render_path after RUM initialization and before view engagement starts', async () => {
+    vi.mocked(supportsHtmlInCanvas).mockReturnValue(false);
+    const { startObservability } = await import('./observability');
+
+    startObservability();
+
+    const index = vi.mocked(datadogRum.setGlobalContextProperty).mock.calls.findIndex(([name]) => name === 'render_path');
+    expect(index).toBeGreaterThanOrEqual(0);
+    const setOrder = vi.mocked(datadogRum.setGlobalContextProperty).mock.invocationCallOrder[index];
+    expect(vi.mocked(datadogRum.init).mock.invocationCallOrder[0]).toBeLessThan(setOrder);
+    expect(vi.mocked(startViewEngagement).mock.invocationCallOrder[0]).toBeGreaterThan(setOrder);
   });
 
   it('starts view engagement once, after RUM initialization', async () => {
