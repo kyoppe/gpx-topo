@@ -4,10 +4,10 @@
 // they are ordinary, visible HTML beside the canvas: a side panel that folds away, a bar along the bottom, and dialogs.
 // The app renders the very same React elements (so every handler is shared) into the hosts made here.
 
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 import type { Copy } from './i18n';
-import { panelWidthFor } from './fallbackLayout';
+import { sheetOpenHeight } from './fallbackLayout';
 import { springEasing } from './spring';
 
 export type FallbackUi = {
@@ -15,19 +15,21 @@ export type FallbackUi = {
   root: HTMLDivElement;
   /** the map style switch, floated over the map */
   mapControls: HTMLDivElement;
-  /** under the drawer: a tap beside it folds it away */
-  backdrop: HTMLDivElement;
-  /** the side panel: the body of cards, and the drawer's tabs above them */
+  /** the grip along the top of the sheet: drag or tap it to pull the cards up */
+  grip: HTMLDivElement;
+  /** the cards: the body of the sheet below the bar of keys, and beside the map when docked */
   panel: HTMLDivElement;
-  /** the cards, and the drawer's tabs above them */
+  /** the cards, and the tabs above them */
   panelBody: HTMLDivElement;
   /** the bar of keys (and the map pin's name field above it) */
   hud: HTMLDivElement;
-  /** the key at the bar's right end that pulls the drawer out */
-  panelKey: HTMLDivElement;
   /** dialogs: the pickers and the help flag */
   modal: HTMLDivElement;
-  /** keeps the panel's size and the bar's height in sync with the window; returns the function that stops it */
+  /** how tall the cards are when the sheet is up */
+  openHeight(): number;
+  /** Sets how far the cards are pulled up, in px (the 3D view makes room by the same amount); `dragging` follows a finger. */
+  setSheet(height: number, dragging?: boolean): void;
+  /** keeps the sheet's open height in sync with the window; returns the function that stops it */
   connect(): () => void;
 };
 
@@ -41,60 +43,110 @@ function div(className: string): HTMLDivElement {
 export function createFallbackUi(): FallbackUi {
   const root = div('fb-ui');
   const mapControls = div('fb-map-controls');
-  const backdrop = div('fb-backdrop-host');
+  const sheet = div('fb-sheet');
+  const grip = div('fb-sheet-grip-host');
+  const hud = div('fb-hud');
   const panel = div('fb-panel');
   const panelBody = div('fb-panel-body');
-  const hud = div('fb-hud');
-  const panelKey = div('fb-panel-key-host');
   const modal = div('fb-modal');
   panel.append(panelBody);
-  root.append(backdrop, mapControls, panel, hud, panelKey, modal);
+  sheet.append(grip, hud, panel);
+  root.append(mapControls, sheet, modal);
 
-  // the panel and the bar move as the engine's pop does: a spring with a little overshoot
+  // the sheet and the panel move as the engine's pop does: a spring with a little overshoot
   const spring = springEasing();
   root.style.setProperty('--fb-ease', spring.easing);
   root.style.setProperty('--fb-duration', `${spring.duration}ms`);
 
-  const sync = () => {
-    const width = window.innerWidth;
-    root.style.setProperty('--fb-panel-width', `${panelWidthFor(width)}px`);
-    root.style.setProperty('--fb-hud-height', `${hud.offsetHeight}px`);
+  // the page's own element carries the sheet's height, so the 3D view (outside the shell) can make room for it
+  const page = document.documentElement;
+  const openHeight = () => sheetOpenHeight(window.innerHeight);
+  const setSheet = (height: number, dragging = false) => {
+    page.style.setProperty('--fb-sheet-open', `${openHeight()}px`);
+    page.style.setProperty('--fb-sheet-h', `${Math.round(height)}px`);
+    if (dragging) page.dataset.fbDrag = '';
+    else delete page.dataset.fbDrag;
   };
-  sync();
+  page.style.setProperty('--fb-sheet-ease', spring.easing);
+  page.style.setProperty('--fb-sheet-duration', `${spring.duration}ms`);
+  setSheet(0);
 
   return {
     root,
-    backdrop,
     mapControls,
+    grip,
     panel,
     panelBody,
     hud,
-    panelKey,
     modal,
+    openHeight,
+    setSheet,
     connect() {
-      sync();
+      page.style.setProperty('--fb-sheet-open', `${openHeight()}px`);
+      const sync = () => page.style.setProperty('--fb-sheet-open', `${openHeight()}px`);
       window.addEventListener('resize', sync);
-      const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
-      observer?.observe(hud);
       return () => {
         window.removeEventListener('resize', sync);
-        observer?.disconnect();
+        for (const name of ['--fb-sheet-open', '--fb-sheet-h', '--fb-sheet-ease', '--fb-sheet-duration']) page.style.removeProperty(name);
+        delete page.dataset.fbDrag;
       };
     },
   };
 }
 
-/** The drawer's key, at the right end of the bar: it pulls the panel out, and pushes it back. */
-export function PanelKey({ open, copy, onToggle }: { open: boolean; copy: Copy; onToggle: () => void }) {
+/**
+ * The sheet's grip: a tap (or the keyboard) folds the cards away or pulls them up; a drag follows the finger and, let go,
+ * settles up or down (a flick decides at once, otherwise the nearer end does).
+ */
+export function SheetGrip({ open, copy, max, onDrag, onSettle }: { open: boolean; copy: Copy; max: number; onDrag: (height: number) => void; onSettle: (open: boolean) => void }) {
   const label = open ? copy.ui.hidePanel : copy.ui.showPanel;
+  const drag = useRef<{ y: number; from: number; moved: boolean; lastY: number; lastT: number; speed: number } | null>(null);
+  const heightAt = (y: number) => Math.min(max, Math.max(0, drag.current ? drag.current.from - (y - drag.current.y) : 0));
+
+  const down = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    drag.current = { y: event.clientY, from: open ? max : 0, moved: false, lastY: event.clientY, lastT: event.timeStamp, speed: 0 };
+  };
+  const move = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    if (!d.moved && Math.abs(event.clientY - d.y) < 6) return;
+    d.moved = true;
+    const dt = event.timeStamp - d.lastT;
+    if (dt > 0) d.speed = (event.clientY - d.lastY) / dt;
+    d.lastY = event.clientY;
+    d.lastT = event.timeStamp;
+    onDrag(heightAt(event.clientY));
+  };
+  const up = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current;
+    drag.current = null;
+    if (!d) return;
+    if (!d.moved) return onSettle(!open); // a tap
+    const height = Math.min(max, Math.max(0, d.from - (event.clientY - d.y)));
+    onSettle(Math.abs(d.speed) > 0.5 ? d.speed < 0 : height > max * 0.4);
+  };
+  const cancel = () => {
+    const d = drag.current;
+    drag.current = null;
+    if (d?.moved) onSettle(open);
+  };
+
   return (
-    <button type="button" className="fb-panel-key" aria-label={label} aria-expanded={open} title={label} onClick={onToggle}>
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <rect x="3" y="4.5" width="18" height="15" rx="2.4" />
-        <path d="M14.5 4.5v15" />
-        <path d="M17 9h2M17 12h2M17 15h2" />
-      </svg>
-    </button>
+    <button
+      type="button"
+      className="fb-grip"
+      aria-label={label}
+      aria-expanded={open}
+      title={label}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={cancel}
+      onClick={(event) => {
+        if (event.detail === 0) onSettle(!open); // the keyboard; a pointer's tap was handled on release
+      }}
+    />
   );
 }
 
@@ -115,6 +167,13 @@ export function PanelTabs({ tabs, active, labels, onSelect }: { tabs: readonly P
 
 const KEY_ICONS = {
   open: <path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.2h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.5Z" />,
+  route: (
+    <>
+      <circle cx="5.5" cy="18.5" r="2" />
+      <path d="M7.5 18.5h6a3.5 3.5 0 0 0 0-7h-3a3.5 3.5 0 0 1 0-7h6" />
+      <circle cx="18.5" cy="4.5" r="2" />
+    </>
+  ),
   place: (
     <>
       <path d="M11 20s-6-5.2-6-10a6 6 0 0 1 12 0" />

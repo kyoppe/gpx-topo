@@ -24,9 +24,8 @@ export const FALLBACK_PAD = 12;
 /** The smallest sheet: below this a phone is held in a way the map would be unreadable anyway. */
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 320;
-/** The width of the side panel (it never takes more than this share of a narrow window). */
+/** The width of the docked side panel. */
 export const FALLBACK_PANEL_WIDTH = 400;
-const PANEL_SHARE = 0.92;
 /** The margin either side of the panel. */
 export const FALLBACK_EDGE = 12;
 /** What a docked panel takes from the window: its width and its margins. Keep in step with `--fb-dock-width`. */
@@ -59,7 +58,10 @@ export function isDocked(width: number, height: number): boolean {
   return orientationOf(width, height) === 'landscape' && width >= DOCK_MIN_WIDTH && height >= DOCK_MIN_HEIGHT;
 }
 
-/** How wide the panel is in a window of this width. */
-export function panelWidthFor(width: number): number {
-  return Math.min(FALLBACK_PANEL_WIDTH, Math.round(width * PANEL_SHARE));
+/** How tall the cards of the sheet are when it is pulled up: most of the window's height, but never more than this. */
+const SHEET_MAX_HEIGHT = 520;
+const SHEET_SHARE = 0.6;
+
+export function sheetOpenHeight(windowHeight: number): number {
+  return Math.min(SHEET_MAX_HEIGHT, Math.round(windowHeight * SHEET_SHARE));
 }

@@ -2457,8 +2457,6 @@ main[lang='en'] .bar-hint {
 .fb-ui {
   --fb-ease: cubic-bezier(0.2, 0.9, 0.25, 1);
   --fb-duration: 480ms;
-  --fb-panel-width: 400px;
-  --fb-hud-height: 72px;
   --fb-edge: 12px;
   position: fixed;
   top: 0;
@@ -2469,7 +2467,17 @@ main[lang='en'] .bar-hint {
   z-index: 4;
   font-size: 13px;
   line-height: 1.4;
+  /* what waits beyond the edge (the closed drawer) is cut off, so it never counts toward the page's width */
+  overflow: clip;
   pointer-events: none;
+}
+
+/* iOS Safari zooms the whole page in when a field under 16px takes focus; keep fields at 16px on touch screens */
+@media (pointer: coarse) {
+  .fb-ui input:not([type='range'], [type='checkbox'], [type='radio'], [type='button'], [type='submit']),
+  .fb-ui textarea {
+    font-size: 16px;
+  }
 }
 
 .fb-ui ::selection {
@@ -2503,38 +2511,93 @@ main[lang='en'] .bar-hint {
   right: calc(var(--fb-dock-width) + 12px);
 }
 
-/* the side panel: the cards of the sheet. On a wide window it is docked beside the map (the canvas is narrowed to
-   leave it room); otherwise it is a drawer behind the right edge, with a tab on its edge that pulls it out. */
-.fb-panel {
+/* The cards. On a wide window they are docked beside the map (the canvas is narrowed to leave them room); otherwise
+   they are the lower part of a sheet: a grip and the bar of keys always show, and the cards come up from under them. */
+.fb-sheet {
   position: absolute;
-  top: 0;
   right: 0;
-  bottom: var(--fb-hud-height);
-  width: calc(var(--fb-panel-width) + var(--fb-edge) * 2);
-  max-width: calc(100% - 24px); /* leaves a strip of the map beside the drawer to tap it away */
-  pointer-events: none;
-  transform: translateX(100%);
-  transition: transform 260ms cubic-bezier(0.4, 0, 1, 1);
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: max(var(--fb-edge), env(safe-area-inset-bottom));
+  border-radius: 20px 20px 0 0;
+  background: #f1f3f6;
+  box-shadow:
+    0 -8px 30px rgba(24, 32, 43, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  pointer-events: auto;
 }
 
-.fb-ui[data-panel='open'] .fb-panel {
-  transform: none;
-  transition: transform var(--fb-duration) var(--fb-ease);
+/* the grip: the whole width of the sheet's top edge, so a thumb finds it */
+.fb-grip {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
 }
 
+/* the touch area reaches above the sheet's edge, so the bar can stay slim and still be easy to catch */
+.fb-grip::after {
+  content: '';
+  position: absolute;
+  inset: -20px 0 0;
+}
+
+.fb-grip::before {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 5px;
+  margin: 0 auto;
+  border-radius: 3px;
+  background: rgba(24, 32, 43, 0.28);
+}
+
+.fb-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+
+.fb-panel {
+  position: relative;
+  height: var(--fb-sheet-h, 0px);
+  overflow: hidden;
+  transition: height var(--fb-duration) var(--fb-ease);
+}
+
+/* a finger is moving the sheet: no easing behind it */
+html[data-fb-drag] .fb-panel,
+html[data-fb-drag] .fallback-ui .stage-canvas {
+  transition: none;
+}
+
+/* the cards keep their full size while the sheet grows, so they do not reflow under the finger */
 .fb-panel-body {
   display: flex;
-  height: 100%;
+  height: var(--fb-sheet-open, 400px);
   flex-direction: column;
   gap: 10px;
-  padding: calc(max(var(--fb-edge), env(safe-area-inset-top)) + 44px) max(var(--fb-edge), env(safe-area-inset-right)) var(--fb-edge) var(--fb-edge);
+  padding: 6px max(var(--fb-edge), env(safe-area-inset-right)) 0 max(var(--fb-edge), env(safe-area-inset-left));
   visibility: hidden;
-  transition: visibility 0s linear 260ms;
+  transition: visibility 0s linear var(--fb-duration);
 }
 
-.fb-ui[data-panel='open'] .fb-panel-body {
+.fb-ui[data-panel='open'] .fb-panel-body,
+html[data-fb-drag] .fb-panel-body {
   visibility: visible;
   transition: none;
+}
+
+/* the 3D view moves up a little as the sheet comes up, so what it shows stays above the sheet */
+.fallback-ui:not(.fb-docked) .stage-canvas {
+  transform: translateY(calc(var(--fb-sheet-h, 0px) * -0.35));
+  transition: transform var(--fb-sheet-duration, 480ms) var(--fb-sheet-ease, ease-out);
 }
 
 .fb-panel .side {
@@ -2586,67 +2649,7 @@ main[lang='en'] .bar-hint {
   height: auto;
 }
 
-/* the drawer's key: its own button at the right end of the bar, below where the drawer comes from, so it is never covered */
-.fb-panel-key {
-  position: absolute;
-  right: max(var(--fb-edge), env(safe-area-inset-right));
-  bottom: max(var(--fb-edge), env(safe-area-inset-bottom));
-  display: grid;
-  width: 56px;
-  height: 56px;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 16px;
-  background: linear-gradient(#f6f7f8, #eceef1);
-  box-shadow:
-    0 6px 22px rgba(24, 32, 43, 0.2),
-    inset 0 0 0 1px rgba(24, 32, 43, 0.09);
-  color: var(--ink);
-  cursor: pointer;
-  pointer-events: auto;
-  touch-action: manipulation;
-}
-
-.fb-panel-key[aria-expanded='true'] {
-  background: linear-gradient(#273140, #18202b);
-  color: #fff;
-}
-
-.fb-panel-key:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.fb-panel-key svg {
-  display: block;
-  width: 24px;
-  height: 24px;
-  fill: none;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.7;
-}
-
-/* the bar gives the key its room, and centres itself in what is left */
-.fb-ui:not([data-dock='true']) .fb-hud {
-  padding-right: calc(max(var(--fb-edge), env(safe-area-inset-right)) + 56px + 8px);
-}
-
-/* the drawer's backdrop: taps on the map beside it fold the drawer away */
-.fb-backdrop {
-  position: absolute;
-  inset: 0;
-  display: block;
-  border: 0;
-  background: rgba(24, 32, 43, 0.22);
-  appearance: none;
-  animation: fb-fade 200ms ease-out both;
-  pointer-events: auto;
-}
-
-/* the drawer shows one card group at a time, so it fits a phone's height */
+/* the sheet shows one card group at a time, so it fits a phone's height */
 .fb-tabs {
   display: flex;
   flex: none;
@@ -2693,40 +2696,50 @@ main[lang='en'] .bar-hint {
   flex: 0 1 auto;
 }
 
-/* docked: always there, the whole height beside the map; no tab, no tabs, every card */
-.fb-ui[data-dock='true'] .fb-panel {
-  bottom: 0;
-  width: var(--fb-dock-width);
-  transform: none;
+/* docked: always there, the whole height beside the map; no grip, no tabs, every card */
+.fb-ui[data-dock='true'] .fb-sheet {
+  display: contents;
 }
 
-.fb-ui[data-dock='true'] .fb-panel-body {
-  visibility: visible;
-  padding-bottom: var(--fb-edge);
-}
-
-.fb-ui[data-dock='true'] .fb-panel-key,
-.fb-ui[data-dock='true'] .fb-tabs,
-.fb-ui[data-dock='true'] .fb-backdrop {
+.fb-ui[data-dock='true'] .fb-sheet-grip-host,
+.fb-ui[data-dock='true'] .fb-tabs {
   display: none;
 }
 
-/* the bar along the bottom: the keys of the sheet's bar, in one row */
-.fb-hud {
+.fb-ui[data-dock='true'] .fb-panel {
   position: absolute;
+  top: 0;
   right: 0;
   bottom: 0;
-  left: 0;
+  width: var(--fb-dock-width);
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+  transition: none;
+}
+
+.fb-ui[data-dock='true'] .fb-panel-body {
+  height: 100%;
+  padding: calc(max(var(--fb-edge), env(safe-area-inset-top)) + 44px) max(var(--fb-edge), env(safe-area-inset-right)) var(--fb-edge) var(--fb-edge);
+  visibility: visible;
+}
+
+/* the keys: one row at the top of the sheet; docked, a bar along the bottom of the map */
+.fb-hud {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 0 max(var(--fb-edge), env(safe-area-inset-right)) max(var(--fb-edge), env(safe-area-inset-bottom)) max(var(--fb-edge), env(safe-area-inset-left));
+  padding: 0 max(var(--fb-edge), env(safe-area-inset-right)) 0 max(var(--fb-edge), env(safe-area-inset-left));
   pointer-events: none;
 }
 
 .fb-ui[data-dock='true'] .fb-hud {
+  position: absolute;
   right: var(--fb-dock-width);
+  bottom: 0;
+  left: 0;
+  padding-bottom: max(var(--fb-edge), env(safe-area-inset-bottom));
 }
 
 .fb-hud .hud {
@@ -2744,6 +2757,13 @@ main[lang='en'] .bar-hint {
     0 6px 22px rgba(24, 32, 43, 0.2),
     inset 0 0 0 1px rgba(24, 32, 43, 0.09);
   pointer-events: auto;
+}
+
+/* in the sheet the keys sit straight on it, with no bar of their own */
+.fb-ui[data-dock='false'] .fb-hud .hud {
+  padding: 0;
+  background: none;
+  box-shadow: none;
 }
 
 .fb-hud .bar {
@@ -2774,6 +2794,15 @@ main[lang='en'] .bar-hint {
 .fb-hud .key-open,
 .fb-hud .key-place {
   width: auto;
+}
+
+/* the map / route switch changes the whole screen, so it gets a dark rim the other keys lack */
+.fb-hud .key-mode {
+  --edge: inset 0 0 0 1.5px var(--ink);
+}
+
+.fb-hud .key-mode:focus-visible {
+  --edge: inset 0 0 0 2px var(--accent);
 }
 
 .fb-hud .key-flip {
@@ -2814,25 +2843,6 @@ main[lang='en'] .bar-hint {
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-}
-
-/* a phone's width, with the drawer's key beside the bar: the keys sit closer so that even the longest bar (the flyover's) fits */
-@media (max-width: 430px) {
-  .fb-hud .hud {
-    gap: 3px;
-    padding: 9px 5px; /* 38px keys: the bar stays as tall as the drawer's key */
-  }
-
-  .fb-hud .key {
-    min-width: 36px;
-    height: 38px;
-    padding: 0 8px;
-  }
-
-  .fb-hud .key-flip {
-    min-width: 64px;
-    padding: 0 6px;
   }
 }
 

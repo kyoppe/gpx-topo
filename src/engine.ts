@@ -836,16 +836,23 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     let tx = lerp(PW / 2, PW / 2 - 10, p);
     let ty = lerp(PH / 2 + RAISE / fit, PH / 2 - 10, p);
     let tz = lerp(0, top * 0.4, p);
-    const dir: Vec3 = [Math.sin(tilt) * Math.sin(yaw), Math.sin(tilt) * Math.cos(yaw), Math.cos(tilt)];
-    const r: Vec3 = [Math.cos(yaw), -Math.sin(yaw), 0];
-    const u: Vec3 = [-Math.cos(tilt) * Math.sin(yaw), -Math.cos(tilt) * Math.cos(yaw), Math.sin(tilt)];
+    const axesOf = (a: number) => ({
+      dir: [Math.sin(tilt) * Math.sin(a), Math.sin(tilt) * Math.cos(a), Math.cos(tilt)] as Vec3,
+      r: [Math.cos(a), -Math.sin(a), 0] as Vec3,
+      u: [-Math.cos(tilt) * Math.sin(a), -Math.cos(tilt) * Math.cos(a), Math.sin(tilt)] as Vec3,
+    });
+    const { dir, r, u } = axesOf(yaw);
+    // The distance and the point looked at are fitted for the view as it stands without the user's turn, so turning
+    // the model swings it round that point at the same distance (its corners may leave the frame) instead of
+    // pulling back to keep every corner in.
+    const fitAxes = axesOf(HERO.yaw * p);
     const m = new Float32Array(16);
     let eye: Vec3 = [0, 0, 1];
-    const build = (D: number, x: number, y: number, z: number) => {
-      eye = [x + dir[0] * D, y + dir[1] * D, z + dir[2] * D];
+    const build = (D: number, x: number, y: number, z: number, axes: { dir: Vec3; r: Vec3; u: Vec3 } = { dir, r, u }) => {
+      eye = [x + axes.dir[0] * D, y + axes.dir[1] * D, z + axes.dir[2] * D];
       // far enough for the whole model even from low down and close in, and for the table to have faded into the
       // background by the time it is cut off
-      viewProjection(m, eye, r, u, dir, D * 0.05, Math.max(D * 14, D + Math.hypot(PW, PH) * 1.5, 12000), FOV);
+      viewProjection(m, eye, axes.r, axes.u, axes.dir, D * 0.05, Math.max(D * 14, D + Math.hypot(PW, PH) * 1.5, 12000), FOV);
     };
     let D = D0;
     if (p > 0.001) {
@@ -870,7 +877,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const ty0 = ty;
       const tz0 = tz;
       for (let it = 0; it < 4; it += 1) {
-        build(D, tx, ty, tz);
+        build(D, tx, ty, tz, fitAxes);
         let mx = 0;
         let y0 = 9;
         let y1 = -9;
@@ -884,9 +891,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         }
         mx = Math.max(mx, (y1 - y0) / (hi - lo));
         const off = ((y1 + y0) / 2 - (hi + lo) / 2) * D * Math.tan(FOV / 2) * 0.9;
-        tx += u[0] * off;
-        ty += u[1] * off;
-        tz += u[2] * off;
+        tx += fitAxes.u[0] * off;
+        ty += fitAxes.u[1] * off;
+        tz += fitAxes.u[2] * off;
         D *= lerp(1, mx, 0.9);
       }
       tx = lerp(tx0, tx, p);

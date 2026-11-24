@@ -19,7 +19,7 @@ import { createCenteredProjection, createMapProjection, pathD, projectTrack, typ
 import { searchGsiAddress } from './gsiSearch';
 import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
-import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, PanelKey, PanelTabs, type PanelTabId } from './fallbackUi';
+import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
 import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
@@ -310,7 +310,7 @@ export default function App() {
       fb.root.remove();
     };
   }, [fb]);
-  // the drawer (a window too small for a docked panel): folded away at first, and showing the route's cards
+  // the sheet (a window too small for a docked panel): folded down at first, and showing the route's cards when pulled up
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTabId>('route');
   const [language] = useState(detectLanguage);
@@ -1498,7 +1498,7 @@ export default function App() {
       cancelAnimationFrame(frame);
     };
   }, [fb]);
-  // Fallback drawer: the groups of cards on offer (the map's search card is only there while the map lies flat).
+  // Fallback sheet: the groups of cards on offer (the map's search card is only there while the map lies flat).
   const panelTabs: PanelTabId[] = viewMode === 'gpx' ? ['route', 'sun', 'ways'] : apart ? ['sun'] : ['search', 'sun'];
   const activePanelTab = panelTabs.includes(panelTab) ? panelTab : panelTabs[0];
   // Fallback: the shell's state, as attributes its CSS reads.
@@ -1509,6 +1509,11 @@ export default function App() {
     fb.root.dataset.dock = docked ? 'true' : 'false';
     fb.root.dataset.tab = activePanelTab;
   }, [activePanelTab, apart, docked, fb, panelOpen]);
+  // Fallback sheet: pulled up while open, and out of the way when the panel is docked.
+  useLayoutEffect(() => {
+    if (!fb) return;
+    fb.setSheet(panelOpen && !docked ? fb.openHeight() : 0);
+  }, [docked, fb, panelOpen, viewport]);
 
   useEffect(() => {
     engineRef.current?.refreshHud();
@@ -3099,6 +3104,8 @@ export default function App() {
                   <path className="map-icon-pin" d="M15.8 4.5c0-2 1.4-3.5 3.2-3.5s3.2 1.5 3.2 3.5c0 2.5-3.2 6.7-3.2 6.7s-3.2-4.2-3.2-6.7Z" />
                   <circle className="map-icon-pin-hole" cx="19" cy="4.5" r="1.1" />
                 </svg>
+              ) : fb ? (
+                <KeyFace icon="route" label={copy.ui.gpxMode} />
               ) : (
                 copy.ui.gpxMode
               )}
@@ -3347,16 +3354,18 @@ export default function App() {
       {!native && <div ref={fallbackMountRef} className="fallback-host" aria-hidden="true" />}
       {fb && <div ref={fbMountRef} className="fb-mount" />}
       {fb && !docked && (
-        <>
-          <StageHost host={fb.panelKey}>
-            <PanelKey open={panelOpen} copy={copy} onToggle={() => setPanelOpen((open) => !open)} />
-          </StageHost>
-          {panelOpen && (
-            <StageHost host={fb.backdrop}>
-              <button type="button" className="fb-backdrop" aria-label={copy.ui.hidePanel} tabIndex={-1} onClick={() => setPanelOpen(false)} />
-            </StageHost>
-          )}
-        </>
+        <StageHost host={fb.grip}>
+          <SheetGrip
+            open={panelOpen}
+            copy={copy}
+            max={fb.openHeight()}
+            onDrag={(height) => fb.setSheet(height, true)}
+            onSettle={(open) => {
+              setPanelOpen(open);
+              fb.setSheet(open ? fb.openHeight() : 0);
+            }}
+          />
+        </StageHost>
       )}
       {fb && infoOpen && (
         <StageHost host={fb.modal}>

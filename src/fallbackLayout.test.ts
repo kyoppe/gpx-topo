@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FRAME_X, FRAME_Y } from './engine';
-import { DOCK_WIDTH, FALLBACK_EDGE, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, isDocked, orientationOf, panelWidthFor } from './fallbackLayout';
+import { DOCK_WIDTH, FALLBACK_EDGE, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, isDocked, orientationOf, sheetOpenHeight } from './fallbackLayout';
 
 describe('fallback layout', () => {
   it('fills a tall phone with a tall map, inset by the pad', () => {
@@ -55,9 +55,9 @@ describe('fallback layout', () => {
     expect(whole.pageWidth - docked.pageWidth).toBe(DOCK_WIDTH);
   });
 
-  it('keeps the panel to its width, or a share of a narrow window', () => {
-    expect(panelWidthFor(1366)).toBe(FALLBACK_PANEL_WIDTH);
-    expect(panelWidthFor(390)).toBeLessThan(390);
-    expect(panelWidthFor(390)).toBeGreaterThan(300);
+  it('pulls the cards up to most of a window, but not past a sensible height', () => {
+    expect(sheetOpenHeight(667)).toBe(400);
+    expect(sheetOpenHeight(874)).toBe(520);
+    expect(sheetOpenHeight(1366)).toBe(520);
   });
 });

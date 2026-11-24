@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFallbackUi, FallbackTimePicker, KeyFace, PanelKey, PanelTabs } from './fallbackUi';
+import { createFallbackUi, FallbackTimePicker, KeyFace, PanelTabs, SheetGrip } from './fallbackUi';
 import { getCopy } from './i18n';
 
 const copy = getCopy('en');
@@ -31,8 +31,11 @@ const click = (el: Element) => act(() => void el.dispatchEvent(new MouseEvent('c
 describe('createFallbackUi', () => {
   it('makes the hosts the controls are rendered into, inside one root', () => {
     const ui = createFallbackUi();
-    for (const host of [ui.backdrop, ui.mapControls, ui.panel, ui.hud, ui.panelKey, ui.modal]) expect(ui.root.contains(host)).toBe(true);
+    for (const host of [ui.mapControls, ui.grip, ui.panel, ui.hud, ui.modal]) expect(ui.root.contains(host)).toBe(true);
     expect(ui.panel.contains(ui.panelBody)).toBe(true);
+    // the grip, the keys and the cards are one sheet, in that order
+    const sheet = ui.grip.parentElement!;
+    expect(Array.from(sheet.children)).toEqual([ui.grip, ui.hud, ui.panel]);
     expect(ui.root.className).toBe('fb-ui');
   });
 
@@ -42,36 +45,103 @@ describe('createFallbackUi', () => {
     expect(ui.root.style.getPropertyValue('--fb-duration')).toMatch(/^\d+ms$/);
   });
 
-  it('follows the window: the panel width and the bar height, until stopped', () => {
-    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  it('carries the sheet\'s height on the page, so the 3D view can make room, and tidies up when stopped', () => {
     const ui = createFallbackUi();
-    const set = (width: number, height: number) => {
-      Object.assign(window, { innerWidth: width, innerHeight: height });
+    const page = document.documentElement;
+    const stop = ui.connect();
+    ui.setSheet(300.4);
+    expect(page.style.getPropertyValue('--fb-sheet-h')).toBe('300px');
+    expect(page.dataset.fbDrag).toBeUndefined();
+    ui.setSheet(120, true);
+    expect(page.dataset.fbDrag).toBe('');
+    ui.setSheet(0);
+    expect(page.dataset.fbDrag).toBeUndefined();
+    stop();
+    expect(page.style.getPropertyValue('--fb-sheet-h')).toBe('');
+    expect(page.style.getPropertyValue('--fb-sheet-open')).toBe('');
+  });
+
+  it('follows the window: the cards\' height when pulled up', () => {
+    const ui = createFallbackUi();
+    const set = (height: number) => {
+      Object.assign(window, { innerWidth: 390, innerHeight: height });
       window.dispatchEvent(new Event('resize'));
     };
     const stop = ui.connect();
-    set(390, 844);
-    expect(parseInt(ui.root.style.getPropertyValue('--fb-panel-width'), 10)).toBeLessThan(390);
-    set(1366, 768);
-    expect(ui.root.style.getPropertyValue('--fb-panel-width')).toBe('400px');
+    set(667);
+    expect(document.documentElement.style.getPropertyValue('--fb-sheet-open')).toBe('400px');
+    set(1000);
+    expect(document.documentElement.style.getPropertyValue('--fb-sheet-open')).toBe('520px');
     stop();
-    set(390, 844);
-    expect(ui.root.style.getPropertyValue('--fb-panel-width')).toBe('400px');
   });
 });
 
-describe('PanelKey', () => {
-  it('says what it will do, and whether the drawer is open', () => {
-    const onToggle = vi.fn();
-    render(<PanelKey open={false} copy={copy} onToggle={onToggle} />);
+describe('SheetGrip', () => {
+  const pointer = (type: string, clientY: number, at = 0) => {
+    const event = new MouseEvent(type, { bubbles: true, clientY });
+    Object.defineProperties(event, { pointerId: { value: 1 }, timeStamp: { value: 1000 + at } });
+    act(() => void container.querySelector('button')!.dispatchEvent(event));
+  };
+
+  it('says what it will do, and whether the sheet is up', () => {
+    render(<SheetGrip open={false} copy={copy} max={400} onDrag={vi.fn()} onSettle={vi.fn()} />);
     const button = container.querySelector('button')!;
     expect(button.getAttribute('aria-label')).toBe(copy.ui.showPanel);
     expect(button.getAttribute('aria-expanded')).toBe('false');
-    click(button);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-    render(<PanelKey open copy={copy} onToggle={onToggle} />);
+    render(<SheetGrip open copy={copy} max={400} onDrag={vi.fn()} onSettle={vi.fn()} />);
     expect(container.querySelector('button')!.getAttribute('aria-label')).toBe(copy.ui.hidePanel);
     expect(container.querySelector('button')!.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('opens on a tap, and closes on the next', () => {
+    const onSettle = vi.fn();
+    render(<SheetGrip open={false} copy={copy} max={400} onDrag={vi.fn()} onSettle={onSettle} />);
+    pointer('pointerdown', 700);
+    pointer('pointerup', 701);
+    expect(onSettle).toHaveBeenLastCalledWith(true);
+    render(<SheetGrip open copy={copy} max={400} onDrag={vi.fn()} onSettle={onSettle} />);
+    pointer('pointerdown', 700);
+    pointer('pointerup', 700);
+    expect(onSettle).toHaveBeenLastCalledWith(false);
+  });
+
+  it('opens and closes from the keyboard', () => {
+    const onSettle = vi.fn();
+    render(<SheetGrip open={false} copy={copy} max={400} onDrag={vi.fn()} onSettle={onSettle} />);
+    click(container.querySelector('button')!); // a click with no pointer: detail 0
+    expect(onSettle).toHaveBeenCalledWith(true);
+  });
+
+  it('follows a drag up, clamped to the sheet, and settles on the nearer end', () => {
+    const onDrag = vi.fn();
+    const onSettle = vi.fn();
+    render(<SheetGrip open={false} copy={copy} max={400} onDrag={onDrag} onSettle={onSettle} />);
+    pointer('pointerdown', 700, 0);
+    pointer('pointermove', 600, 400);
+    expect(onDrag).toHaveBeenLastCalledWith(100);
+    pointer('pointermove', 100, 900);
+    expect(onDrag).toHaveBeenLastCalledWith(400);
+    pointer('pointerup', 450, 1900); // slow: 250px up of 400, past the 40 % mark
+    expect(onSettle).toHaveBeenLastCalledWith(true);
+
+    pointer('pointerdown', 700, 0);
+    pointer('pointermove', 640, 400);
+    pointer('pointerup', 640, 1200); // slow: 60px up of 400, short of the 40 % mark
+    expect(onSettle).toHaveBeenLastCalledWith(false);
+  });
+
+  it('lets a quick flick decide, whatever the distance', () => {
+    const onSettle = vi.fn();
+    render(<SheetGrip open={false} copy={copy} max={400} onDrag={vi.fn()} onSettle={onSettle} />);
+    pointer('pointerdown', 700, 0);
+    pointer('pointermove', 680, 10);
+    pointer('pointerup', 660, 20); // 2 px/ms upwards
+    expect(onSettle).toHaveBeenLastCalledWith(true);
+    render(<SheetGrip open copy={copy} max={400} onDrag={vi.fn()} onSettle={onSettle} />);
+    pointer('pointerdown', 300, 0);
+    pointer('pointermove', 320, 10);
+    pointer('pointerup', 340, 20); // downwards
+    expect(onSettle).toHaveBeenLastCalledWith(false);
   });
 });
 
