@@ -1,6 +1,57 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildMapPermalink, fitPermalinkArea, parseMapPermalink, scalePermalinkPan } from './mapPermalink';
+import {
+  buildMapPermalink,
+  fitPermalinkArea,
+  MAP_PERMALINK_PARAMETERS,
+  parseMapPermalink,
+  scalePermalinkPan,
+  stripMapPermalinkParameters,
+} from './mapPermalink';
+
+describe('stripMapPermalinkParameters', () => {
+  it('removes every permalink parameter, including the display area, and keeps the rest', () => {
+    const params = new URLSearchParams('lang=en&foo=bar');
+    for (const name of MAP_PERMALINK_PARAMETERS) params.set(name, '1');
+    stripMapPermalinkParameters(params);
+    expect([...params.keys()].sort()).toEqual(['foo', 'lang']);
+  });
+
+  it('covers the display area and sun speed parameters', () => {
+    for (const name of ['area_w', 'area_h', 'area_scale', 'sun_speed']) {
+      expect(MAP_PERMALINK_PARAMETERS).toContain(name);
+    }
+  });
+
+  it('leaves no used parameter behind after stripping a generated permalink', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 35.36, lon: 138.72 },
+        view: '3d',
+        bearing: 20,
+        pitch: 45,
+        zoom: 1.4,
+        pan: { x: 30, y: -40, z: 0 },
+        date: '2026-11-24',
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: { lat: 35.36, lon: 138.72, label: 'Summit' },
+        fpv: { lat: 35.36, lon: 138.72, bearing: 10, pitch: 5, zoom: 1.5 },
+        area: { width: 292, height: 456, scale: 2691.35 },
+        sunlight: true,
+        sunAuto: true,
+        sunSpeed: 'fast',
+        timeMinutes: 630,
+      },
+      'https://example.test/?lang=ja',
+    );
+    const params = new URL(url).searchParams;
+    expect(params.has('area_w')).toBe(true);
+    expect(params.has('sun_speed')).toBe(true);
+    stripMapPermalinkParameters(params);
+    expect([...params.keys()]).toEqual([]);
+  });
+});
 
 describe('parseMapPermalink', () => {
   it('parses a flat map permalink and keeps the date optional', () => {

@@ -55,7 +55,8 @@ const AREA_MAX_SCALE = 2 ** 30;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CLOCK = /^(\d{1,2}):(\d{2})$/;
-const KNOWN_PARAMETERS = new Set([
+/** Every query parameter a map permalink can carry (`lang` and unrelated parameters are not part of it). */
+export const MAP_PERMALINK_PARAMETERS = [
   'mode',
   'lat',
   'lon',
@@ -83,7 +84,14 @@ const KNOWN_PARAMETERS = new Set([
   'sun',
   'sun_speed',
   'time',
-]);
+] as const;
+
+const KNOWN_PARAMETERS = new Set<string>(MAP_PERMALINK_PARAMETERS);
+
+/** Remove all map permalink parameters from `params`, keeping everything else (such as `lang`). */
+export function stripMapPermalinkParameters(params: URLSearchParams) {
+  for (const name of MAP_PERMALINK_PARAMETERS) params.delete(name);
+}
 
 function numberParameter(params: URLSearchParams, name: string, min: number, max: number) {
   const raw = params.get(name);

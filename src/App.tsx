@@ -24,7 +24,7 @@ import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
-import { buildMapPermalink, fitPermalinkArea, parseMapPermalink, scalePermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { buildMapPermalink, fitPermalinkArea, parseMapPermalink, scalePermalinkPan, stripMapPermalinkParameters, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
@@ -433,33 +433,7 @@ export default function App() {
     (reason: string) => {
       const url = new URL(window.location.href);
       if (url.searchParams.get('mode') !== 'map' || permalinkDetachedRef.current || permalinkApplyingRef.current) return;
-      for (const name of [
-        'mode',
-        'lat',
-        'lon',
-        'view',
-        'bearing',
-        'pitch',
-        'zoom',
-        'pan_x',
-        'pan_y',
-        'pan_z',
-        'date',
-        'style',
-        'hillshade',
-        'pin_lat',
-        'pin_lon',
-        'pin_label',
-        'fpv_lat',
-        'fpv_lon',
-        'fpv_bearing',
-        'fpv_pitch',
-        'fpv_zoom',
-        'sun',
-        'time',
-      ]) {
-        url.searchParams.delete(name);
-      }
+      stripMapPermalinkParameters(url.searchParams);
       window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
       permalinkDetachedRef.current = true;
       addAction('map_permalink_detached', { reason });
