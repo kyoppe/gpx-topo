@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { HtmlInCanvasContext, HtmlInCanvasElement } from './htmlInCanvas';
-import { createRenderer } from './renderer';
+import { createRenderer, type ElementTextureSource } from './renderer';
 
 afterEach(() => vi.restoreAllMocks());
 
-function setup() {
+function setup(source?: ElementTextureSource) {
   // Shader setup and unrelated GL operations are inert; exercise the real upload path.
   const gl = new Proxy<Record<string, unknown>>({
     NO_ERROR: 0,
@@ -26,7 +26,7 @@ function setup() {
   }) as unknown as HtmlInCanvasContext;
   const canvas = document.createElement('canvas') as HtmlInCanvasElement;
   vi.spyOn(canvas, 'getContext').mockReturnValue(gl);
-  const renderer = createRenderer(canvas);
+  const renderer = source ? createRenderer(canvas, source) : createRenderer(canvas);
   const layer = renderer.layer();
   const upload = () => renderer.upload(layer, document.createElement('div'), 100, 100);
   return { gl, layer, upload };
@@ -70,5 +70,30 @@ describe('initial HTML element texture upload', () => {
     expect(layer.ready).toBe(false);
     upload();
     expect(layer.ready).toBe(true);
+  });
+});
+
+describe('swappable texture source', () => {
+  it('defaults to texElementSubImage2D with the element size, as before', () => {
+    const { gl, upload } = setup();
+    upload();
+    expect(gl.texElementSubImage2D).toHaveBeenCalledWith(expect.anything(), 0, 0, 0, expect.any(HTMLElement), { width: 100, height: 100 });
+  });
+
+  it('hands the bound, sized texture to a custom source and never touches texElementSubImage2D', () => {
+    const custom: ElementTextureSource = { failure: 'Custom upload failed.', upload: vi.fn() };
+    const { gl, layer, upload } = setup(custom);
+    upload();
+    expect(custom.upload).toHaveBeenCalledWith(gl, expect.any(HTMLElement), 100, 100);
+    expect(gl.texElementSubImage2D).not.toHaveBeenCalled();
+    expect(layer.ready).toBe(true);
+  });
+
+  it('reports a failed first upload with the custom source message', () => {
+    const custom: ElementTextureSource = { failure: 'Custom upload failed.', upload: vi.fn() };
+    const { gl, layer, upload } = setup(custom);
+    vi.mocked(gl.getError).mockReturnValueOnce(0x0502);
+    expect(upload).toThrow('Custom upload failed.');
+    expect(layer.ready).toBe(false);
   });
 });

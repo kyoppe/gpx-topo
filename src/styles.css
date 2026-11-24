@@ -82,6 +82,19 @@ body {
   pointer-events: none;
 }
 
+/* Fallback only: the page is laid out here, out of sight, and read by the rasterizer. It must keep its
+   layout (no display: none) because the engine measures it. */
+.fallback-host {
+  position: fixed;
+  top: 0;
+  left: -300vw;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .sheet,
 .card,
 .in,

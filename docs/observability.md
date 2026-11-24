@@ -52,6 +52,23 @@ depending on LCP selectors. This reports API support; use the existing
 `html_in_canvas_ready` and `html_in_canvas_painted` actions to measure readiness
 and painting success.
 
+The same initialization sets `render_path` on RUM and Browser Logs, in one place
+(`startObservability`), so no individual event can forget it. It says which way
+the page reaches the screen:
+
+- `native`: HTML-in-Canvas. Chosen whenever the feature probe passes, whether or
+  not the fallback is switched on.
+- `fallback`: the 2D-canvas fallback renderer for browsers without
+  HTML-in-Canvas.
+- `unsupported`: no HTML-in-Canvas and the fallback is off; only the notice
+  screen is shown.
+
+Group or filter by `@context.render_path` to keep fallback usage and success
+rates apart from native. `html_in_canvas_supported` stays as the raw probe
+result. The fallback is on in dev builds, and in production only when the build
+sets `VITE_ENABLE_FALLBACK=true`; until then production browsers without
+HTML-in-Canvas report `unsupported`.
+
 User-entered values are not masked. Waypoint names, GPX file names, and GPX
 content may be included in RUM context or Browser Logs when they are relevant
 to the operation being recorded.
@@ -98,6 +115,11 @@ attributes:
 - `html_in_canvas_ready` after the feature probe passes and the engine is constructed
 - `html_in_canvas_painted` once per engine, after a `paint` event produces its
   first successful element texture upload (`texElementSubImage2D`)
+- `fallback_render_ready` after the engine is constructed on the fallback path
+  (the counterpart of `html_in_canvas_ready`)
+- `fallback_render_painted` once per engine, after a `paint` event produces its
+  first successful rasterized texture upload (the counterpart of
+  `html_in_canvas_painted`)
 - `view_mode_toggled`
 - `map_pan_completed` for the existing flat 2D map drag
 - `camera_rotate_completed`, `camera_pan_completed`, and `camera_zoom_completed`
@@ -228,6 +250,8 @@ includes `@context.status`: `ok`, `error`, or `aborted`.
 | `dem_load` | Each `loadDemGrid()` call | `phase`: `coarse` or `fine`; `nx`, `ny` |
 | `html_in_canvas_engine_start` | From just before `createEngine()` to its return or throw | `is_webview`, `user_agent_data_brands` when available |
 | `html_in_canvas_first_paint` | Engine ready to the existing first successful paint callback | `is_webview`, `user_agent_data_brands` when available |
+| `fallback_render_engine_start` | Same as `html_in_canvas_engine_start`, on the fallback path only | `is_webview`, `user_agent_data_brands` when available |
+| `fallback_render_first_paint` | Same as `html_in_canvas_first_paint`, on the fallback path only; compare the two durations by `@vital.name` | `is_webview`, `user_agent_data_brands` when available |
 | `video_recording` | From just before `recorder.start()` to `recorder.onstop`, or a synchronous start failure | `mime_type`, `capture_source: canvas`; `reason`, `file_size` when stopped |
 
 The helper uses Browser SDK v7's string `vitalKey` option for both

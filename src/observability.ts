@@ -3,6 +3,7 @@ import { datadogRum } from '@datadog/browser-rum';
 import { reactPlugin } from '@datadog/browser-rum-react';
 
 import { supportsHtmlInCanvas } from './htmlInCanvas';
+import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { startViewEngagement } from './viewEngagement';
 
 const APPLICATION_ID = 'd5807eba-5947-4933-b5e1-b25c996dfe32';
@@ -38,6 +39,8 @@ export function enrichBrowserLog(event: LogsEvent): boolean {
 export function startObservability(): void {
   if (started) return;
   started = true;
+  const supported = supportsHtmlInCanvas();
+  const renderPath = resolveRenderPath(supported, fallbackEnabled());
   const shared = {
     clientToken: CLIENT_TOKEN,
     site: SITE,
@@ -57,7 +60,9 @@ export function startObservability(): void {
       trackLongTasks: true,
       plugins: [reactPlugin()],
     });
-    datadogRum.setGlobalContextProperty('html_in_canvas_supported', supportsHtmlInCanvas());
+    // Set once, here, so every session, view, action, error, resource and long task carries the path.
+    datadogRum.setGlobalContextProperty('html_in_canvas_supported', supported);
+    datadogRum.setGlobalContextProperty('render_path', renderPath);
     startViewEngagement();
   } catch (error) {
     console.error('gpx_topo_rum_init_failed', error);
@@ -73,6 +78,8 @@ export function startObservability(): void {
       forwardConsoleLogs: 'all',
       beforeSend: enrichBrowserLog,
     });
+    datadogLogs.setGlobalContextProperty('html_in_canvas_supported', supported);
+    datadogLogs.setGlobalContextProperty('render_path', renderPath);
   } catch (error) {
     console.error('gpx_topo_logs_init_failed', error);
   }

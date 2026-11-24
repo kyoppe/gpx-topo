@@ -1,6 +1,7 @@
 import { nearestTurn } from './angle';
 import type { MapStyle } from './basemap';
 import { clothVertices, createCloth, layCloth, stepCloth, type Cloth } from './cloth';
+import { createRasterTextureSource, FALLBACK_PIECE_KINDS } from './fallbackRaster';
 import { createAdaptiveFrameRate } from './frameRate';
 import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
@@ -386,9 +387,20 @@ const NO_SUN_LIGHT: Light = {
   elevation: 45,
 };
 
-export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks) {
-  const R = createRenderer(canvas);
+export type EngineOptions = {
+  /**
+   * `fallback`: the page lives outside the canvas and its pieces are rasterized with the 2D canvas.
+   * Omitted or `native`: the HTML-in-Canvas behavior, unchanged.
+   */
+  renderPath?: 'native' | 'fallback';
+};
+
+export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks, options: EngineOptions = {}) {
+  const fallback = options.renderPath === 'fallback';
+  const R = fallback ? createRenderer(canvas, createRasterTextureSource()) : createRenderer(canvas);
   const stage = page.parentElement as HTMLElement;
+  // where the pieces must live: inside the canvas for HTML-in-Canvas, in the stage for the fallback
+  const inScene = (el: Element) => (fallback ? stage : canvas).contains(el);
 
   let model: EngineModel | null = null;
   let PW = 1200;
@@ -2478,10 +2490,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   // element px -> canvas CSS px, as a DOMMatrix, from the same camera the picture uses
   // Decided once, up front: a frame drawn before a first-paint probe would already have moved the pieces by CSS
   // transform, and a probe read straight after a geometry change gets Chrome's old hit-test answer.
-  const GEOMETRY = typeof canvas.updateElementGeometry === 'function';
+  const GEOMETRY = !fallback && typeof canvas.updateElementGeometry === 'function';
   let geoN = 0;
   function place(p: Piece) {
-    if (!p.el.isConnected || !canvas.contains(p.el)) return;
+    // the fallback has no hit-testing through the DOM: input is read from the canvas itself
+    if (fallback || !p.el.isConnected || !canvas.contains(p.el)) return;
     const cols = [mul([p.ex[0], p.ex[1], p.ex[2], 0]), mul([p.ey[0], p.ey[1], p.ey[2], 0]), null, mul([p.O[0], p.O[1], p.O[2], 1])];
     const m = new Float64Array(16);
     for (const c of [0, 1, 3]) {
@@ -2544,7 +2557,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   const isXHintPiece = (p: Piece) => p.el.closest('[data-x-hint]') !== null;
 
   function collect() {
-    const els = Array.from(stage.querySelectorAll<HTMLElement>('[data-piece]'));
+    const els = Array.from(stage.querySelectorAll<HTMLElement>('[data-piece]')).filter(
+      (el) => !fallback || FALLBACK_PIECE_KINDS.has(el.dataset.piece ?? ''),
+    );
     const keep = new Set<Element>(els);
     for (const [el, p] of byEl) {
       if (!keep.has(el)) {
@@ -3388,7 +3403,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (disposed) return;
     const frameStarted = performance.now();
     if (fixed == null) lastPaintStart = frameStarted;
-    if (pieces.some((p) => !p.el.isConnected || !canvas.contains(p.el))) {
+    if (pieces.some((p) => !p.el.isConnected || !inScene(p.el))) {
       collect();
       syncPinEngineStem();
       measure();
@@ -4397,7 +4412,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     if (info) fitFlag();
     need();
   });
-  resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+  try {
+    resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+  } catch {
+    // Safari rejects the unknown box value with a TypeError; the CSS size times devicePixelRatio does instead
+    resizeObserver.observe(canvas);
+  }
 
   // ---------------------------------------------------------------- input
   function apart(v: number, bouncy = false) {
