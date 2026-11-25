@@ -1555,6 +1555,10 @@ export default function App() {
     const engine = engineRef.current;
     if (!permalink || permalinkAppliedRef.current || !engine || !model || viewMode !== 'map') return;
     permalinkApplyingRef.current = true;
+    const focusPoint =
+      permalink.view === '3d' && permalink.focus && mapProjection
+        ? mapProjection.project(permalink.focus)
+        : null;
     try {
       if (permalink.view === 'fpv' && permalink.fpv && mapProjection) {
         const point = mapProjection.project({ lat: permalink.fpv.lat, lon: permalink.fpv.lon });
@@ -1577,6 +1581,7 @@ export default function App() {
           zoom: permalink.zoom ?? undefined,
           pan: (permalinkFitRef.current ? permalinkFitRef.current.pan : permalink.pan) ?? undefined,
         });
+        if (focusPoint) engine.centerViewOnMapPoint(focusPoint.x, focusPoint.y);
       }
       if (permalink.sun === 'auto' && permalink.view === '3d') {
         const sun = sunInput(fb?.root ?? pageRef.current);
@@ -2227,6 +2232,8 @@ export default function App() {
     const sun = sunInput(fb?.root ?? pageRef.current);
     const timeMinutes = Number(sun?.value);
     // the display area and the pan from the map centre, so a window of another shape can show the same view
+    const focusPoint = !currentFpv && mapProjection ? engine.getViewFocus() : null;
+    const focus = focusPoint ? mapProjection?.inverse(focusPoint.x, focusPoint.y) ?? null : null;
     const saved = mapProjection ? toPermalinkView(permalinkFrame, mapProjection.scale, view.pan) : null;
     const url = buildMapPermalink(
       {
@@ -2236,6 +2243,7 @@ export default function App() {
         pitch: view.pitch,
         zoom: view.zoom,
         pan: saved ? saved.pan : view.pan,
+        focus,
         date: dateExplicit ? date : null,
         mapStyle: baseMapStyle,
         hillshade,
