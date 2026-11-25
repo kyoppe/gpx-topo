@@ -109,5 +109,6 @@ describe('compact bar', () => {
     const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
     expect(css).toContain(`@media (max-width: ${COMPACT_BAR_MAX_WIDTH}px) {\n  .fb-hud .key-open,`);
     expect(css).toContain('    padding: 8px 0;\n  }\n\n  .fb-hud .key-mode,');
+    expect(css).toContain('  .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n  }\n}');
   });
 });

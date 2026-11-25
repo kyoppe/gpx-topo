@@ -2955,6 +2955,12 @@ html[data-fb-drag] .fb-panel-body {
     min-width: var(--fb-compact-key-width);
     padding: 0;
   }
+
+  .fb-hud .key-moves {
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
+    padding: 0;
+  }
 }
 
 .fb-hud .key-moves-placeholder {
