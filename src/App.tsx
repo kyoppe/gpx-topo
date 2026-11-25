@@ -2623,7 +2623,7 @@ export default function App() {
             <div className="map" data-map="" style={mapStyle}>
               <StageHost host={fb?.mapControls ?? null}>
               <div className="map-actions">
-                {viewMode === 'map' && (
+                {viewMode === 'map' && (!native || !apart) && (
                   <button
                     type="button"
                     className="map-location-button"
