@@ -272,6 +272,7 @@ type FpvFlight = {
 /** Where a flat piece stands: its corner, its edge directions, its normal, and its size. */
 type Frame = Pick<Piece, 'O' | 'ex' | 'ey' | 'nrm' | 'w' | 'h'>;
 type Cam = { vp: Float32Array; eye: Vec3; r: Vec3; u: Vec3; dir: Vec3; base: Vec3; yaw: number; D: number; fov: number };
+type RotationPivot = { point: Vec3; sx: number; sy: number };
 
 const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -926,6 +927,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     D /= zoom;
     build(D, tx + pan[0], ty + pan[1], tz + pan[2]);
     return { vp: m, eye, r, u, dir, base: [tx, ty, tz], yaw, D, fov: FOV };
+  }
+
+  /** The screen centre of the map rectangle in the page's resting layout. */
+  function mapDisplayCenter(): [number, number] {
+    const fitCam = camera(0, 0, 0, 1, [0, 0, 0]);
+    const c = mulBy(fitCam.vp, [MAPX + MW / 2, MAPY + MH / 2, 0, 1]);
+    return [
+      (c[0] / c[3] * 0.5 + 0.5) * vw,
+      (-c[1] / c[3] * 0.5 + 0.5) * vh,
+    ];
   }
 
   function fpvFov(zoom: number) {
@@ -4683,7 +4694,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let panFrom: { cam: Cam; P: Vec3; pan: Vec3 } | null = null;
   let fpvDragPointerId: number | null = null;
   let cameraDrag: ({ pointerId: number; startedAt: number } & (
-    | { kind: 'rotate'; change: Omit<CameraRotation, 'duration_ms'> }
+    | { kind: 'rotate'; change: Omit<CameraRotation, 'duration_ms'>; pivot: RotationPivot | null }
     | { kind: 'pan'; change: Omit<CameraPan, 'duration_ms'> }
   )) | null = null;
 
@@ -4707,6 +4718,20 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     viewInteractionNotified = true;
     callbacks.onViewInteraction?.(reason);
   };
+  /** Keep the ground point at the map display centre while a manual 3D turn changes the camera pose. */
+  function holdRotationPivot(pivot: RotationPivot | null) {
+    if (!pivot) return;
+    for (let it = 0; it < 5; it += 1) {
+      const c = targetCam();
+      const { o, d } = ray(c, pivot.sx, pivot.sy);
+      if (Math.abs(d[2]) < 1e-6) break;
+      const t = (pivot.point[2] - o[2]) / d[2];
+      if (!Number.isFinite(t)) break;
+      st.panT[0] += pivot.point[0] - (o[0] + d[0] * t);
+      st.panT[1] += pivot.point[1] - (o[1] + d[1] * t);
+    }
+    clampPan();
+  }
   const onPointerDown = (ev: PointerEvent) => {
     if (fallback && ev.pointerType === 'touch' && ev.target === canvas) {
       // A finger is already carrying the runner along the profile, or turning a drum. Those began on the page beside the
@@ -4808,10 +4833,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (P) panFrom = { cam, P, pan: [...st.pan] };
       else drag = 'turn';
     }
+    const pivot = drag === 'turn'
+      ? (() => {
+          const [sx, sy] = mapDisplayCenter();
+          const point = pick(cam, sx, sy, liftOf(st.e));
+          return point ? { point, sx, sy } : null;
+        })()
+      : null;
     const start = { pointerId: ev.pointerId, startedAt: performance.now() };
     cameraDrag = drag === 'pan'
       ? { ...start, kind: 'pan', change: { delta_x_px: 0, delta_y_px: 0, delta_z_px: 0, distance_px: 0 } }
-      : { ...start, kind: 'rotate', change: { delta_heading_deg: 0, delta_pitch_deg: 0, total_heading_deg: 0, total_pitch_deg: 0 } };
+      : { ...start, kind: 'rotate', pivot, change: { delta_heading_deg: 0, delta_pitch_deg: 0, total_heading_deg: 0, total_pitch_deg: 0 } };
     setHover(null);
     canvas.setPointerCapture(ev.pointerId);
     canvas.classList.add('turning');
@@ -4918,6 +4950,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const hero = HERO.tilt * standOf(st.zoomT);
     st.tiltT = clamp(st.tiltT - dy * 0.0045, 0.12 - hero, TILT_MAX - hero);
     keepAboveGround();
+    if (cameraDrag?.kind === 'rotate') {
+      holdRotationPivot(cameraDrag.pivot);
+      keepAboveGround();
+      holdRotationPivot(cameraDrag.pivot);
+    }
     if (cameraDrag?.kind === 'rotate' && (dx || dy)) {
       // Measure each applied step so full turns and reversals survive yaw normalization.
       const heading = (st.yawT - yawBefore) * 180 / Math.PI;
