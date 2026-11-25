@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
-
-afterEach(() => vi.unstubAllEnvs());
 
 describe('resolveRenderPath', () => {
   it.each([true, false])('never leaves the native path when HTML-in-Canvas is supported (fallback enabled: %s)', (enabled) => {
@@ -16,8 +14,7 @@ describe('resolveRenderPath', () => {
 });
 
 describe('fallbackEnabled', () => {
-  it('is on in production builds', () => {
-    vi.stubEnv('DEV', false);
+  it('is enabled in every build', () => {
     expect(fallbackEnabled()).toBe(true);
   });
 });

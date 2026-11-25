@@ -57,17 +57,16 @@ The same initialization sets `render_path` on RUM and Browser Logs, in one place
 the page reaches the screen:
 
 - `native`: HTML-in-Canvas. Chosen whenever the feature probe passes, whether or
-  not the fallback is switched on.
+  not the fallback is available.
 - `fallback`: the 2D-canvas fallback renderer for browsers without
   HTML-in-Canvas.
-- `unsupported`: no HTML-in-Canvas and the fallback is off; only the notice
-  screen is shown.
+- `unsupported`: no HTML-in-Canvas and no fallback renderer is available; only
+  the notice screen is shown.
 
 Group or filter by `@context.render_path` to keep fallback usage and success
 rates apart from native. `html_in_canvas_supported` stays as the raw probe
-result. The fallback is on in dev builds, and in production only when the build
-sets `VITE_ENABLE_FALLBACK=true`; until then production browsers without
-HTML-in-Canvas report `unsupported`.
+result. The fallback is available in every build, so browsers without
+HTML-in-Canvas use the fallback renderer.
 
 On the `fallback` path the controls are ordinary HTML (a side panel, a bottom bar,
 dialogs) instead of being drawn into the scene. They fire the same actions as the
