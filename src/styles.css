@@ -2957,6 +2957,10 @@ html[data-fb-drag] .fb-panel-body {
   display: none;
 }
 
+.fb-hud .key-mode .key-icon {
+  display: block;
+}
+
 .fb-hud .key-mode:focus-visible {
   --edge: inset 0 0 0 2px var(--accent);
 }
