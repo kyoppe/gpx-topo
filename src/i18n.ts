@@ -110,6 +110,9 @@ export type Copy = {
     cancel: string;
     confirm: string;
     imageOfView: string;
+    videoOfView: string;
+    shareMedia: string;
+    share: string;
     save: string;
     copyImage: string;
     postToX: string;
@@ -282,6 +285,9 @@ function makeCopy(language: Language): Copy {
         cancel: '取消',
         confirm: '決定',
         imageOfView: 'この画面の画像',
+        videoOfView: 'この画面の動画',
+        shareMedia: '共有 / 保存',
+        share: '共有',
         save: '保存',
         copyImage: '画像をコピー',
         postToX: 'X に投稿',
@@ -370,7 +376,7 @@ function makeCopy(language: Language): Copy {
     appName: 'GPX Diorama Whratever',
     photoAppName: 'GPX Diorama Whratever',
     raceAppName: 'Race-Time Whatever',
-    shareText: 'Made with GPX Diorama Whratever.\nhttps://gpx-topo.pages.dev/\n#GPXDioramaWhratever',
+    shareText: 'Made with GPX Diorama Whratever.\nhttps://gpx-topo.pages.dev/\n#GPX箱庭なんちゃら',
     about: 'about',
     week: WEEK.en,
     fallbackTitle: 'Open this app in a supported browser',
@@ -458,6 +464,9 @@ function makeCopy(language: Language): Copy {
       cancel: 'Cancel',
       confirm: 'Done',
       imageOfView: 'Screenshot of this view',
+      videoOfView: 'Recording of this view',
+      shareMedia: 'Share / Save',
+      share: 'Share',
       save: 'Save',
       copyImage: 'Copy image',
       postToX: 'Post to X',
