@@ -2201,9 +2201,11 @@ export default function App() {
       ? copy.ui.standardMap
       : baseMapStyle === 'pale'
         ? copy.ui.paleMap
-        : baseMapStyle === 'photo'
-          ? copy.ui.aerial
-          : copy.ui.photoNames;
+        : baseMapStyle === 'blank'
+          ? copy.ui.blankMap
+          : baseMapStyle === 'photo'
+            ? copy.ui.aerial
+            : copy.ui.photoNames;
   const startMapManeuver = (kind: MapManeuverKind) => {
     if (!mapManeuverAvailable || mapManeuverActive) return;
     addAction('map_maneuver_requested', { kind });
@@ -2468,6 +2470,9 @@ export default function App() {
                     </button>
                     <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
                       {copy.ui.paleMap}
+                    </button>
+                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
+                      {copy.ui.blankMap}
                     </button>
                     <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
                       {copy.ui.aerial}

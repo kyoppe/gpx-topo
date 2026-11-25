@@ -20,6 +20,7 @@ describe('browser language copy', () => {
     expect(getCopy('ja').ui.raise).toBe('起こす');
     expect(getCopy('ja').ui.standardMap).toBe('標準');
     expect(getCopy('ja').ui.paleMap).toBe('淡色');
+    expect(getCopy('ja').ui.blankMap).toBe('白地図');
     expect(getCopy('ja').ui.photoNames).toBe('写真+地名');
     expect(getCopy('ja').ui.mapLoading).toBe('地図を読み込み中');
   });
@@ -31,6 +32,7 @@ describe('browser language copy', () => {
     expect(getCopy('en').ui.addWaypoint).toBe('Add waypoint');
     expect(getCopy('en').ui.standardMap).toBe('Standard');
     expect(getCopy('en').ui.paleMap).toBe('Pale');
+    expect(getCopy('en').ui.blankMap).toBe('Blank');
     expect(getCopy('en').ui.photoNames).toBe('Aerial + names');
     expect(getCopy('en').ui.mapLoading).toBe('Loading map');
     expect(getCopy('en').dateLabel('2026-11-22')).toBe('November 22, 2026 (Sun)');

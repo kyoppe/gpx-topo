@@ -132,7 +132,8 @@ attributes:
 - `map_pan_completed` for the existing flat 2D map drag
 - `camera_rotate_completed`, `camera_pan_completed`, and `camera_zoom_completed`
   for completed 3D camera gestures (details below)
-- `map_style_changed`
+- `map_style_changed` with `style` set to `std`, `pale`, `blank`, `photo`, or
+  `photoNames`
 - `flyover_control` and `flyover_state_changed`
 - `waypoint_add_requested`, `waypoint_add_rejected`, `waypoint_edit`,
   `waypoint_move`, `waypoint_remove`, and `waypoint_focus_requested`

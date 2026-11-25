@@ -64,6 +64,30 @@ describe('parseMapPermalink', () => {
     });
   });
 
+  it('round-trips the blank map style', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 35.681236, lon: 139.767125 },
+        view: 'flat',
+        bearing: 0,
+        pitch: 0,
+        zoom: 1,
+        date: null,
+        mapStyle: 'blank',
+        hillshade: true,
+        pin: null,
+        sunlight: true,
+        sunAuto: false,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+
+    expect(url).toContain('style=blank');
+    expect(parseMapPermalink(new URL(url).search)?.mapStyle).toBe('blank');
+  });
+
   it('parses 3D camera parameters and normalizes bearing', () => {
     expect(
       parseMapPermalink(
