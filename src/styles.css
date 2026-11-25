@@ -1982,17 +1982,6 @@ main[lang='en'] .bar-hint {
   stroke: none;
 }
 
-.route-icon {
-  display: block;
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.7;
-}
-
 .pin-icon {
   display: block;
   width: 20px;
