@@ -25,7 +25,7 @@ import { DOCK_WIDTH, compactHudSize, fallbackLayoutFor, isCompactBar, isDocked }
 import { fallbackPerformanceFor } from './fallbackPerf';
 import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
-import { toggleViewMode, type ViewMode } from './mapMode';
+import { shouldSwitchToGpxAfterFileLoad, toggleViewMode, type ViewMode } from './mapMode';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
@@ -433,6 +433,7 @@ export default function App() {
   const mapDragOffsetRef = useRef<[number, number]>([0, 0]);
   const apartRef = useRef(false);
   const pendingViewModeRef = useRef<ViewMode | null>(null);
+  const enterGpxAfterLoadRef = useRef(false);
   const [modeTransition, setModeTransition] = useState<ViewMode | null>(null);
   const modeTransitionTimerRef = useRef<number | null>(null);
   const modeTransitionSeqRef = useRef(0);
@@ -1005,6 +1006,17 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!enterGpxAfterLoadRef.current) return;
+    if (viewMode !== 'map') {
+      enterGpxAfterLoadRef.current = false;
+      return;
+    }
+    if (gpxSource !== 'user' || !route || !gpxProjection || !engineRef.current) return;
+    enterGpxAfterLoadRef.current = false;
+    requestViewMode('gpx');
+  }, [gpxProjection, gpxSource, requestViewMode, route, viewMode]);
 
   useEffect(() => {
     if (viewRestoredRef.current) return;
@@ -1901,6 +1913,7 @@ export default function App() {
 
   // ---------------------------------------------------------------- actions
   const applyGpxFile = (candidate: PendingGpxFile) => {
+    if (shouldSwitchToGpxAfterFileLoad(viewMode)) enterGpxAfterLoadRef.current = true;
     touchedRef.current = true;
     engineRef.current?.together();
     setPendingGpxFile(null);
