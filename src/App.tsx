@@ -21,7 +21,7 @@ import { searchGsiAddress } from './gsiSearch';
 import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
-import { DOCK_WIDTH, fallbackLayoutFor, isCompactBar, isDocked } from './fallbackLayout';
+import { DOCK_WIDTH, compactHudSize, fallbackLayoutFor, isCompactBar, isDocked } from './fallbackLayout';
 import { fallbackPerformanceFor } from './fallbackPerf';
 import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
@@ -474,11 +474,13 @@ export default function App() {
 
   // Fallback: a wide, tall window keeps the panel beside the map (the canvas gives it room); a smaller one has a drawer.
   const docked = fb !== null && isDocked(viewport.width, viewport.height);
+  const hudWidth = viewport.width - (docked ? DOCK_WIDTH : 0);
   // a narrow bar has one key for the first person view and the aerial shots; a wider one has a key of each, as the scene does
-  const compactBar = fb !== null && isCompactBar(viewport.width);
+  const compactBar = fb !== null && isCompactBar(hudWidth);
+  const compactSize = compactBar ? compactHudSize(hudWidth) : 'wide';
   const layout = useMemo(
-    () => (fb ? fallbackLayoutFor(viewport.width - (docked ? DOCK_WIDTH : 0), viewport.height) : layoutFor(viewport.width, viewport.height)),
-    [docked, fb, viewport],
+    () => (fb ? fallbackLayoutFor(hudWidth, viewport.height) : layoutFor(viewport.width, viewport.height)),
+    [fb, hudWidth, viewport],
   );
   // what a permalink needs to know of this window: the sheet, the map on it, and how the sheet is fitted to the stage
   const permalinkFrame = useMemo<PermalinkFrame>(
@@ -570,7 +572,7 @@ export default function App() {
 
   const switchViewMode = useCallback(
     (next: ViewMode) => {
-      if (fpvActive || fpvSelecting || apart || modeTransition || next === viewMode || !engineRef.current?.isFlat()) return;
+      if (fpvActive || fpvSelecting || mapManeuver || apart || modeTransition || next === viewMode || !engineRef.current?.isFlat()) return;
       detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
@@ -598,11 +600,11 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, detachPermalink, fpvActive, fpvSelecting, gpxProjection, modeTransition, viewMode],
+    [apart, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
-      if (fpvActive || fpvSelecting) return;
+      if (fpvActive || fpvSelecting || mapManeuver) return;
       const engine = engineRef.current;
       if (!apart && engine?.isFlat()) {
         switchViewMode(next);
@@ -612,7 +614,7 @@ export default function App() {
       addAction('view_mode_switch_deferred', { mode: next });
       engine?.together();
     },
-    [apart, fpvActive, fpvSelecting, switchViewMode],
+    [apart, fpvActive, fpvSelecting, mapManeuver, switchViewMode],
   );
 
   useEffect(() => {
@@ -1540,8 +1542,10 @@ export default function App() {
     fb.root.dataset.panel = panelOpen ? 'open' : 'closed';
     fb.root.dataset.apart = apart ? 'true' : 'false';
     fb.root.dataset.dock = docked ? 'true' : 'false';
+    fb.root.dataset.compact = compactBar ? 'true' : 'false';
+    fb.root.dataset.compactSize = compactSize;
     fb.root.dataset.tab = activePanelTab;
-  }, [activePanelTab, apart, docked, fb, panelOpen]);
+  }, [activePanelTab, apart, compactBar, compactSize, docked, fb, panelOpen]);
   // Fallback sheet: pulled up while open, and out of the way when the panel is docked.
   useLayoutEffect(() => {
     if (!fb) return;
@@ -3225,7 +3229,7 @@ export default function App() {
               data-piece="key"
               data-key="mode"
               drawable=""
-              disabled={modeTransition !== null || fpvActive || fpvSelecting}
+              disabled={modeTransition !== null || fpvActive || fpvSelecting || mapManeuverActive}
               aria-label={viewMode === 'gpx' ? copy.ui.mapMode : copy.ui.gpxMode}
               onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
             >
@@ -3406,7 +3410,7 @@ export default function App() {
             </button>
             <button
               type="button"
-              className="key key-flip"
+              className={`key key-flip${fb && compactBar && flyoverPlaying ? ' key-flyover-compact' : ''}`}
               data-piece="key"
               data-key="flip"
               data-face="back"

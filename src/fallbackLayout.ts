@@ -83,15 +83,24 @@ export const COMPACT_HUD_GAP = 6;
 export const COMPACT_HUD_MEDIUM_MAX_WIDTH = 385;
 export const COMPACT_HUD_SMALL_MAX_WIDTH = 319;
 
+export type CompactHudSize = 'large' | 'medium' | 'small';
+
 export type CompactHudMetrics = {
   keyWidth: number;
   flipWidth: number;
   gap: number;
 };
 
+export function compactHudSize(width: number): CompactHudSize {
+  if (width <= COMPACT_HUD_SMALL_MAX_WIDTH) return 'small';
+  if (width <= COMPACT_HUD_MEDIUM_MAX_WIDTH) return 'medium';
+  return 'large';
+}
+
 export function compactHudMetrics(width: number): CompactHudMetrics {
-  if (width <= COMPACT_HUD_SMALL_MAX_WIDTH) return { keyWidth: 30, flipWidth: 56, gap: 2 };
-  if (width <= COMPACT_HUD_MEDIUM_MAX_WIDTH) return { keyWidth: 34, flipWidth: 64, gap: 3 };
+  const size = compactHudSize(width);
+  if (size === 'small') return { keyWidth: 30, flipWidth: 56, gap: 2 };
+  if (size === 'medium') return { keyWidth: 34, flipWidth: 64, gap: 3 };
   return { keyWidth: COMPACT_HUD_KEY_WIDTH, flipWidth: COMPACT_HUD_FLIP_WIDTH, gap: COMPACT_HUD_GAP };
 }
 

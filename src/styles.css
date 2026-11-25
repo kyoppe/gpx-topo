@@ -2856,26 +2856,25 @@ html[data-fb-drag] .fb-panel-body {
   stroke: #fff;
 }
 
-@media (max-width: 560px) {
-  .fb-hud .key-open,
-  .fb-hud .key-place {
+.fb-ui[data-compact='true'] .fb-hud .key-open,
+.fb-ui[data-compact='true'] .fb-hud .key-place {
     padding: 0 10px;
-  }
+}
 
-  .fb-hud .key-icon {
+.fb-ui[data-compact='true'] .fb-hud .key-icon {
     display: block;
-  }
+}
 
-  .fb-hud .key-label {
+.fb-ui[data-compact='true'] .fb-hud .key-label {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
+}
 
-  .fb-hud .hud {
+.fb-ui[data-compact='true'] .fb-hud .hud {
     --fb-compact-key-width: 40px;
     --fb-compact-flip-width: 84px;
     --fb-compact-gap: 6px;
@@ -2883,51 +2882,46 @@ html[data-fb-drag] .fb-panel-body {
     flex-wrap: nowrap;
     gap: var(--fb-compact-gap);
     padding: 8px 0;
-  }
+}
 
-  .fb-hud .key-mode,
-  .fb-hud .key-open,
-  .fb-hud .key-place,
-  .fb-hud .key-pin,
-  .fb-hud .key-permalink,
-  .fb-hud .key-fly,
-  .fb-hud .key-stop,
-  .fb-hud .key-camera,
-  .fb-hud .key-video,
-  .fb-hud .key-moves {
+.fb-ui[data-compact='true'] .fb-hud .key-mode,
+.fb-ui[data-compact='true'] .fb-hud .key-open,
+.fb-ui[data-compact='true'] .fb-hud .key-place,
+.fb-ui[data-compact='true'] .fb-hud .key-pin,
+.fb-ui[data-compact='true'] .fb-hud .key-permalink,
+.fb-ui[data-compact='true'] .fb-hud .key-fly,
+.fb-ui[data-compact='true'] .fb-hud .key-stop,
+.fb-ui[data-compact='true'] .fb-hud .key-camera,
+.fb-ui[data-compact='true'] .fb-hud .key-video,
+.fb-ui[data-compact='true'] .fb-hud .key-moves {
     width: var(--fb-compact-key-width);
     min-width: var(--fb-compact-key-width);
     padding: 0;
-  }
+}
 
-  .fb-hud .key-flip:not(.key-flyover-compact) {
+.fb-ui[data-compact='true'] .fb-hud .key-flip:not(.key-flyover-compact) {
     width: var(--fb-compact-flip-width);
     min-width: var(--fb-compact-flip-width);
     padding: 0;
-  }
+}
 
-  .fb-hud .key-flyover-compact,
-  .fb-hud .key-fly.key-flip {
+.fb-ui[data-compact='true'] .fb-hud .key-flyover-compact,
+.fb-ui[data-compact='true'] .fb-hud .key-fly.key-flip {
     width: var(--fb-compact-key-width);
     min-width: var(--fb-compact-key-width);
     padding: 0;
-  }
 }
 
-@media (max-width: 385px) {
-  .fb-hud .hud {
+.fb-ui[data-compact-size='medium'] .fb-hud .hud {
     --fb-compact-key-width: 34px;
     --fb-compact-flip-width: 64px;
     --fb-compact-gap: 3px;
-  }
 }
 
-@media (max-width: 319px) {
-  .fb-hud .hud {
+.fb-ui[data-compact-size='small'] .fb-hud .hud {
     --fb-compact-key-width: 30px;
     --fb-compact-flip-width: 56px;
     --fb-compact-gap: 2px;
-  }
 }
 
 /* the photo and the video are made here too; the dialog after them takes the share sheet's place of the scene's print */
@@ -2948,19 +2942,17 @@ html[data-fb-drag] .fb-panel-body {
   order: 1;
 }
 
-@media (max-width: 560px) {
-  .fb-hud .key-camera,
-  .fb-hud .key-video {
+.fb-ui[data-compact='true'] .fb-hud .key-camera,
+.fb-ui[data-compact='true'] .fb-hud .key-video {
     width: var(--fb-compact-key-width);
     min-width: var(--fb-compact-key-width);
     padding: 0;
-  }
+}
 
-  .fb-hud .key-moves {
+.fb-ui[data-compact='true'] .fb-hud .key-moves {
     width: var(--fb-compact-key-width);
     min-width: var(--fb-compact-key-width);
     padding: 0;
-  }
 }
 
 .fb-hud .key-moves-placeholder {

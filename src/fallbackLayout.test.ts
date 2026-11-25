@@ -8,6 +8,7 @@ import {
   FALLBACK_PAD,
   FALLBACK_PANEL_WIDTH,
   compactHudMetrics,
+  compactHudSize,
   compactHudRowWidth,
   fallbackLayoutFor,
   isCompactBar,
@@ -83,8 +84,13 @@ describe('compact bar', () => {
     expect(isCompactBar(844)).toBe(false);
   });
 
-  it('is never the case of a docked window', () => {
-    for (const width of [760, 900, 1366]) expect(isCompactBar(width)).toBe(false);
+  it('uses the post-dock width for a docked window', () => {
+    expect(isCompactBar(760)).toBe(false);
+    expect(isCompactBar(760 - DOCK_WIDTH)).toBe(true);
+    expect(compactHudSize(319)).toBe('small');
+    expect(compactHudSize(320)).toBe('medium');
+    expect(compactHudSize(386)).toBe('large');
+    expect(compactHudSize(760 - DOCK_WIDTH)).toBe('medium');
   });
 
   it('fits the normal compact HUD in one row from its minimum supported width', () => {
@@ -107,8 +113,8 @@ describe('compact bar', () => {
   it('matches the width the bar turns to pictures at in the stylesheet', async () => {
     const { readFileSync } = await import('node:fs');
     const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
-    expect(css).toContain(`@media (max-width: ${COMPACT_BAR_MAX_WIDTH}px) {\n  .fb-hud .key-open,`);
-    expect(css).toContain('    padding: 8px 0;\n  }\n\n  .fb-hud .key-mode,');
-    expect(css).toContain('  .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n  }\n}');
+    expect(css).toContain(`.fb-ui[data-compact='true'] .fb-hud .key-open,`);
+    expect(css).toContain("    padding: 8px 0;\n}\n\n.fb-ui[data-compact='true'] .fb-hud .key-mode,");
+    expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n}");
   });
 });
