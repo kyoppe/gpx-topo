@@ -167,6 +167,12 @@ export function PanelTabs({ tabs, active, labels, onSelect }: { tabs: readonly P
 
 const KEY_ICONS = {
   open: <path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.2h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.5Z" />,
+  raise: (
+    <>
+      <path d="M12 21V4" />
+      <path d="m5.5 10 6.5-6.5 6.5 6.5" />
+    </>
+  ),
   route: (
     <>
       <circle cx="5.5" cy="18.5" r="2" />

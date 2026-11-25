@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 import { FRAME_X, FRAME_Y } from './engine';
-import { DOCK_WIDTH, FALLBACK_EDGE, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, isDocked, orientationOf, sheetOpenHeight } from './fallbackLayout';
+import {
+  COMPACT_BAR_MAX_WIDTH,
+  DOCK_WIDTH,
+  FALLBACK_EDGE,
+  FALLBACK_PAD,
+  FALLBACK_PANEL_WIDTH,
+  compactHudMetrics,
+  compactHudSize,
+  compactHudRowWidth,
+  fallbackLayoutFor,
+  isCompactBar,
+  isDocked,
+  orientationOf,
+  sheetOpenHeight,
+} from './fallbackLayout';
 
 describe('fallback layout', () => {
   it('fills a tall phone with a tall map, inset by the pad', () => {
@@ -59,5 +73,48 @@ describe('fallback layout', () => {
     expect(sheetOpenHeight(667)).toBe(400);
     expect(sheetOpenHeight(874)).toBe(520);
     expect(sheetOpenHeight(1366)).toBe(520);
+  });
+});
+
+describe('compact bar', () => {
+  it('is a phone held upright, and not a window with room for a key of each', () => {
+    expect(isCompactBar(390)).toBe(true);
+    expect(isCompactBar(COMPACT_BAR_MAX_WIDTH)).toBe(true);
+    expect(isCompactBar(COMPACT_BAR_MAX_WIDTH + 1)).toBe(false);
+    expect(isCompactBar(844)).toBe(false);
+  });
+
+  it('uses the post-dock width for a docked window', () => {
+    expect(isCompactBar(760)).toBe(false);
+    expect(isCompactBar(760 - DOCK_WIDTH)).toBe(true);
+    expect(compactHudSize(319)).toBe('small');
+    expect(compactHudSize(320)).toBe('medium');
+    expect(compactHudSize(386)).toBe('large');
+    expect(compactHudSize(760 - DOCK_WIDTH)).toBe('medium');
+  });
+
+  it('fits the normal compact HUD in one row from its minimum supported width', () => {
+    for (const width of [280, 320, 375, 390]) {
+      const { keyWidth, flipWidth, gap } = compactHudMetrics(width);
+      const row = compactHudRowWidth([keyWidth, keyWidth, keyWidth, flipWidth, keyWidth, keyWidth, keyWidth], gap);
+      expect(row).toBe(6 * keyWidth + flipWidth + gap * 6);
+      expect(row).toBeLessThanOrEqual(width - FALLBACK_EDGE * 2);
+    }
+  });
+
+  it('fits the compact flyover HUD in one row from its minimum supported width', () => {
+    for (const width of [280, 320, 375, 390]) {
+      const { keyWidth, gap } = compactHudMetrics(width);
+      expect(compactHudRowWidth(Array.from({ length: 8 }, () => keyWidth), gap)).toBe(8 * keyWidth + gap * 7);
+      expect(compactHudRowWidth(Array.from({ length: 8 }, () => keyWidth), gap)).toBeLessThanOrEqual(width - FALLBACK_EDGE * 2);
+    }
+  });
+
+  it('matches the width the bar turns to pictures at in the stylesheet', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
+    expect(css).toContain(`.fb-ui[data-compact='true'] .fb-hud .key-open,`);
+    expect(css).toContain("    padding: 8px 0;\n}\n\n.fb-ui[data-compact='true'] .fb-hud .key-mode,");
+    expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n}");
   });
 });

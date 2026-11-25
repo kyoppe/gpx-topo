@@ -2814,8 +2814,30 @@ html[data-fb-drag] .fb-panel-body {
 }
 
 .fb-hud .key-flip {
-  width: auto;
+  width: 84px;
   min-width: 84px;
+}
+
+.fb-hud .key-moves {
+  width: 40px;
+  padding: 0;
+}
+
+.fb-hud .key-flyover-compact {
+  width: 40px;
+  min-width: 40px;
+  padding: 0 10px;
+}
+
+.fb-hud .key-flyover-compact .key-icon {
+  stroke: #fff;
+}
+
+/* Keep the running flyover control the same compact size as its play state while retaining its blue state. */
+.fb-hud .key-fly.key-flip {
+  width: auto;
+  min-width: 40px;
+  padding: 0 10px;
 }
 
 /* a key's picture and its words: a narrow bar shows the picture only (the words stay for screen readers) */
@@ -2834,24 +2856,72 @@ html[data-fb-drag] .fb-panel-body {
   stroke: #fff;
 }
 
-@media (max-width: 560px) {
-  .fb-hud .key-open,
-  .fb-hud .key-place {
+.fb-ui[data-compact='true'] .fb-hud .key-open,
+.fb-ui[data-compact='true'] .fb-hud .key-place {
     padding: 0 10px;
-  }
+}
 
-  .fb-hud .key-icon {
+.fb-ui[data-compact='true'] .fb-hud .key-icon {
     display: block;
-  }
+}
 
-  .fb-hud .key-label {
+.fb-ui[data-compact='true'] .fb-hud .key-label {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
+}
+
+.fb-ui[data-compact='true'] .fb-hud .hud {
+    --fb-compact-key-width: 40px;
+    --fb-compact-flip-width: 84px;
+    --fb-compact-gap: 6px;
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: var(--fb-compact-gap);
+    padding: 8px 0;
+}
+
+.fb-ui[data-compact='true'] .fb-hud .key-mode,
+.fb-ui[data-compact='true'] .fb-hud .key-open,
+.fb-ui[data-compact='true'] .fb-hud .key-place,
+.fb-ui[data-compact='true'] .fb-hud .key-pin,
+.fb-ui[data-compact='true'] .fb-hud .key-permalink,
+.fb-ui[data-compact='true'] .fb-hud .key-fly,
+.fb-ui[data-compact='true'] .fb-hud .key-stop,
+.fb-ui[data-compact='true'] .fb-hud .key-camera,
+.fb-ui[data-compact='true'] .fb-hud .key-video,
+.fb-ui[data-compact='true'] .fb-hud .key-moves {
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
+    padding: 0;
+}
+
+.fb-ui[data-compact='true'] .fb-hud .key-flip:not(.key-flyover-compact) {
+    width: var(--fb-compact-flip-width);
+    min-width: var(--fb-compact-flip-width);
+    padding: 0;
+}
+
+.fb-ui[data-compact='true'] .fb-hud .key-flyover-compact,
+.fb-ui[data-compact='true'] .fb-hud .key-fly.key-flip {
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
+    padding: 0;
+}
+
+.fb-ui[data-compact-size='medium'] .fb-hud .hud {
+    --fb-compact-key-width: 34px;
+    --fb-compact-flip-width: 64px;
+    --fb-compact-gap: 3px;
+}
+
+.fb-ui[data-compact-size='small'] .fb-hud .hud {
+    --fb-compact-key-width: 30px;
+    --fb-compact-flip-width: 56px;
+    --fb-compact-gap: 2px;
 }
 
 /* the photo and the video are made here too; the dialog after them takes the share sheet's place of the scene's print */
@@ -2859,14 +2929,98 @@ html[data-fb-drag] .fb-panel-body {
 .fb-hud .key-video {
   width: auto;
   padding: 0 10px;
+  order: 2;
 }
 
-/* what the scene alone can do (the posting to X, the drone moves, the first person view) is left out here */
-.fb-hud .key-x,
+/* the first person view and the aerial shots: a key of each on a wide bar, one key for the view on a narrow one */
+.fb-hud .key-fpv,
 .fb-hud .key-maneuver,
 .fb-hud .key-maneuver-cancel,
-.fb-hud .key-fpv {
+.fb-hud .key-moves {
+  width: auto;
+  padding: 0 10px;
+  order: 1;
+}
+
+.fb-ui[data-compact='true'] .fb-hud .key-camera,
+.fb-ui[data-compact='true'] .fb-hud .key-video {
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
+    padding: 0;
+}
+
+.fb-ui[data-compact='true'] .fb-hud .key-moves {
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
+    padding: 0;
+}
+
+.fb-hud .key-moves-placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* the compact view key represents the same aerial-view controls as the native yellow keys */
+.fb-hud .key-moves:not([data-latched]):not(.key-maneuver-cancel) {
+  --side: #a97828;
+  --top: #f7c95d;
+  --bottom: #dca63f;
+  color: #3e2b0b;
+}
+
+.moves-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
+  margin: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+/* what the scene alone can do (posting to X, which the share sheet does here) is left out */
+.fb-hud .key-x {
   display: none;
+}
+
+/* the menu of aerial shots (and the first person view, where the bar has one key for both) */
+.fb-moves-dialog {
+  width: min(320px, 100%);
+  border-radius: 14px;
+  background: #f6f7f8;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+  overflow: auto;
+}
+
+.fb-moves {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 14px max(14px, env(safe-area-inset-bottom));
+}
+
+.fb-moves strong {
+  padding: 2px 2px 4px;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.fb-moves .pop-btn {
+  min-height: 44px;
+  text-align: center;
+}
+
+.fb-moves-divider {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--rule);
+}
+
+.fb-moves-close {
+  margin-top: 4px;
 }
 
 /* raise and lay flat are one key with two faces; only the one that does something now is shown */
