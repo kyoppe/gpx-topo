@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isContourInk, stripRelief } from './basemap';
+import { isContourInk, maxZoomForStyle, stripRelief } from './basemap';
 
 const W = 48;
 const H = 48;
@@ -27,6 +27,16 @@ function caret(img: ImageData, x: number, y: number, rgb: readonly [number, numb
     put(img, x + 2 + Math.floor(k / 3), y + k, rgb);
   }
 }
+
+describe('base map zoom limits', () => {
+  it('caps the GSI blank map at its available zoom while keeping existing styles unchanged', () => {
+    expect(maxZoomForStyle('blank')).toBe(14);
+    expect(maxZoomForStyle('std')).toBe(18);
+    expect(maxZoomForStyle('pale')).toBe(18);
+    expect(maxZoomForStyle('photo')).toBe(18);
+    expect(maxZoomForStyle('photoNames')).toBe(18);
+  });
+});
 
 describe('pale map contour inks', () => {
   it('knows the contour colours and their blends with white', () => {

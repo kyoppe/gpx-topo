@@ -6,6 +6,7 @@ import type { MapProjection, MapTile } from './geo';
  * so the model's 10 m contours are all that draws the relief. Aerial photos and the blank map stay untouched.
  */
 const MAP_MAX_ZOOM = 18;
+const BLANK_MAX_ZOOM = 14;
 /** Start with one extra source zoom so the first close view does not need a new base texture. */
 const INITIAL_ZOOM_BONUS = 1;
 const HILLSHADE_MAX_ZOOM = 16;
@@ -18,6 +19,10 @@ export type MapStyle = 'std' | 'pale' | 'blank' | 'photo' | 'photoNames';
 
 function mapLayer(style: MapStyle) {
   return style === 'photo' || style === 'photoNames' ? 'seamlessphoto' : style;
+}
+
+export function maxZoomForStyle(style: MapStyle) {
+  return style === 'blank' ? BLANK_MAX_ZOOM : MAP_MAX_ZOOM;
 }
 
 function stripsRelief(style: MapStyle) {
@@ -259,7 +264,8 @@ export async function renderBasemaps(
         : null
       : null;
   const strip = stripper();
-  const zoom = Math.min(MAP_MAX_ZOOM, projection.zoomFor(density, 5, MAP_MAX_ZOOM) + INITIAL_ZOOM_BONUS);
+  const maxZoom = maxZoomForStyle(style);
+  const zoom = Math.min(maxZoom, projection.zoomFor(density, 5, maxZoom) + INITIAL_ZOOM_BONUS);
   const layer = mapLayer(style);
   let loaded = 0;
   await Promise.all(
@@ -320,7 +326,7 @@ export async function streamRelief(
   style: MapStyle = 'pale',
 ) {
   const strip = stripper();
-  const zoom = projection.zoomFor(density, 5, MAP_MAX_ZOOM);
+  const zoom = projection.zoomFor(density, 5, maxZoomForStyle(style));
   const layer = mapLayer(style);
   const fetchRegion: MapRegion = {
     x: Math.max(0, region.x - region.w * DETAIL_HALO),
