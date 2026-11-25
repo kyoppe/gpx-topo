@@ -4,6 +4,7 @@ import {
   buildMapPermalink,
   fitPermalinkArea,
   MAP_PERMALINK_PARAMETERS,
+  normalizeMapPinLabel,
   parseMapPermalink,
   stripMapPermalinkParameters,
 } from './mapPermalink';
@@ -384,5 +385,20 @@ describe('fitPermalinkArea', () => {
 
   it('keeps the scale in range', () => {
     expect(fitPermalinkArea({ width: 1000, height: 600, scale: 1 }, 1, 1).scale).toBeGreaterThanOrEqual(1e-3);
+  });
+});
+describe('a pin name', () => {
+  it('holds at most 2 lines and 40 characters, and \\r\\n is one break', () => {
+    expect(normalizeMapPinLabel('Summit')).toBe('Summit');
+    expect(normalizeMapPinLabel('one\r\ntwo\nthree')).toBe('one\ntwo');
+    expect(normalizeMapPinLabel('x'.repeat(100))).toBe('x'.repeat(40));
+  });
+
+  it('is cut to that when it comes in a permalink, so a long link cannot make a long label', () => {
+    const long = encodeURIComponent('y'.repeat(5000));
+    const parsed = parseMapPermalink(`?mode=map&pin_lat=35.68&pin_lon=139.76&pin_label=${long}`);
+    expect(parsed?.pin?.label).toBe('y'.repeat(40));
+    const lines = encodeURIComponent('a\nb\nc');
+    expect(parseMapPermalink(`?mode=map&pin_lat=35.68&pin_lon=139.76&pin_label=${lines}`)?.pin?.label).toBe('a\nb');
   });
 });

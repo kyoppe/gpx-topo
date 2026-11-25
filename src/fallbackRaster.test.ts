@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createRasterTextureSource, FALLBACK_PIECE_KINDS, insetRings, rasterizeElement } from './fallbackRaster';
+import { createRasterTextureSource, FALLBACK_PIECE_KINDS, insetRings, MAX_LABEL_LETTERS, rasterizeElement, textLines } from './fallbackRaster';
 
 const paths: string[] = [];
 
@@ -10,6 +10,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
   document.body.replaceChildren();
 });
 
@@ -244,5 +245,139 @@ describe('rounded corners', () => {
     const { ctx } = sheetScene(() => {});
     expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 200, 100);
     expect(ctx.roundRect).not.toHaveBeenCalled();
+  });
+});
+
+describe('word plates (pins and the probe)', () => {
+  it('are pieces the fallback draws', () => {
+    expect(FALLBACK_PIECE_KINDS.has('pin')).toBe(true);
+    expect(FALLBACK_PIECE_KINDS.has('probe')).toBe(true);
+  });
+
+  /** jsdom has no layout: say where each letter of a text node sits, by its offset. */
+  function letterRects(at: (offset: number) => { left: number; top: number; width: number; height: number }) {
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      writable: true,
+      value(this: Range) {
+        const r = at(this.startOffset);
+        return { ...r, right: r.left + r.width, bottom: r.top + r.height, x: r.left, y: r.top, toJSON() {} };
+      },
+    });
+  }
+
+  /** A pin: a rounded white plate (clipped) holding a red dot and a name, laid out at known boxes. */
+  function pinScene(name: string, letterWidth = 6, stem: Record<string, string> = { display: 'none' }) {
+    // jsdom has no pseudo-element styles: say what `.pin::after` computes to
+    const real = window.getComputedStyle.bind(window);
+    vi.stubGlobal('getComputedStyle', (el: Element, pseudo?: string | null) => (pseudo ? (stem as unknown as CSSStyleDeclaration) : real(el)));
+    const pin = document.createElement('div');
+    pin.dataset.piece = 'pin';
+    const plate = document.createElement('span');
+    plate.style.backgroundColor = 'rgb(255, 255, 255)';
+    plate.style.overflow = 'hidden';
+    for (const side of ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'] as const) plate.style[`border${side}Radius`] = '999px';
+    const dot = document.createElement('b');
+    dot.style.backgroundColor = 'rgb(214, 59, 70)';
+    const label = document.createElement('strong');
+    label.style.color = 'rgb(24, 32, 43)';
+    label.style.fontSize = '12px';
+    label.style.fontWeight = '600';
+    label.append(name);
+    plate.append(dot, label);
+    pin.append(plate);
+    document.body.append(pin);
+    rect(pin, 100, 50, 80, 24);
+    rect(plate, 100, 50, 80, 24);
+    rect(dot, 103, 53, 18, 18);
+    rect(label, 127, 55, name.length * letterWidth, 14);
+    // each letter takes letterWidth and they sit on one line
+    letterRects((offset) => ({ left: 127 + offset * letterWidth, top: 55, width: letterWidth, height: 14 }));
+    const ctx = Object.assign(fakeContext(), {
+      rect: vi.fn(), fillText: vi.fn(), measureText: vi.fn(() => ({ fontBoundingBoxAscent: 11, fontBoundingBoxDescent: 3 })),
+      font: '', textAlign: '', textBaseline: '',
+    });
+    const fills: string[] = [];
+    ctx.fill.mockImplementation(() => { fills.push(ctx.fillStyle); });
+    ctx.fillRect.mockImplementation(() => { fills.push(ctx.fillStyle); });
+    rasterizeElement(ctx, pin, 160, 48);
+    return { ctx, fills };
+  }
+
+  it('draws the plate, the dot on it and the name, at twice the size, clipped to the plate', () => {
+    const { ctx, fills } = pinScene('Ho');
+    expect(fills).toContain('rgb(255, 255, 255)');
+    expect(fills).toContain('rgb(214, 59, 70)');
+    // the plate's rounded box, the clip, and the dot (a plain box here)
+    expect(ctx.roundRect).toHaveBeenCalledWith(0, 0, 160, 48, expect.any(Array));
+    expect(ctx.clip).toHaveBeenCalledOnce();
+    expect(ctx.fillRect).toHaveBeenCalledWith(6, 6, 36, 36);
+    // the name: 12px type at 2x, each line starting at its first letter, centred on the line box
+    expect(ctx.font).toContain('24px');
+    expect(ctx.fillStyle).toBe('rgb(24, 32, 43)');
+    expect(ctx.fillText).toHaveBeenCalledWith('Ho', 54, (55 + 7 - 50) * 2 + 4);
+  });
+
+  it('breaks the name into the lines the browser laid out', () => {
+    const { ctx } = pinScene('ab');
+    ctx.fillText.mockClear();
+    const label = document.querySelector('strong')!;
+    // the second letter wraps under the first
+    letterRects((offset) => ({ left: 127, top: offset === 1 ? 70 : 55, width: 6, height: 14 }));
+    const canvasCtx = Object.assign(fakeContext(), {
+      rect: vi.fn(), fillText: vi.fn(), measureText: vi.fn(() => ({ fontBoundingBoxAscent: 11, fontBoundingBoxDescent: 3 })),
+    });
+    rasterizeElement(canvasCtx, label.closest('[data-piece]')!, 160, 48);
+    expect(canvasCtx.fillText.mock.calls.map((call) => call[0])).toEqual(['a', 'b']);
+  });
+
+  it('draws the stem under a pin laid flat, from the style of its ::after', () => {
+    const stem = { display: 'block', content: '""', backgroundColor: 'rgb(24, 32, 43)', width: '2px', height: '11px', left: '50%', marginLeft: '-1px', bottom: '0px' };
+    const { ctx } = pinScene('Ho', 6, stem);
+    // the pin is 80 x 24 css px, drawn at 2x: centred (40 - 1), standing on the bottom edge
+    expect(ctx.fillRect).toHaveBeenCalledWith(78, 26, 4, 22);
+  });
+
+  it('draws no stem when the CSS hides it (the engine has its own once the page is raised)', () => {
+    const { ctx } = pinScene('Ho', 6, { display: 'none', content: '""', backgroundColor: 'rgb(24, 32, 43)', width: '2px', height: '11px', left: '50%', bottom: '0px' });
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(78, 26, 4, 22);
+  });
+
+  it('measures at most MAX_LABEL_LETTERS letters of a name', () => {
+    const measured = vi.fn();
+    const text = document.createTextNode('x'.repeat(MAX_LABEL_LETTERS * 5));
+    document.body.append(text);
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      writable: true,
+      value() {
+        measured();
+        return { left: 0, top: 0, width: 5, height: 10, right: 5, bottom: 10, x: 0, y: 0, toJSON() {} };
+      },
+    });
+    const lines = textLines(text);
+    expect(measured).toHaveBeenCalledTimes(MAX_LABEL_LETTERS);
+    expect(lines.map((line) => line.text.length)).toEqual([MAX_LABEL_LETTERS]);
+  });
+
+  it('draws nothing for a plate that is not drawn', () => {
+    const { ctx } = pinScene('Ho');
+    expect(ctx.fillText).toHaveBeenCalled();
+    ctx.fillText.mockClear();
+    const label = document.querySelector('strong')!;
+    label.style.display = 'none';
+    rasterizeElement(ctx, label.closest('[data-piece]')!, 160, 48);
+    expect(ctx.fillText).not.toHaveBeenCalled();
+  });
+
+  it('leaves the words of other pieces alone', () => {
+    const card = document.createElement('div');
+    card.dataset.piece = 'sheet';
+    card.append('words');
+    document.body.append(card);
+    rect(card, 0, 0, 50, 20);
+    const ctx = Object.assign(fakeContext(), { fillText: vi.fn() });
+    rasterizeElement(ctx, card, 50, 20);
+    expect(ctx.fillText).not.toHaveBeenCalled();
   });
 });

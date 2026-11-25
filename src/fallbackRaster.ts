@@ -1,7 +1,13 @@
 import type { ElementTextureSource } from './renderer';
 
-/** Pieces the fallback can reproduce with plain 2D drawing: a fill (with inset rings), canvases, and SVG paths. */
-export const FALLBACK_PIECE_KINDS: ReadonlySet<string> = new Set(['sheet', 'terrain', 'relief', 'detail', 'hiker']);
+/**
+ * Pieces the fallback can reproduce with plain 2D drawing: a fill (with inset rings), canvases, SVG paths, and (for
+ * the pins and the probe) boxes with words in them.
+ */
+export const FALLBACK_PIECE_KINDS: ReadonlySet<string> = new Set(['sheet', 'terrain', 'relief', 'detail', 'hiker', 'pin', 'probe']);
+
+/** The pieces that are words on plates: their child boxes and their text are drawn as well. */
+const LABEL_KINDS: ReadonlySet<string> = new Set(['pin', 'probe']);
 
 type Box = { left: number; top: number; width: number; height: number };
 
@@ -145,6 +151,133 @@ function paintInsetRings(ctx: CanvasRenderingContext2D, style: CSSStyleDeclarati
   }
 }
 
+type TextLine = { text: string; left: number; top: number; height: number };
+
+/** The most characters of one text node a label draws (a pin's name holds 40, and a waypoint's is cut off by the plate anyway). */
+export const MAX_LABEL_LETTERS = 120;
+
+/** A length from a pseudo-element's computed style: `11px`, or a share of the box (`50%`). */
+function pseudoLength(value: string, base: number) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return value.trim().endsWith('%') ? (parsed / 100) * base : parsed;
+}
+
+/**
+ * The stem under a laid-flat pin is the `::after` of its box (the engine draws its own once the page is raised, and the
+ * CSS hides this one then). A pseudo-element is not in the DOM, so its box is read from its computed style.
+ */
+function paintStem(ctx: CanvasRenderingContext2D, el: Element, root: DOMRect, sx: number, sy: number) {
+  const style = getComputedStyle(el, '::after');
+  if (!style || style.display === 'none' || style.content === 'none' || style.content === 'normal') return;
+  const color = style.backgroundColor;
+  if (!color || color === 'transparent' || color === 'rgba(0, 0, 0, 0)') return;
+  const opacity = effectiveOpacity(el, el);
+  const width = pseudoLength(style.width, root.width);
+  const height = pseudoLength(style.height, root.height);
+  if (opacity <= 0 || width <= 0 || height <= 0) return;
+  const left = pseudoLength(style.left, root.width) + pseudoLength(style.marginLeft, root.width);
+  const top = root.height - pseudoLength(style.bottom, root.height) - height;
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = color;
+  ctx.fillRect(left * sx, top * sy, width * sx, height * sy);
+}
+
+/** The lines a text node is laid out in (CSS px, viewport), found letter by letter so wrapping is the browser's own. */
+export function textLines(node: Text): TextLine[] {
+  const range = document.createRange();
+  const lines: TextLine[] = [];
+  let current: TextLine | null = null;
+  let offset = 0;
+  for (const letter of node.data) {
+    // a name can come from a link or a file, and each letter costs a layout measurement
+    if (offset >= MAX_LABEL_LETTERS) break;
+    range.setStart(node, offset);
+    range.setEnd(node, offset + letter.length);
+    offset += letter.length;
+    const r = range.getBoundingClientRect();
+    // collapsed white space and line breaks take no room
+    if (r.width <= 0) continue;
+    if (current && Math.abs(r.top - current.top) < current.height / 2) current.text += letter;
+    else {
+      current = { text: letter, left: r.left, top: r.top, height: r.height };
+      lines.push(current);
+    }
+  }
+  return lines;
+}
+
+function paintText(ctx: CanvasRenderingContext2D, node: Text, owner: Element, piece: Element, root: DOMRect, sx: number, sy: number) {
+  if (!node.data.trim()) return;
+  const style = getComputedStyle(owner);
+  const opacity = effectiveOpacity(owner, piece);
+  // not `visibility`: the stage the pieces live in is hidden that way, and it is inherited
+  if (opacity <= 0) return;
+  ctx.font = `${style.fontStyle} ${style.fontWeight} ${numeric(style.fontSize, 12) * sy}px ${style.fontFamily}`;
+  ctx.fillStyle = style.color;
+  ctx.globalAlpha = opacity;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  for (const line of textLines(node)) {
+    const x = (line.left - root.left) * sx;
+    const middle = (line.top + line.height / 2 - root.top) * sy;
+    const metrics = ctx.measureText(line.text);
+    const ascent = metrics.fontBoundingBoxAscent;
+    const descent = metrics.fontBoundingBoxDescent;
+    if (typeof ascent === 'number' && typeof descent === 'number') ctx.fillText(line.text, x, middle + (ascent - descent) / 2);
+    else {
+      ctx.textBaseline = 'middle';
+      ctx.fillText(line.text, x, middle);
+      ctx.textBaseline = 'alphabetic';
+    }
+  }
+}
+
+/** A child box of a label: its fill, its clip, and what is inside it. */
+function paintLabelBox(ctx: CanvasRenderingContext2D, el: Element, piece: Element, root: DOMRect, sx: number, sy: number) {
+  if (el instanceof SVGElement || !isDrawn(el)) return;
+  const opacity = effectiveOpacity(el, piece);
+  if (opacity <= 0) return;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const style = getComputedStyle(el);
+  const box = relative(rect, root, sx, sy);
+  const radii = [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius].map((value) => {
+    const r = cornerRadius(value ?? '', rect.width, rect.height);
+    return { x: r.x * sx, y: r.y * sy };
+  });
+  const rounded = typeof ctx.roundRect === 'function' && radii.some((r) => r.x > 0 || r.y > 0);
+  const outline = () => {
+    ctx.beginPath();
+    if (rounded) ctx.roundRect(box.left, box.top, box.width, box.height, radii);
+    else ctx.rect(box.left, box.top, box.width, box.height);
+  };
+  const background = style.backgroundColor;
+  if (background && background !== 'transparent' && background !== 'rgba(0, 0, 0, 0)') {
+    ctx.globalAlpha = opacity;
+    ctx.fillStyle = background;
+    if (rounded) {
+      outline();
+      ctx.fill();
+    } else ctx.fillRect(box.left, box.top, box.width, box.height);
+  }
+  const clips = style.overflow.split(' ').some((value) => value !== '' && value !== 'visible');
+  if (clips) {
+    ctx.save();
+    outline();
+    ctx.clip();
+  }
+  paintLabelContents(ctx, el, piece, root, sx, sy);
+  if (clips) ctx.restore();
+}
+
+function paintLabelContents(ctx: CanvasRenderingContext2D, parent: Element, piece: Element, root: DOMRect, sx: number, sy: number) {
+  for (const node of parent.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) paintText(ctx, node as Text, parent, piece, root, sx, sy);
+    else if (node instanceof Element) paintLabelBox(ctx, node, piece, root, sx, sy);
+  }
+}
+
 /** Draws an element's own fill, its child canvases and its SVG paths into a width x height 2D canvas. */
 export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, width: number, height: number) {
   ctx.clearRect(0, 0, width, height);
@@ -175,6 +308,9 @@ export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, wid
       if (child.width > 0 && child.height > 0) ctx.drawImage(child, box.left, box.top, box.width, box.height);
     } else paintSvg(ctx, child as SVGSVGElement, box, el);
   }
+  const piece = (el as HTMLElement).dataset?.piece ?? '';
+  if (piece === 'pin') paintStem(ctx, el, root, sx, sy);
+  if (LABEL_KINDS.has(piece)) paintLabelContents(ctx, el, el, root, sx, sy);
   if (clipped) ctx.restore();
 }
 

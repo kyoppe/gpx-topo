@@ -151,7 +151,7 @@ export function SheetGrip({ open, copy, max, onDrag, onSettle }: { open: boolean
 }
 
 /** The groups of cards the drawer shows, one at a time. */
-export type PanelTabId = 'route' | 'search' | 'sun' | 'ways';
+export type PanelTabId = 'route' | 'search' | 'pin' | 'sun' | 'ways';
 
 export function PanelTabs({ tabs, active, labels, onSelect }: { tabs: readonly PanelTabId[]; active: PanelTabId; labels: Record<PanelTabId, string>; onSelect: (tab: PanelTabId) => void }) {
   return (

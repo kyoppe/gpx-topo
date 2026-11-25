@@ -22,10 +22,11 @@ import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
 import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
+import { fallbackPerformanceFor } from './fallbackPerf';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
-import { buildMapPermalink, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
@@ -656,6 +657,19 @@ export default function App() {
     },
     [drawMapBuffer],
   );
+  // How the map image stood when a two-finger move began moving it: a cancel puts it back exactly there. (The moves are
+  // clamped to the buffer, so undoing their sum would not.)
+  const mapDragBeginRef = useRef<[number, number] | null>(null);
+  const beginMapDrag = useCallback(() => {
+    mapDragBeginRef.current = [...mapDragOffsetRef.current];
+  }, []);
+  const cancelMapDrag = useCallback(() => {
+    const begin = mapDragBeginRef.current;
+    mapDragBeginRef.current = null;
+    if (!begin) return;
+    mapDragOffsetRef.current = begin;
+    drawMapBuffer(begin);
+  }, [drawMapBuffer]);
   const panMap = useCallback((_dx: number, _dy: number) => {
     const [offsetX, offsetY] = mapDragOffsetRef.current;
     const current = mapProjectionRef.current;
@@ -1324,6 +1338,8 @@ export default function App() {
         onFrameRateChange: ({ fps, frameMs, reason }) => addAction('render_fps_changed', { mode: 'motion', fps, frame_ms: frameMs, reason }),
         onMapDrag: panMapPreview,
         onMapPan: panMap,
+        onMapDragBegin: beginMapDrag,
+        onMapDragCancel: cancelMapDrag,
         onCameraRotate: (change) => addAction('camera_rotate_completed', change),
         onCameraPan: (change) => addAction('camera_pan_completed', change),
         onCameraZoom: (change) => addAction('camera_zoom_completed', change),
@@ -1396,7 +1412,7 @@ export default function App() {
           else setOverrides((current) => ({ ...current, [target]: minutes }));
         },
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
-      }, native ? undefined : { renderPath: 'fallback', uiRoot: fb?.root ?? null });
+      }, native ? undefined : { renderPath: 'fallback', uiRoot: fb?.root ?? null, ...fallbackPerformanceFor(window) });
     } catch (error) {
       stopEngineStart('error');
       fallbackPaint?.dispose();
@@ -1495,8 +1511,15 @@ export default function App() {
     };
   }, [fb]);
   // Fallback sheet: the groups of cards on offer (the map's search card is only there while the map lies flat).
-  const panelTabs: PanelTabId[] = viewMode === 'gpx' ? ['route', 'sun', 'ways'] : apart ? ['sun'] : ['search', 'sun'];
+  // The pin's name is typed there too, as the drawn pin cannot take typing.
+  const pinTab: PanelTabId[] = fb && viewMode === 'map' && mapPin ? ['pin'] : [];
+  const panelTabs: PanelTabId[] = viewMode === 'gpx' ? ['route', 'sun', 'ways'] : apart ? [...pinTab, 'sun'] : ['search', ...pinTab, 'sun'];
   const activePanelTab = panelTabs.includes(panelTab) ? panelTab : panelTabs[0];
+  const hasMapPin = Boolean(mapPin);
+  // a new pin brings its card forward, so the name can be typed at once
+  useEffect(() => {
+    if (fb && hasMapPin) setPanelTab('pin');
+  }, [fb, hasMapPin]);
   // Fallback: the shell's state, as attributes its CSS reads.
   useLayoutEffect(() => {
     if (!fb) return;
@@ -2170,7 +2193,7 @@ export default function App() {
     engineRef.current?.startMapPinPlacement();
   };
   const commitMapPinLabel = (label: string) => {
-    const normalized = label.replace(/\r\n/g, '\n').split('\n').slice(0, 2).join('\n').slice(0, 40);
+    const normalized = normalizeMapPinLabel(label);
     if (!mapPin || mapPin.label === normalized) return;
     detachPermalink('map_pin_label');
     setMapPin((current) => (current ? { ...current, label: normalized } : current));
@@ -2403,23 +2426,28 @@ export default function App() {
                 <div className={`pin map-pin${mapPin.label.trim() ? ' map-pin-labeled' : ''}`} data-piece="pin" data-map-pin="" drawable="">
                   <span className="pin-label">
                     <b className="map-pin-marker" aria-hidden="true">●</b>
-                    <textarea
-                      className="map-pin-input"
-                      defaultValue={mapPin.label}
-                      maxLength={40}
-                      rows={1}
-                      aria-label={copy.ui.mapPinNameAria}
-                      onInput={() => engineRef.current?.refreshHud()}
-                      onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
-                        // Enter finishes the name (the blur commits it); Shift+Enter breaks the line, once at most
-                        if (!event.shiftKey || event.currentTarget.value.includes('\n')) {
-                          event.preventDefault();
-                          if (!event.shiftKey) event.currentTarget.blur();
-                        }
-                      }}
-                    />
+                    {fb ? (
+                      // the fallback draws the name; it is typed in the sheet's pin card (a drawn textarea cannot take typing)
+                      <span className="map-pin-input">{mapPin.label}</span>
+                    ) : (
+                      <textarea
+                        className="map-pin-input"
+                        defaultValue={mapPin.label}
+                        maxLength={40}
+                        rows={1}
+                        aria-label={copy.ui.mapPinNameAria}
+                        onInput={() => engineRef.current?.refreshHud()}
+                        onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                          // Enter finishes the name (the blur commits it); Shift+Enter breaks the line, once at most
+                          if (!event.shiftKey || event.currentTarget.value.includes('\n')) {
+                            event.preventDefault();
+                            if (!event.shiftKey) event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                    )}
                   </span>
                 </div>
               )}
@@ -2459,7 +2487,7 @@ export default function App() {
               <PanelTabs
                 tabs={panelTabs}
                 active={activePanelTab}
-                labels={{ route: copy.ui.panelRoute, search: copy.ui.panelSearch, sun: copy.ui.sunlight, ways: copy.ui.waypoints }}
+                labels={{ route: copy.ui.panelRoute, search: copy.ui.panelSearch, pin: copy.ui.panelPin, sun: copy.ui.sunlight, ways: copy.ui.waypoints }}
                 onSelect={setPanelTab}
               />
             )}
@@ -2527,6 +2555,38 @@ export default function App() {
                       )}
                     </div>
                   )}
+                </section>
+              )}
+
+              {fb && viewMode === 'map' && mapPin && (
+                <section className="slot" data-section="pin">
+                  <div className="card" data-piece="card" drawable="" />
+                  <div className="in in-map-pin" data-piece="content" drawable="">
+                    <div className="row">
+                      <span className="label">{copy.ui.mapPinNameAria}</span>
+                    </div>
+                    <div className="map-pin-field">
+                      <b className="map-pin-marker" aria-hidden="true">●</b>
+                      <textarea
+                        key={`${mapPin.lat}:${mapPin.lon}`}
+                        defaultValue={mapPin.label}
+                        maxLength={40}
+                        rows={2}
+                        placeholder={copy.ui.mapPinNameAria}
+                        aria-label={copy.ui.mapPinNameAria}
+                        enterKeyHint="done"
+                        onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                          // the same as on the pin itself: Enter finishes the name (the blur commits it); Shift+Enter breaks the line, once at most
+                          if (!event.shiftKey || event.currentTarget.value.includes('\n')) {
+                            event.preventDefault();
+                            if (!event.shiftKey) event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
                 </section>
               )}
 
@@ -3043,24 +3103,6 @@ export default function App() {
 
           {/* the bar: each button is drawn as a key on a slab in front of the camera, and still is the button */}
           <StageHost host={fb?.hud ?? null}>
-          {fb && viewMode === 'map' && mapPin && (
-            <div className="fb-pin-editor">
-              <b className="map-pin-marker" aria-hidden="true">●</b>
-              <input
-                key={`${mapPin.lat}:${mapPin.lon}`}
-                type="text"
-                defaultValue={mapPin.label.replace(/\n/g, ' ')}
-                maxLength={40}
-                placeholder={copy.ui.mapPinNameAria}
-                aria-label={copy.ui.mapPinNameAria}
-                enterKeyHint="done"
-                onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) event.currentTarget.blur();
-                }}
-              />
-            </div>
-          )}
           <nav className="hud" data-hud="" aria-label={copy.ui.controls}>
             <div className="bar" data-piece="bar" drawable="">
               <span className="well" data-well="mode" />
