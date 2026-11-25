@@ -15,7 +15,7 @@ import {
   type FpvViewState,
   type HudHitArea,
 } from './engine';
-import { calculateStats, parseGpx, type GpxRoute, type Waypoint } from './gpx';
+import { calculateStats, parseGpx, serializeGpx, type GpxRoute, type Waypoint } from './gpx';
 import { createCenteredProjection, createMapProjection, pathD, projectTrack, type MapProjection } from './geo';
 import { searchGsiAddress } from './gsiSearch';
 import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
@@ -145,6 +145,10 @@ function elapsedInput(startMinutes: number, targetMinutes: number) {
 type Pop =
   | { seq: number; kind: 'date'; anchor: string }
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
+
+type GpxSource = 'fixture' | 'user';
+type GpxRestoreState = 'pending' | 'none' | 'ready';
+type PendingGpxFile = { file: File; xml: string; route: GpxRoute };
 
 type LatestMedia = 'photo' | 'video';
 type HintKind = LatestMedia | 'permalink' | 'map-pin';
@@ -331,6 +335,10 @@ export default function App() {
   const [savedView] = useState(() => loadView());
   const [route, setRoute] = useState<GpxRoute | null>(null);
   const [fileName, setFileName] = useState('SFMT2026-110km.gpx');
+  const [gpxSource, setGpxSource] = useState<GpxSource | null>(null);
+  const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>('pending');
+  const [gpxDirty, setGpxDirty] = useState(false);
+  const [pendingGpxFile, setPendingGpxFile] = useState<PendingGpxFile | null>(null);
   // the start set last time carries over; a GPX opened afresh starts now (see onFile)
   const [startTime, setStartTime] = useState(() => loadStart()?.time ?? '06:00');
   const [date, setDate] = useState(() => permalink?.date ?? (permalink ? todayIso() : loadStart()?.date ?? todayIso()));
@@ -348,7 +356,7 @@ export default function App() {
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => (permalink ? 'map' : savedView?.viewMode ?? 'gpx'));
+  const [viewMode, setViewMode] = useState<ViewMode>(() => (permalink ? 'map' : 'map'));
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
     // a permalink with its display area sets the scale itself (below), from the frame this window has
     if (permalink?.center && savedView?.mapViewport && !permalink.area) return { ...savedView.mapViewport, ...permalink.center };
@@ -636,6 +644,21 @@ export default function App() {
     return () => cancelAnimationFrame(frame);
   }, [apart, switchViewMode]);
 
+  const openGpxPicker = () => {
+    addAction('gpx_file_picker_opened');
+    fileRef.current?.click();
+  };
+
+  const modeButtonAction = () => {
+    if (viewMode === 'gpx') {
+      requestViewMode('map');
+      return;
+    }
+    if (gpxRestoreState === 'pending') return;
+    if (gpxSource === 'user' && route) requestViewMode('gpx');
+    else openGpxPicker();
+  };
+
   const drawMapBuffer = useCallback((offset: [number, number]) => {
     const buffer = mapBufferRef.current;
     const flat = flatRef.current;
@@ -894,8 +917,8 @@ export default function App() {
   // ---------------------------------------------------------------- data
   /** the GPX and its plan are in, so changes to them are its own to keep */
   const planReadyRef = useRef(false);
-  // the GPX opened last time with the plan made on it, or on a first visit the bundled one, which is then the GPX
-  // opened: its plan is kept from then on too
+  // Restore only a user-opened GPX. The bundled sample is a background preview and is never used as the
+  // persisted-user-GPX signal.
   useEffect(() => {
     let cancelled = false;
     const initialRequest = fileRequestRef.current;
@@ -913,8 +936,10 @@ export default function App() {
           if (!isCurrent()) return;
           setRoute(next);
           setFileName(name);
+          setGpxSource('fixture');
+          setGpxRestoreState('none');
+          setGpxDirty(false);
           planReadyRef.current = true;
-          void saveGpx({ name, xml });
           const routeStats = statsFor(next.points);
           reportInfo('gpx-topo GPX loaded', {
             event_type: 'gpx_loaded',
@@ -928,6 +953,7 @@ export default function App() {
         })
         .catch((error) => {
           if (isCurrent()) {
+            setGpxRestoreState('none');
             reportError('load_default_gpx', error, { file_name: DEFAULT_GPX_URL });
             setToast(copy.toast.defaultGpxFailed);
           }
@@ -936,11 +962,15 @@ export default function App() {
       try {
         const saved = await loadGpx();
         if (!isCurrent()) return;
-        if (!saved) return fixture();
+        if (!saved) {
+          setGpxRestoreState('none');
+          return fixture();
+        }
         let parsed: GpxRoute;
         try {
           parsed = ensureWaypoints(parseGpxWithVital(saved.xml, 'restore'));
         } catch {
+          setGpxRestoreState('none');
           return fixture();
         }
         const savedPlan = await loadPlan<Waypoint>(saved.name);
@@ -949,6 +979,9 @@ export default function App() {
         setRoute(next);
         setOverrides(savedPlan?.overrides ?? {});
         setFileName(saved.name);
+        setGpxSource('user');
+        setGpxRestoreState('ready');
+        setGpxDirty(false);
         planReadyRef.current = true;
         const routeStats = statsFor(next.points);
         reportInfo('gpx-topo GPX loaded', {
@@ -961,7 +994,11 @@ export default function App() {
         });
         addAction('gpx_loaded', { source: 'session', file_name: saved.name, waypoint_count: next.waypoints.length });
       } catch (error) {
-        if (isCurrent()) reportWarning('load_saved_gpx_session', error);
+        if (isCurrent()) {
+          setGpxRestoreState('none');
+          reportWarning('load_saved_gpx_session', error);
+          void fixture();
+        }
       }
     })();
     return () => {
@@ -1003,13 +1040,13 @@ export default function App() {
 
   // the plan is kept as it is changed, for the GPX it was made on (once that GPX is in, so as not to write over it)
   useEffect(() => {
-    if (!planReadyRef.current || !route) return;
+    if (!planReadyRef.current || gpxSource !== 'user' || !route) return;
     const timer = window.setTimeout(
       () => void savePlan<Waypoint>({ file: fileName, title: route.name, waypoints: route.waypoints, overrides }),
       300,
     );
     return () => window.clearTimeout(timer);
-  }, [route, overrides, fileName]);
+  }, [fileName, gpxSource, overrides, route]);
 
   useEffect(() => saveStart({ date, time: startTime }), [date, startTime]);
 
@@ -1251,6 +1288,7 @@ export default function App() {
     (at: number) => {
       const spot = placeAt(at);
       if (!spot) return;
+      setGpxDirty(true);
       setRoute((current) => {
         if (!current) return current;
         const waypoint = { id: `user-${Date.now().toString(36)}`, name: nextWaypointName(current.waypoints), ...spot };
@@ -1264,18 +1302,21 @@ export default function App() {
     const previous = route?.waypoints.find((waypoint) => waypoint.id === id);
     if (!previous || previous.name === name) return;
     addAction('waypoint_edit', { waypoint_id: id, waypoint_name: name });
+    setGpxDirty(true);
     setRoute((current) => current && { ...current, waypoints: current.waypoints.map((w) => (w.id === id ? { ...w, name } : w)) });
   };
   const moveWay = (id: string, at: number) => {
     const spot = placeAt(at);
     if (spot) {
       addAction('waypoint_move', { waypoint_id: id, distance_km: Number(spot.km.toFixed(2)) });
+      setGpxDirty(true);
       setRoute((current) => current && { ...current, waypoints: current.waypoints.map((w) => (w.id === id ? { ...w, ...spot } : w)) });
     }
   };
   const removeWay = (id: string) => {
     const removed = route?.waypoints.find((waypoint) => waypoint.id === id);
     addAction('waypoint_remove', { waypoint_id: id, waypoint_name: removed?.name });
+    if (removed) setGpxDirty(true);
     setRoute((current) => {
       if (!current) return current;
       const waypoints = current.waypoints.filter((waypoint) => waypoint.id !== id || waypoint.fixed);
@@ -1426,7 +1467,10 @@ export default function App() {
         onTimeCommit: (target, minutes) => {
           addAction('elapsed_time_committed', { target, minutes });
           if (target === 'start') setStartTime(clockInput(minutes));
-          else setOverrides((current) => ({ ...current, [target]: minutes }));
+          else {
+            setGpxDirty(true);
+            setOverrides((current) => ({ ...current, [target]: minutes }));
+          }
         },
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
       }, native ? undefined : { renderPath: 'fallback', uiRoot: fb?.root ?? null, ...fallbackPerformanceFor(window) });
@@ -1823,7 +1867,10 @@ export default function App() {
   const commitPopTime = (target: string, minutes: number) => {
     addAction('elapsed_time_committed', { target, minutes });
     if (target === 'start') setStartTime(clockInput(minutes));
-    else setOverrides((current) => ({ ...current, [target]: minutes }));
+    else {
+      setGpxDirty(true);
+      setOverrides((current) => ({ ...current, [target]: minutes }));
+    }
     setPop(null);
   };
   /** Fallback: the help flag is a static dialog; in the scene the engine flies it in. */
@@ -1839,18 +1886,78 @@ export default function App() {
   // Fallback: Esc closes the dialog that is up. The engine's own Esc handling knows nothing of these dialogs and
   // would lay the model flat, so this listens first and keeps the key from reaching it.
   useEffect(() => {
-    if (!fb || (!infoOpen && !pop && !fbMedia && !mapManeuverMenuOpen)) return;
+    if (!fb && !pendingGpxFile) return;
+    if (!infoOpen && !pop && !fbMedia && !mapManeuverMenuOpen && !pendingGpxFile) return;
     return listenDialogEscape(() => {
       if (fbMedia) closeFbMedia();
       else if (mapManeuverMenuOpen) setMapManeuverMenuOpen(false);
       else if (infoOpen) {
         addAction('info_flag_toggled', { open: false });
         setInfoOpen(false);
-      } else setPop(null);
+      } else if (pendingGpxFile) cancelPendingGpxFile();
+      else setPop(null);
     });
-  }, [fb, infoOpen, pop, fbMedia, mapManeuverMenuOpen]);
+  }, [fb, infoOpen, pop, fbMedia, mapManeuverMenuOpen, pendingGpxFile]);
 
   // ---------------------------------------------------------------- actions
+  const applyGpxFile = (candidate: PendingGpxFile) => {
+    touchedRef.current = true;
+    engineRef.current?.together();
+    setPendingGpxFile(null);
+    setPop(null);
+    setOverrides({});
+    setRoute(candidate.route);
+    setFileName(candidate.file.name);
+    setGpxSource('user');
+    setGpxRestoreState('ready');
+    setGpxDirty(false);
+    // a new GPX starts now, and is what opens next time; the start then stays as it is set for it
+    const now = startNow();
+    setDate(now.date);
+    setDateExplicit(false);
+    setMonth(now.date.slice(0, 7));
+    setStartTime(now.time);
+    planReadyRef.current = true;
+    void saveGpx({ name: candidate.file.name, xml: candidate.xml });
+    const routeStats = statsFor(candidate.route.points);
+    reportInfo('gpx-topo GPX loaded', {
+      event_type: 'gpx_loaded',
+      source: 'file',
+      file_name: candidate.file.name,
+      file_size: candidate.file.size,
+      gpx_content: candidate.xml,
+      waypoint_count: candidate.route.waypoints.length,
+      route_distance_km: routeStats.distanceKm,
+    });
+    addAction('gpx_loaded', {
+      source: 'file',
+      file_name: candidate.file.name,
+      file_size: candidate.file.size,
+      waypoint_count: candidate.route.waypoints.length,
+    });
+    setToast(copy.toast.gpxLoaded(candidate.file.name, candidate.route.points.length));
+  };
+
+  const saveCurrentGpx = () => {
+    if (!route) return false;
+    try {
+      const exportRoute: GpxRoute = {
+        ...route,
+        waypoints: route.waypoints.map((waypoint) => {
+          const elapsed = overrides[waypoint.id];
+          return elapsed === undefined ? waypoint : { ...waypoint, targetTime: clockInput(startMinutes + elapsed) };
+        }),
+      };
+      const filename = fileName.toLowerCase().endsWith('.gpx') ? fileName : `${fileName}.gpx`;
+      downloadBlob(new Blob([serializeGpx(exportRoute)], { type: 'application/gpx+xml' }), filename);
+      addAction('gpx_saved', { file_name: filename, waypoint_count: exportRoute.waypoints.length });
+      return true;
+    } catch (error) {
+      reportError('save_gpx', error, { file_name: fileName });
+      return false;
+    }
+  };
+
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     const requestId = ++fileRequestRef.current;
@@ -1860,37 +1967,31 @@ export default function App() {
       xml = await file.text();
       const next = ensureWaypoints(parseGpxWithVital(xml, 'file'));
       if (requestId !== fileRequestRef.current) return;
-      touchedRef.current = true;
-      engineRef.current?.together();
-      setPop(null);
-      setOverrides({});
-      setRoute(next);
-      setFileName(file.name);
-      // a new GPX starts now, and is what opens next time; the start then stays as it is set for it
-      const now = startNow();
-      setDate(now.date);
-      setDateExplicit(false);
-      setMonth(now.date.slice(0, 7));
-      setStartTime(now.time);
-      planReadyRef.current = true;
-      void saveGpx({ name: file.name, xml });
-      const routeStats = statsFor(next.points);
-      reportInfo('gpx-topo GPX loaded', {
-        event_type: 'gpx_loaded',
-        source: 'file',
-        file_name: file.name,
-        file_size: file.size,
-        gpx_content: xml,
-        waypoint_count: next.waypoints.length,
-        route_distance_km: routeStats.distanceKm,
-      });
-      addAction('gpx_loaded', { source: 'file', file_name: file.name, file_size: file.size, waypoint_count: next.waypoints.length });
-      setToast(copy.toast.gpxLoaded(file.name, next.points.length));
+      const candidate = { file, xml, route: next };
+      if (gpxDirty) {
+        setPendingGpxFile(candidate);
+        addAction('gpx_file_replacement_prompted', { file_name: file.name });
+        return;
+      }
+      applyGpxFile(candidate);
     } catch (error) {
       if (requestId !== fileRequestRef.current) return;
       reportError('load_gpx_file', error, { file_name: file.name, file_size: file.size, gpx_content: xml });
       setToast(error instanceof Error ? error.message : copy.toast.gpxLoadFailed);
     }
+  };
+
+  const cancelPendingGpxFile = () => {
+    setPendingGpxFile(null);
+    addAction('gpx_file_replacement_cancelled');
+  };
+
+  const openPendingGpxFile = (save: boolean) => {
+    const pending = pendingGpxFile;
+    if (!pending) return;
+    if (save && !saveCurrentGpx()) return;
+    addAction('gpx_file_replacement_confirmed', { saved: save, file_name: pending.file.name });
+    applyGpxFile(pending);
   };
 
   const showXHint = (kind: HintKind) => {
@@ -2278,6 +2379,8 @@ export default function App() {
           : baseMapStyle === 'photo'
             ? copy.ui.aerial
             : copy.ui.photoNames;
+  const gpxActionLabel =
+    gpxRestoreState === 'pending' ? copy.ui.loadingGpx : gpxSource === 'user' ? copy.ui.gpxMode : copy.ui.openGpx;
   const startMapManeuver = (kind: MapManeuverKind) => {
     if (!mapManeuverAvailable || mapManeuverActive) return;
     addAction('map_maneuver_requested', { kind });
@@ -2612,7 +2715,10 @@ export default function App() {
                         value={route?.name ?? ''}
                         spellCheck={false}
                         aria-label={copy.ui.routeName}
-                        onChange={(event) => setRoute((current) => (current ? { ...current, name: event.target.value } : current))}
+                        onChange={(event) => {
+                          setGpxDirty(true);
+                          setRoute((current) => (current ? { ...current, name: event.target.value } : current));
+                        }}
                       />
                       <small className="file-name" data-selectable="">
                         {fileName}
@@ -3247,9 +3353,9 @@ export default function App() {
               data-piece="key"
               data-key="mode"
               drawable=""
-              disabled={modeTransition !== null || fpvActive || fpvSelecting || mapManeuverActive}
-              aria-label={viewMode === 'gpx' ? copy.ui.mapMode : copy.ui.gpxMode}
-              onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
+              disabled={modeTransition !== null || fpvActive || fpvSelecting || mapManeuverActive || (viewMode === 'map' && gpxRestoreState === 'pending')}
+              aria-label={viewMode === 'gpx' ? copy.ui.mapMode : gpxActionLabel}
+              onClick={modeButtonAction}
             >
               {viewMode === 'gpx' ? (
                 <svg className="map-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -3259,9 +3365,9 @@ export default function App() {
                   <circle className="map-icon-pin-hole" cx="19" cy="4.5" r="1.1" />
                 </svg>
               ) : fb ? (
-                <KeyFace icon="route" label={copy.ui.gpxMode} />
+                <KeyFace icon="route" label={gpxActionLabel} />
               ) : (
-                copy.ui.gpxMode
+                gpxActionLabel
               )}
             </button>
             {viewMode === 'map' && (
@@ -3330,10 +3436,7 @@ export default function App() {
               data-piece="key"
               data-key="open"
               drawable=""
-              onClick={() => {
-                addAction('gpx_file_picker_opened');
-                fileRef.current?.click();
-              }}
+              onClick={openGpxPicker}
             >
               {fb ? <KeyFace icon="open" label={copy.ui.openGpx} /> : copy.ui.openGpx}
             </button>
@@ -3644,6 +3747,26 @@ export default function App() {
         </StageHost>
       )}
 
+      {pendingGpxFile && (
+        <div className="gpx-replace-overlay">
+          <div className="gpx-replace-dialog" role="dialog" aria-modal="true" aria-labelledby="gpx-replace-title">
+            <h2 id="gpx-replace-title">{copy.ui.replaceGpxTitle}</h2>
+            <p>{copy.ui.replaceGpxMessage(pendingGpxFile.file.name)}</p>
+            <div className="gpx-replace-actions">
+              <button type="button" className="pop-btn pop-ok" data-autofocus="" onClick={() => openPendingGpxFile(true)}>
+                {copy.ui.saveAndOpenGpx}
+              </button>
+              <button type="button" className="pop-btn" onClick={() => openPendingGpxFile(false)}>
+                {copy.ui.openWithoutSavingGpx}
+              </button>
+              <button type="button" className="pop-btn" onClick={cancelPendingGpxFile}>
+                {copy.ui.cancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div ref={hudHitLayerRef} className="hud-hit-layer" aria-hidden="true">
         {!mapManeuverActive && (
           <>
@@ -3651,8 +3774,8 @@ export default function App() {
               type="button"
               data-hud-hit="mode"
               tabIndex={-1}
-              disabled={modeTransition !== null}
-              onClick={() => requestViewMode(viewMode === 'gpx' ? 'map' : 'gpx')}
+              disabled={modeTransition !== null || (viewMode === 'map' && gpxRestoreState === 'pending')}
+              onClick={modeButtonAction}
             />
             {viewMode === 'map' && (
               <button type="button" data-hud-hit="pin" tabIndex={-1} disabled={!mapReady || fpvActive || fpvSelecting} onClick={toggleMapPin} />
@@ -3669,10 +3792,7 @@ export default function App() {
                   type="button"
                   data-hud-hit="open"
                   tabIndex={-1}
-                  onClick={() => {
-                    addAction('gpx_file_picker_opened');
-                    fileRef.current?.click();
-                  }}
+                  onClick={openGpxPicker}
                 />
                 <button
                   type="button"

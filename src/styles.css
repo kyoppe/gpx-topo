@@ -1547,6 +1547,45 @@ main[lang='en'] .in-ways > .row small {
   background: #2846d8;
 }
 
+.gpx-replace-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(24, 32, 43, 0.5);
+}
+
+.gpx-replace-dialog {
+  width: min(460px, 100%);
+  padding: 20px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+  color: var(--ink);
+}
+
+.gpx-replace-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.gpx-replace-dialog p {
+  margin: 0;
+  color: var(--ink2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.gpx-replace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
 .maneuver-menu-layer {
   position: absolute;
   top: 0;

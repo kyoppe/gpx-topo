@@ -24,7 +24,7 @@ const START_KEY = 'gpx-topo:start';
 const VIEW_KEY = 'gpx-topo:view';
 const DB_NAME = 'gpx-topo';
 const STORE = 'gpx';
-const LAST = 'last';
+const USER_GPX = 'user';
 const PLAN = 'plan';
 
 export function loadStart(): Start | null {
@@ -151,12 +151,13 @@ async function put(key: string, value: unknown) {
 }
 
 export async function loadGpx(): Promise<SavedGpx | null> {
-  const v = await get<Partial<SavedGpx>>(LAST);
+  // The bundled sample is deliberately never stored here. This key represents a GPX the user opened.
+  const v = await get<Partial<SavedGpx>>(USER_GPX);
   return v && typeof v.name === 'string' && typeof v.xml === 'string' ? { name: v.name, xml: v.xml } : null;
 }
 
 export function saveGpx(gpx: SavedGpx) {
-  return put(LAST, gpx);
+  return put(USER_GPX, gpx);
 }
 
 export async function loadPlan<W>(file: string): Promise<SavedPlan<W> | null> {

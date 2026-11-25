@@ -42,6 +42,11 @@ function numberFrom(element: Element | null): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function extensionNumber(element: Element, name: string) {
+  const child = [...element.querySelectorAll('extensions *')].find((candidate) => candidate.localName === name);
+  return numberFrom(child ?? null);
+}
+
 function parsePoint(element: Element): TrackPoint | null {
   const lat = Number.parseFloat(element.getAttribute('lat') ?? '');
   const lon = Number.parseFloat(element.getAttribute('lon') ?? '');
@@ -130,6 +135,7 @@ export function parseGpx(xml: string): GpxRoute {
         name: element.querySelector('name')?.textContent?.trim() || `Waypoint ${index + 1}`,
         desc: element.querySelector('desc')?.textContent?.trim() || undefined,
         targetTime: point.time,
+        km: extensionNumber(element, 'km') ?? undefined,
       };
     })
     .filter((point): point is Waypoint => point !== null);
@@ -159,7 +165,7 @@ export function serializeGpx(route: GpxRoute): string {
   const waypoints = route.waypoints
     .map(
       (point) =>
-        `<wpt lat="${point.lat}" lon="${point.lon}">${point.ele === null ? '' : `<ele>${point.ele}</ele>`}<name>${escapeXml(point.name)}</name>${point.desc ? `<desc>${escapeXml(point.desc)}</desc>` : ''}</wpt>`,
+        `<wpt lat="${point.lat}" lon="${point.lon}">${point.ele === null ? '' : `<ele>${point.ele}</ele>`}${point.targetTime ? `<time>${escapeXml(point.targetTime)}</time>` : ''}<name>${escapeXml(point.name)}</name>${point.desc ? `<desc>${escapeXml(point.desc)}</desc>` : ''}${point.km === undefined ? '' : `<extensions><gpx-topo:km xmlns:gpx-topo="https://gpx-topo.pages.dev/gpx-topo">${point.km}</gpx-topo:km></extensions>`}</wpt>`,
     )
     .join('');
 

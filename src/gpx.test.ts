@@ -41,4 +41,15 @@ describe('GPX model', () => {
     expect(xml).toContain('lat="35"');
     expect(xml).toContain('<ele>150</ele>');
   });
+
+  it('round-trips waypoint target times and route distances', () => {
+    const route = parseGpx(FIXTURE);
+    route.waypoints[0].targetTime = '07:30';
+    route.waypoints[0].km = 1.25;
+
+    const restored = parseGpx(serializeGpx(route));
+
+    expect(restored.waypoints[0].targetTime).toBe('07:30');
+    expect(restored.waypoints[0].km).toBe(1.25);
+  });
 });
