@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createCenteredProjection, nearestAlong } from './geo';
+import { createCenteredProjection, MAX_CENTERED_PROJECTION_TILES, nearestAlong } from './geo';
 
 // an L on screen: 0 to 10 km along the top, then 10 to 15 km down the right
 const line = [
@@ -44,5 +44,11 @@ describe('createCenteredProjection', () => {
     expect(point.x).toBeGreaterThan(0);
     expect(point.x).toBeLessThan(800);
     expect(projection.inverse(point.x, point.y).lon).toBeCloseTo(-179.8, 6);
+  });
+
+  it('bounds tile enumeration for an extremely zoomed-out saved view', () => {
+    const projection = createCenteredProjection(35.681236, 139.767125, 800, 600, 0.001);
+    expect(projection.scale).toBeGreaterThan(0.001);
+    expect(projection.tiles(5).length).toBeLessThanOrEqual(MAX_CENTERED_PROJECTION_TILES);
   });
 });

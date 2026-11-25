@@ -2,6 +2,15 @@ import type { GpxRoute, TrackPoint } from './gpx';
 
 const TILE = 256;
 const EARTH_CIRCUMFERENCE_M = 40_075_016.686;
+const MIN_TILE_ZOOM = 5;
+const TILE_AXIS_LIMIT = 128;
+export const MAX_CENTERED_PROJECTION_TILES = TILE_AXIS_LIMIT ** 2;
+
+function safeCenteredScale(width: number, height: number, scale: number) {
+  const tileWorld = TILE / 2 ** MIN_TILE_ZOOM;
+  const minScale = Math.max(width, height) / ((TILE_AXIS_LIMIT - 1) * tileWorld);
+  return Math.max(1e-6, scale, minScale);
+}
 
 export type MapPoint = {
   x: number;
@@ -147,7 +156,7 @@ export function createCenteredProjection(
   height: number,
   scale: number,
 ): MapProjection {
-  const safeScale = Math.max(1e-6, scale);
+  const safeScale = safeCenteredScale(width, height, scale);
   const center = worldPoint(centerLat, centerLon);
   const originX = center.x - width / 2 / safeScale;
   const originY = center.y - height / 2 / safeScale;

@@ -41,6 +41,8 @@ function validCoordinates(lat: number, lon: number): Coordinates | null {
 
 const COORDINATE = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)';
 const COORDINATE_PAIR = new RegExp(`^\\s*(${COORDINATE})\\s*[, ]\\s*(${COORDINATE})\\s*$`);
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_GOOGLE_REDIRECTS = 5;
 
 function coordinatePair(value: string): Coordinates | null {
   const match = COORDINATE_PAIR.exec(value);
@@ -134,6 +136,40 @@ export function parseMapSearchInput(value: string): Coordinates | null {
   return coordinatePair(value) ?? parseGoogleMapsUrl(value);
 }
 
+async function fetchGoogleMapsUrl(
+  initialUrl: URL,
+  fetcher: typeof fetch,
+): Promise<{ response: Response; url: string } | null> {
+  let currentUrl = initialUrl;
+  for (let redirectCount = 0; redirectCount <= MAX_GOOGLE_REDIRECTS; redirectCount += 1) {
+    if (!isGoogleMapsHost(currentUrl.hostname.toLowerCase())) return null;
+
+    const response = await fetcher(currentUrl.href, { redirect: 'manual' });
+    const location = response.headers?.get('location');
+    if (!REDIRECT_STATUSES.has(response.status) || !location) {
+      const finalUrl = response.url || currentUrl.href;
+      try {
+        const parsedFinalUrl = new URL(finalUrl, currentUrl.href);
+        return isGoogleMapsHost(parsedFinalUrl.hostname.toLowerCase())
+          ? { response, url: parsedFinalUrl.href }
+          : null;
+      } catch {
+        return null;
+      }
+    }
+
+    if (redirectCount === MAX_GOOGLE_REDIRECTS) return null;
+    try {
+      const nextUrl = new URL(location, currentUrl.href);
+      if (!isGoogleMapsHost(nextUrl.hostname.toLowerCase())) return null;
+      currentUrl = nextUrl;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function resolveGoogleMapsLocation(value: string, fetcher: typeof fetch = fetch): Promise<SearchLocation | null> {
   const direct = parseGoogleMapsUrl(value);
   const directLabel = googleMapsLabel(value);
@@ -145,9 +181,10 @@ export async function resolveGoogleMapsLocation(value: string, fetcher: typeof f
     return null;
   }
   if (!isGoogleMapsHost(url.hostname.toLowerCase())) return null;
-  const response = await fetcher(url.href, { redirect: 'follow' });
-  const resolved = parseGoogleMapsUrl(response.url);
-  return resolved ? { ...resolved, label: googleMapsLabel(response.url) ?? formatCoordinates(resolved) } : null;
+  const fetched = await fetchGoogleMapsUrl(url, fetcher);
+  if (!fetched) return null;
+  const resolved = parseGoogleMapsUrl(fetched.url);
+  return resolved ? { ...resolved, label: googleMapsLabel(fetched.url) ?? formatCoordinates(resolved) } : null;
 }
 
 export async function resolveGoogleMapsUrl(value: string, fetcher: typeof fetch = fetch): Promise<Coordinates | null> {
