@@ -7,7 +7,7 @@ import { nearestAlong } from './geo';
 import type { HtmlInCanvasElement, PaintEvent } from './htmlInCanvas';
 import { hudDepthPlanes } from './hudDepth';
 import { holdLean } from './lean';
-import { narrowViewDistanceScale } from './narrowView';
+import { displayDistanceScale } from './narrowView';
 import {
   MAP_MANEUVERS,
   MAP_MANEUVR_APPROACH_SECONDS,
@@ -468,8 +468,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     bouncy: false,
   };
   const HERO = { yaw: 0.14, tilt: 0.99 };
-  let vw = 1;
-  let vh = 1;
+  let vw = Math.max(1, canvas.clientWidth);
+  let vh = Math.max(1, canvas.clientHeight);
   let last = 0;
   let pending = false;
   let delayedNeed: number | null = null;
@@ -1212,7 +1212,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function closeMapManeuverRig(target: Vec3, base: Rig): Rig {
     const pitch = 0.62;
-    const requested = clamp(Math.min(base.dist * 0.32, Math.min(MW, MH) * 0.55), 140, 360) * narrowViewDistanceScale(vw / vh);
+    const requested =
+      clamp(Math.min(base.dist * 0.32, Math.min(MW, MH) * 0.55), 140, 360) *
+      displayDistanceScale(vw / vh, MW * pageFit(vw, vh, PW, PH));
     const edge = Math.min(target[0] - MAPX, MAPX + MW - target[0], target[1] - MAPY, MAPY + MH - target[1]);
     const horizontal = Math.min(Math.cos(pitch) * requested, Math.max(24, edge * 0.75));
     return {
@@ -1573,7 +1575,11 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   function chaseDist() {
     const { start, end } = routeSpan();
-    return clamp((end - start) * 1000 * CHASE_SHARE, 600, CHASE_DIST_M) * pxPerM() * narrowViewDistanceScale(vw / vh);
+    return (
+      clamp((end - start) * 1000 * CHASE_SHARE, 600, CHASE_DIST_M) *
+      pxPerM() *
+      displayDistanceScale(vw / vh, MW * pageFit(vw, vh, PW, PH))
+    );
   }
 
   function groundAt(X: number, Y: number, lift: number): number {
@@ -2455,6 +2461,39 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const tilt = Math.PI / 2 - pitch;
       st.tiltT = clamp(tilt - HERO.tilt * standOf(st.zoomT), 0.12 - HERO.tilt * standOf(st.zoomT), TILT_MAX - HERO.tilt * standOf(st.zoomT));
     }
+    keepAboveGround();
+    need();
+  }
+
+  /** The map point under the centre of the current drawing viewport, in map px. */
+  function getViewFocus(): { x: number; y: number } | null {
+    if (!model?.mapMode || st.e < 0.5) return null;
+    const P = pick(camera(st.e, st.yaw, st.tilt, st.zoom, st.pan), vw / 2, vh / 2, liftOf(st.e));
+    if (!P) return null;
+    const x = P[0] - MAPX;
+    const y = P[1] - MAPY;
+    return x >= 0 && x <= MW && y >= 0 && y <= MH ? { x, y } : null;
+  }
+
+  /** Moves the current camera so a map point is under the centre of the drawing viewport. */
+  function centerViewOnMapPoint(x: number, y: number) {
+    if (!model?.mapMode || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const mx = clamp(x, 0, MW);
+    const my = clamp(y, 0, MH);
+    const lift = liftOf(st.eT);
+    const P: Vec3 = [MAPX + mx, MAPY + my, groundZ(mx, my, lift)];
+    const sx = vw / 2;
+    const sy = vh / 2;
+    for (let it = 0; it < 5; it += 1) {
+      const c = targetCam();
+      const { o, d } = ray(c, sx, sy);
+      if (Math.abs(d[2]) < 1e-6) break;
+      const t = (P[2] - o[2]) / d[2];
+      if (!Number.isFinite(t)) break;
+      st.panT[0] += P[0] - (o[0] + d[0] * t);
+      st.panT[1] += P[1] - (o[1] + d[1] * t);
+    }
+    clampPan();
     keepAboveGround();
     need();
   }
@@ -5358,6 +5397,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     setPlacing,
     getViewState,
     setViewState,
+    getViewFocus,
+    centerViewOnMapPoint,
     capture,
     captureFrame,
     refreshHud,

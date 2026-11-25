@@ -5,6 +5,7 @@ export type MapPermalinkSun = 'auto' | 'off' | 'time' | null;
 export type MapPermalinkSunSpeed = 'slow' | 'normal' | 'fast';
 export type MapPermalinkPin = { lat: number; lon: number; label: string };
 export type MapPermalinkPan = { x: number; y: number; z: number };
+export type MapPermalinkFocus = { lat: number; lon: number };
 /**
  * The display area the permalink was made in, in screen px at zoom 1: the map frame's size and its ground scale
  * (px per world unit). When it is there, `pan` is also in those units, taken from the map centre (see `permalinkView`).
@@ -19,6 +20,7 @@ export type MapPermalink = {
   pitch: number | null;
   zoom: number | null;
   pan: MapPermalinkPan | null;
+  focus: MapPermalinkFocus | null;
   date: string | null;
   mapStyle: MapStyle | null;
   hillshade: boolean | null;
@@ -39,6 +41,7 @@ export type MapPermalinkBuildState = {
   pitch: number;
   zoom: number;
   pan?: MapPermalinkPan | null;
+  focus?: MapPermalinkFocus | null;
   date: string | null;
   mapStyle: MapStyle;
   hillshade: boolean;
@@ -70,6 +73,8 @@ export const MAP_PERMALINK_PARAMETERS = [
   'pan_x',
   'pan_y',
   'pan_z',
+  'focus_lat',
+  'focus_lon',
   'date',
   'style',
   'hillshade',
@@ -235,6 +240,21 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     if (params.has('pan_z')) ignoredParameters.push('pan_z');
   }
 
+  const focusLatValue = numberParameter(params, 'focus_lat', -85.05112878, 85.05112878);
+  const focusLonValue = numberParameter(params, 'focus_lon', -180, 180);
+  const focus =
+    view === '3d' &&
+    center &&
+    focusLatValue !== null &&
+    focusLatValue !== undefined &&
+    focusLonValue !== null &&
+    focusLonValue !== undefined
+      ? { lat: focusLatValue, lon: focusLonValue }
+      : null;
+  const focusParameters = ['focus_lat', 'focus_lon'];
+  if (focus) usedParameters.push(...focusParameters);
+  else for (const name of focusParameters) if (params.has(name)) ignoredParameters.push(name);
+
   const dateValue = params.get('date');
   const date = validDate(dateValue) ? dateValue : null;
   if (date) usedParameters.push('date');
@@ -322,6 +342,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     pitch,
     zoom,
     pan,
+    focus,
     date,
     mapStyle,
     hillshade,
@@ -362,6 +383,10 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
       params.set('pan_x', fixed(state.pan.x, 3).toFixed(3));
       params.set('pan_y', fixed(state.pan.y, 3).toFixed(3));
       params.set('pan_z', fixed(state.pan.z, 3).toFixed(3));
+    }
+    if (state.view === '3d' && state.focus) {
+      params.set('focus_lat', state.focus.lat.toFixed(6));
+      params.set('focus_lon', state.focus.lon.toFixed(6));
     }
   }
   if (state.view === 'fpv' && state.fpv) {
