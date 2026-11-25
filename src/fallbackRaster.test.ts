@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createRasterTextureSource, FALLBACK_PIECE_KINDS, insetRings, rasterizeElement } from './fallbackRaster';
+import { createRasterTextureSource, FALLBACK_PIECE_KINDS, insetRings, MAX_LABEL_LETTERS, rasterizeElement, textLines } from './fallbackRaster';
 
 const paths: string[] = [];
 
@@ -267,7 +267,10 @@ describe('word plates (pins and the probe)', () => {
   }
 
   /** A pin: a rounded white plate (clipped) holding a red dot and a name, laid out at known boxes. */
-  function pinScene(name: string, letterWidth = 6) {
+  function pinScene(name: string, letterWidth = 6, stem: Record<string, string> = { display: 'none' }) {
+    // jsdom has no pseudo-element styles: say what `.pin::after` computes to
+    const real = window.getComputedStyle.bind(window);
+    vi.stubGlobal('getComputedStyle', (el: Element, pseudo?: string | null) => (pseudo ? (stem as unknown as CSSStyleDeclaration) : real(el)));
     const pin = document.createElement('div');
     pin.dataset.piece = 'pin';
     const plate = document.createElement('span');
@@ -326,6 +329,35 @@ describe('word plates (pins and the probe)', () => {
     });
     rasterizeElement(canvasCtx, label.closest('[data-piece]')!, 160, 48);
     expect(canvasCtx.fillText.mock.calls.map((call) => call[0])).toEqual(['a', 'b']);
+  });
+
+  it('draws the stem under a pin laid flat, from the style of its ::after', () => {
+    const stem = { display: 'block', content: '""', backgroundColor: 'rgb(24, 32, 43)', width: '2px', height: '11px', left: '50%', marginLeft: '-1px', bottom: '0px' };
+    const { ctx } = pinScene('Ho', 6, stem);
+    // the pin is 80 x 24 css px, drawn at 2x: centred (40 - 1), standing on the bottom edge
+    expect(ctx.fillRect).toHaveBeenCalledWith(78, 26, 4, 22);
+  });
+
+  it('draws no stem when the CSS hides it (the engine has its own once the page is raised)', () => {
+    const { ctx } = pinScene('Ho', 6, { display: 'none', content: '""', backgroundColor: 'rgb(24, 32, 43)', width: '2px', height: '11px', left: '50%', bottom: '0px' });
+    expect(ctx.fillRect).not.toHaveBeenCalledWith(78, 26, 4, 22);
+  });
+
+  it('measures at most MAX_LABEL_LETTERS letters of a name', () => {
+    const measured = vi.fn();
+    const text = document.createTextNode('x'.repeat(MAX_LABEL_LETTERS * 5));
+    document.body.append(text);
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      writable: true,
+      value() {
+        measured();
+        return { left: 0, top: 0, width: 5, height: 10, right: 5, bottom: 10, x: 0, y: 0, toJSON() {} };
+      },
+    });
+    const lines = textLines(text);
+    expect(measured).toHaveBeenCalledTimes(MAX_LABEL_LETTERS);
+    expect(lines.map((line) => line.text.length)).toEqual([MAX_LABEL_LETTERS]);
   });
 
   it('draws nothing for a plate that is not drawn', () => {

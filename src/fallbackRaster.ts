@@ -153,6 +153,36 @@ function paintInsetRings(ctx: CanvasRenderingContext2D, style: CSSStyleDeclarati
 
 type TextLine = { text: string; left: number; top: number; height: number };
 
+/** The most characters of one text node a label draws (a pin's name holds 40, and a waypoint's is cut off by the plate anyway). */
+export const MAX_LABEL_LETTERS = 120;
+
+/** A length from a pseudo-element's computed style: `11px`, or a share of the box (`50%`). */
+function pseudoLength(value: string, base: number) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return value.trim().endsWith('%') ? (parsed / 100) * base : parsed;
+}
+
+/**
+ * The stem under a laid-flat pin is the `::after` of its box (the engine draws its own once the page is raised, and the
+ * CSS hides this one then). A pseudo-element is not in the DOM, so its box is read from its computed style.
+ */
+function paintStem(ctx: CanvasRenderingContext2D, el: Element, root: DOMRect, sx: number, sy: number) {
+  const style = getComputedStyle(el, '::after');
+  if (!style || style.display === 'none' || style.content === 'none' || style.content === 'normal') return;
+  const color = style.backgroundColor;
+  if (!color || color === 'transparent' || color === 'rgba(0, 0, 0, 0)') return;
+  const opacity = effectiveOpacity(el, el);
+  const width = pseudoLength(style.width, root.width);
+  const height = pseudoLength(style.height, root.height);
+  if (opacity <= 0 || width <= 0 || height <= 0) return;
+  const left = pseudoLength(style.left, root.width) + pseudoLength(style.marginLeft, root.width);
+  const top = root.height - pseudoLength(style.bottom, root.height) - height;
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = color;
+  ctx.fillRect(left * sx, top * sy, width * sx, height * sy);
+}
+
 /** The lines a text node is laid out in (CSS px, viewport), found letter by letter so wrapping is the browser's own. */
 export function textLines(node: Text): TextLine[] {
   const range = document.createRange();
@@ -160,6 +190,8 @@ export function textLines(node: Text): TextLine[] {
   let current: TextLine | null = null;
   let offset = 0;
   for (const letter of node.data) {
+    // a name can come from a link or a file, and each letter costs a layout measurement
+    if (offset >= MAX_LABEL_LETTERS) break;
     range.setStart(node, offset);
     range.setEnd(node, offset + letter.length);
     offset += letter.length;
@@ -276,7 +308,9 @@ export function rasterizeElement(ctx: CanvasRenderingContext2D, el: Element, wid
       if (child.width > 0 && child.height > 0) ctx.drawImage(child, box.left, box.top, box.width, box.height);
     } else paintSvg(ctx, child as SVGSVGElement, box, el);
   }
-  if (LABEL_KINDS.has((el as HTMLElement).dataset?.piece ?? '')) paintLabelContents(ctx, el, el, root, sx, sy);
+  const piece = (el as HTMLElement).dataset?.piece ?? '';
+  if (piece === 'pin') paintStem(ctx, el, root, sx, sy);
+  if (LABEL_KINDS.has(piece)) paintLabelContents(ctx, el, el, root, sx, sy);
   if (clipped) ctx.restore();
 }
 

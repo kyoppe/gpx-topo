@@ -217,14 +217,66 @@ describe('fallback touch gestures', () => {
     expect(callbacks.onCameraRotate).not.toHaveBeenCalled();
   });
 
-  it('a third finger is left out of the pinch', () => {
-    const { touch, st } = touchScene({ e: 1 });
+  it.each(['pointerup', 'pointercancel'])('a third finger is left out of the pinch: it moves nothing, and its %s leaves the pinch going', (end) => {
+    const { touch, st, callbacks } = touchScene({ e: 1 });
     touch('pointerdown', 1, 500, 400);
     touch('pointerdown', 2, 700, 400);
+    const { yawT, tiltT } = st;
     touch('pointerdown', 3, 600, 300);
     touch('pointermove', 3, 600, 100);
     expect(st.zoomT).toBe(1);
     expect(st.panT).toEqual([0, 0, 0]);
+    expect(st.yawT).toBe(yawT);
+    expect(st.tiltT).toBe(tiltT);
+    touch(end, 3, 600, 100);
+    // the two fingers go on pinching
+    touch('pointermove', 1, 400, 400);
+    touch('pointermove', 2, 800, 400);
+    expect(st.zoomT).toBeGreaterThan(1.3);
+    expect(callbacks.onCameraZoom).not.toHaveBeenCalled();
+    touch('pointerup', 1, 400, 400);
+    expect(callbacks.onCameraZoom).toHaveBeenCalledOnce();
+  });
+
+  it('a finger put down late, after the pinch ended, is not taken for the third finger', () => {
+    const { touch, st } = touchScene({ e: 1 });
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointerdown', 3, 600, 300);
+    touch('pointerup', 3, 600, 300);
+    touch('pointerup', 1, 500, 400);
+    touch('pointerup', 2, 700, 400);
+    touch('pointerdown', 3, 600, 300);
+    touch('pointermove', 3, 700, 300);
+    expect(st.yawT).not.toBe(0);
+  });
+
+  it('a cancel throws the pinch away: nothing is reported, and the map preview goes back', () => {
+    const { touch, callbacks } = touchScene({ e: 0 }, { renderPath: 'fallback' }, true);
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 530, 420);
+    touch('pointermove', 2, 730, 420);
+    touch('pointercancel', 1, 530, 420);
+    expect(callbacks.onMapPan).not.toHaveBeenCalled();
+    // the preview moved 30 and 20 with the fingers, and the same comes back
+    const moves = vi.mocked(callbacks.onMapDrag).mock.calls;
+    expect(moves.reduce((sum, [dx]) => sum + dx, 0)).toBeCloseTo(0);
+    expect(moves.reduce((sum, [, dy]) => sum + dy, 0)).toBeCloseTo(0);
+    touch('pointercancel', 2, 730, 420);
+    expect(callbacks.onMapPan).not.toHaveBeenCalled();
+  });
+
+  it('a cancel reports no camera pan or zoom either', () => {
+    const { touch, callbacks } = touchScene({ e: 1 });
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 440, 420);
+    touch('pointermove', 2, 840, 420);
+    touch('pointercancel', 1, 440, 420);
+    touch('pointercancel', 2, 840, 420);
+    expect(callbacks.onCameraPan).not.toHaveBeenCalled();
+    expect(callbacks.onCameraZoom).not.toHaveBeenCalled();
   });
 
   it('native: touches are not read as a pinch (the page keeps its own handling)', () => {

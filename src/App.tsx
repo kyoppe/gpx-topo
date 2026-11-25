@@ -26,7 +26,7 @@ import { fallbackPerformanceFor } from './fallbackPerf';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
-import { buildMapPermalink, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
@@ -2178,7 +2178,7 @@ export default function App() {
     engineRef.current?.startMapPinPlacement();
   };
   const commitMapPinLabel = (label: string) => {
-    const normalized = label.replace(/\r\n/g, '\n').split('\n').slice(0, 2).join('\n').slice(0, 40);
+    const normalized = normalizeMapPinLabel(label);
     if (!mapPin || mapPin.label === normalized) return;
     detachPermalink('map_pin_label');
     setMapPin((current) => (current ? { ...current, label: normalized } : current));
@@ -2560,7 +2560,12 @@ export default function App() {
                         placeholder={copy.ui.mapPinNameAria}
                         aria-label={copy.ui.mapPinNameAria}
                         enterKeyHint="done"
-                        onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
+                        onBlur={(event) => {
+                          // this field is one line: a name made of two lines (native, or a permalink) shows its break as a space,
+                          // and only a real edit turns it into one line
+                          if (event.currentTarget.value === mapPin.label.replace(/\n/g, ' ')) return;
+                          commitMapPinLabel(event.currentTarget.value);
+                        }}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) event.currentTarget.blur();
                         }}

@@ -5,6 +5,11 @@ export type MapPermalinkSun = 'auto' | 'off' | 'time' | null;
 export type MapPermalinkSunSpeed = 'slow' | 'normal' | 'fast';
 export type MapPermalinkPin = { lat: number; lon: number; label: string };
 export type MapPermalinkPan = { x: number; y: number; z: number };
+
+/** What a pin's name may hold: at most 2 lines and 40 characters, whether it was typed or came in a permalink. */
+export function normalizeMapPinLabel(label: string) {
+  return label.replace(/\r\n/g, '\n').split('\n').slice(0, 2).join('\n').slice(0, 40);
+}
 export type MapPermalinkFocus = { lat: number; lon: number };
 /**
  * The display area the permalink was made in, in screen px at zoom 1: the map frame's size and its ground scale
@@ -278,7 +283,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     pinLat !== undefined &&
     pinLon !== null &&
     pinLon !== undefined
-      ? { lat: pinLat, lon: pinLon, label: params.get('pin_label') ?? '' }
+      ? { lat: pinLat, lon: pinLon, label: normalizeMapPinLabel(params.get('pin_label') ?? '') }
       : null;
   if (pin) {
     usedParameters.push('pin_lat', 'pin_lon');

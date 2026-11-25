@@ -4799,6 +4799,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     canvas.classList.add('turning');
   };
   const onPointerMove = (ev: PointerEvent) => {
+    if (fallback && ev.pointerType === 'touch' && ignoredTouchIds.has(ev.pointerId)) return;
     if (fallback && ev.pointerType === 'touch' && touchPoints.has(ev.pointerId)) {
       touchPoints.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
       if (pinch) {
@@ -4912,10 +4913,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   };
   const onPointerUp = (ev: PointerEvent) => {
-    if (fallback && ev.pointerType === 'touch' && touchPoints.delete(ev.pointerId) && pinch) {
-      // lifting either finger ends the pinch; the one left on the glass does nothing until it is lifted too
-      if (pinch.ids.includes(ev.pointerId)) endPinch();
-      return;
+    if (fallback && ev.pointerType === 'touch') {
+      // a finger left out of the pinch does nothing at all, down to its lift
+      if (ignoredTouchIds.delete(ev.pointerId)) return;
+      if (touchPoints.delete(ev.pointerId) && pinch) {
+        // lifting either finger ends the pinch (a cancel throws it away); the one left on the glass does nothing until it is lifted too
+        if (pinch.ids.includes(ev.pointerId)) endPinch(ev.type === 'pointerup');
+        return;
+      }
     }
     if (cameraDrag && cameraDrag.pointerId !== ev.pointerId) return;
     if (fpvDragPointerId !== null && fpvDragPointerId !== ev.pointerId) return;
@@ -5138,6 +5143,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   // spread does what the wheel does (a flat page rises first, a risen one zooms on, and the other way round
   // lowers it again), and the middle of the two fingers does what the right button does (moves the model).
   const touchPoints = new Map<number, { x: number; y: number }>();
+  /** Touches that went down during a pinch: their moves and lifts change nothing. */
+  const ignoredTouchIds = new Set<number>();
   let pinch: {
     ids: [number, number];
     dist: number;
@@ -5157,8 +5164,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     touchPoints.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (touchPoints.size < 2) return false;
     if (pinch) {
-      // a third finger is left out of it
+      // a third finger is left out of it, for as long as it is down
       touchPoints.delete(ev.pointerId);
+      ignoredTouchIds.add(ev.pointerId);
       return true;
     }
     if (mapManeuver || drag === 'drum' || drag === 'runner') {
@@ -5287,11 +5295,19 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     need();
   }
 
-  function endPinch() {
+  /** Ends the pinch. `completed` is a finger lifted; false is a cancel, which reports nothing and puts the map back. */
+  function endPinch(completed: boolean) {
     const gesture = pinch;
     pinch = null;
     drag = null;
     canvas.classList.remove('turning');
+    if (!completed) {
+      // the map preview moved with the fingers: bring it back, as the gesture never happened
+      if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapDrag(-mapDragTotal[0], -mapDragTotal[1]);
+      mapDragTotal = [0, 0];
+      need();
+      return;
+    }
     if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapPan(...mapDragTotal);
     mapDragTotal = [0, 0];
     if (gesture) {
