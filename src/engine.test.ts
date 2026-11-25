@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createEngine, type Engine, type EngineCallbacks, type EngineModel, type EngineOptions } from './engine';
+import { createEngine, fitsWithinScreenWidth, type Engine, type EngineCallbacks, type EngineModel, type EngineOptions } from './engine';
 import type { HtmlInCanvasElement } from './htmlInCanvas';
 import { createRenderer } from './renderer';
 import { buildTerrain } from './terrain';
@@ -407,6 +407,13 @@ describe('fallback touch gestures', () => {
 });
 
 describe('camera gesture completion', () => {
+  it('uses the display pivot as soon as projected terrain exceeds the screen width', () => {
+    expect(fitsWithinScreenWidth([0, 1200], 1200)).toBe(true);
+    expect(fitsWithinScreenWidth([-0.1, 1200], 1200)).toBe(false);
+    expect(fitsWithinScreenWidth([0, 1200.1], 1200)).toBe(false);
+    expect(fitsWithinScreenWidth([null, 600], 1200)).toBe(false);
+  });
+
   it('keeps the map display centre as the pivot after the view has moved', () => {
     const scene = setup();
     const terrain = buildTerrain(
