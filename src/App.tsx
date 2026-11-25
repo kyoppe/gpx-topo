@@ -3439,9 +3439,9 @@ export default function App() {
                   <circle className="map-icon-pin-hole" cx="19" cy="4.5" r="1.1" />
                 </svg>
               ) : fb ? (
-                <KeyFace icon="route" label={gpxActionLabel} />
+                <KeyFace icon="route" label={copy.ui.gpxMode} />
               ) : (
-                gpxActionLabel
+                copy.ui.gpxMode
               )}
             </button>
             {viewMode === 'map' && (
