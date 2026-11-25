@@ -181,9 +181,11 @@ body {
 .map-location-button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 0 10px 0 7px;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
   border: 0;
   border-radius: 8px;
   background: #f7f8f8;
@@ -2636,11 +2638,21 @@ main[lang='en'] .bar-hint {
 .fb-map-controls .map-location-button {
   position: fixed;
   right: max(var(--fb-edge), env(safe-area-inset-right));
-  bottom: calc(max(var(--fb-edge), env(safe-area-inset-bottom)) + 58px);
+  /* The visible map ends above the mobile sheet: grip, HUD, sheet inset, and a map inset. */
+  bottom: calc(
+    var(--fb-sheet-h, 0px) + 17px + 40px
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+  );
 }
 
 .fb-ui[data-dock='true'] .fb-map-controls .map-location-button {
   right: calc(var(--fb-dock-width) + max(var(--fb-edge), env(safe-area-inset-right)));
+  bottom: calc(
+    40px
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+  );
 }
 
 /* the room a docked panel takes beside the canvas (its width and the margin either side) */

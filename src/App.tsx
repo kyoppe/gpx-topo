@@ -2640,7 +2640,6 @@ export default function App() {
                       <circle cx="12" cy="12" r="2.2" />
                       <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
                     </svg>
-                    {copy.ui.currentLocation}
                   </button>
                 )}
                 <div
