@@ -31,6 +31,7 @@ import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPer
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
+import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
 import { detectLanguage, getCopy, type Copy } from './i18n';
@@ -2173,10 +2174,68 @@ export default function App() {
       return false;
     }
   };
+  const buildCurrentMapPermalink = () => {
+    const activeProjection = viewMode === 'map' ? mapProjection : gpxProjection;
+    const center = activeProjection
+      ? { lat: activeProjection.centerLat, lon: activeProjection.centerLon }
+      : mapViewport
+        ? { lat: mapViewport.lat, lon: mapViewport.lon }
+        : null;
+    const engine = engineRef.current;
+    if (!center || !engine) return null;
+
+    const view = engine.getViewState();
+    const currentFpv = engine.getFpvState() ?? fpvView;
+    const fpvLocation = currentFpv && activeProjection ? activeProjection.inverse(currentFpv.x, currentFpv.y) : null;
+    const permalinkView = currentFpv ? 'fpv' : view.raised ? '3d' : 'flat';
+    const sun = sunInput(fb?.root ?? pageRef.current);
+    const timeMinutes = Number(sun?.value);
+    const focusPoint = !currentFpv && activeProjection ? engine.getViewFocus() : null;
+    const focus = focusPoint ? activeProjection?.inverse(focusPoint.x, focusPoint.y) ?? null : null;
+    const saved = activeProjection ? toPermalinkView(permalinkFrame, activeProjection.scale, view.pan) : null;
+    const url = buildMapPermalink(
+      {
+        center,
+        view: permalinkView,
+        bearing: view.bearing,
+        pitch: view.pitch,
+        zoom: view.zoom,
+        pan: saved ? saved.pan : view.pan,
+        focus,
+        date: dateExplicit ? date : null,
+        mapStyle: baseMapStyle,
+        hillshade,
+        pin: mapPin,
+        fpv:
+          currentFpv && fpvLocation
+            ? {
+                lat: fpvLocation.lat,
+                lon: fpvLocation.lon,
+                bearing: currentFpv.bearing,
+                pitch: currentFpv.pitch,
+                zoom: currentFpv.zoom,
+              }
+            : null,
+        area: saved ? saved.area : null,
+        sunlight: mapSunlight,
+        sunAuto: mapSunAuto,
+        sunSpeed: MAP_SUN_SPEED_NAMES[mapSunSpeed] ?? 'normal',
+        timeMinutes: Number.isFinite(timeMinutes) ? timeMinutes : 630,
+      },
+      window.location.href,
+    );
+    return { url, view: permalinkView };
+  };
   const SHARE_TEXT = copy.shareText;
   const postLatestMedia = () => {
     if (!latestMedia) return;
-    const postWindow = window.open(`https://x.com/intent/post?text=${encodeURIComponent(SHARE_TEXT)}`, '_blank', 'noopener');
+    const permalink = buildCurrentMapPermalink();
+    if (!permalink) {
+      setToast(copy.toast.xPostFailed);
+      return;
+    }
+    const shareText = shareTextWithPermalink(SHARE_TEXT, permalink.url);
+    const postWindow = window.open(`https://x.com/intent/post?text=${encodeURIComponent(shareText)}`, '_blank', 'noopener');
     if (!postWindow) {
       setToast(copy.toast.xPostFailed);
       return;
@@ -2331,59 +2390,13 @@ export default function App() {
     addAction('map_sun_auto_speed_changed', { speed });
   };
   const copyMapPermalink = async () => {
-    const center = mapProjection
-      ? { lat: mapProjection.centerLat, lon: mapProjection.centerLon }
-      : mapViewport
-        ? { lat: mapViewport.lat, lon: mapViewport.lon }
-        : null;
-    const engine = engineRef.current;
-    if (viewMode !== 'map' || !center || !engine) return;
-    const view = engine.getViewState();
-    const currentFpv = engine.getFpvState() ?? fpvView;
-    const fpvLocation = currentFpv && mapProjection ? mapProjection.inverse(currentFpv.x, currentFpv.y) : null;
-    const permalinkView = currentFpv ? 'fpv' : view.raised ? '3d' : 'flat';
-    const sun = sunInput(fb?.root ?? pageRef.current);
-    const timeMinutes = Number(sun?.value);
-    // the display area and the pan from the map centre, so a window of another shape can show the same view
-    const focusPoint = !currentFpv && mapProjection ? engine.getViewFocus() : null;
-    const focus = focusPoint ? mapProjection?.inverse(focusPoint.x, focusPoint.y) ?? null : null;
-    const saved = mapProjection ? toPermalinkView(permalinkFrame, mapProjection.scale, view.pan) : null;
-    const url = buildMapPermalink(
-      {
-        center,
-        view: permalinkView,
-        bearing: view.bearing,
-        pitch: view.pitch,
-        zoom: view.zoom,
-        pan: saved ? saved.pan : view.pan,
-        focus,
-        date: dateExplicit ? date : null,
-        mapStyle: baseMapStyle,
-        hillshade,
-        pin: mapPin,
-        fpv:
-          currentFpv && fpvLocation
-            ? {
-                lat: fpvLocation.lat,
-                lon: fpvLocation.lon,
-                bearing: currentFpv.bearing,
-                pitch: currentFpv.pitch,
-                zoom: currentFpv.zoom,
-              }
-            : null,
-        area: saved ? saved.area : null,
-        sunlight: mapSunlight,
-        sunAuto: mapSunAuto,
-        sunSpeed: MAP_SUN_SPEED_NAMES[mapSunSpeed] ?? 'normal',
-        timeMinutes: Number.isFinite(timeMinutes) ? timeMinutes : 630,
-      },
-      window.location.href,
-    );
+    const permalink = buildCurrentMapPermalink();
+    if (!permalink) return;
     try {
-      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(permalink.url);
       else {
         const input = document.createElement('textarea');
-        input.value = url;
+        input.value = permalink.url;
         input.style.position = 'fixed';
         input.style.opacity = '0';
         document.body.append(input);
@@ -2391,7 +2404,7 @@ export default function App() {
         if (!document.execCommand('copy')) throw new Error('Clipboard copy failed.');
         input.remove();
       }
-      addAction('map_permalink_copied', { view: permalinkView, sunlight: mapSunlight, sun_auto: mapSunAuto });
+      addAction('map_permalink_copied', { view: permalink.view, sunlight: mapSunlight, sun_auto: mapSunAuto });
       // the hint is a card drawn in the scene above the key, which the fallback does not draw: it gets the toast
       if (fb) setToast(copy.toast.permalinkCopied);
       else showXHint('permalink');
