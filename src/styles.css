@@ -450,6 +450,30 @@ body {
   display: none;
 }
 
+.current-location {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  pointer-events: none;
+}
+
+.current-location::after {
+  display: none;
+}
+
+.current-location-marker {
+  display: block;
+  width: 22px;
+  height: 22px;
+  margin: 3px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(24, 32, 43, 0.38),
+    0 1px 5px rgba(24, 32, 43, 0.36);
+}
+
 .hiker {
   position: absolute;
   top: 0;
@@ -1708,6 +1732,10 @@ main[lang='en'] .pop-foot small {
   width: 48px;
 }
 
+.well[data-well='location'] {
+  width: 48px;
+}
+
 .well[data-well='place'] {
   width: 158px;
 }
@@ -1816,6 +1844,10 @@ main[lang='en'] .bar-hint {
   width: 38px;
 }
 
+.key-location {
+  width: 38px;
+}
+
 .key-fpv {
   --side: #a97828;
   --top: #f7c95d;
@@ -1900,6 +1932,18 @@ main[lang='en'] .bar-hint {
 }
 
 .pin-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.location-icon {
   display: block;
   width: 20px;
   height: 20px;
@@ -2832,6 +2876,7 @@ html[data-fb-drag] .fb-panel-body {
 .fb-hud .key-mode,
 .fb-hud .key-permalink,
 .fb-hud .key-pin,
+.fb-hud .key-location,
 .fb-hud .key-fly,
 .fb-hud .key-stop {
   width: auto;
@@ -2927,6 +2972,7 @@ html[data-fb-drag] .fb-panel-body {
 .fb-ui[data-compact='true'] .fb-hud .key-open,
 .fb-ui[data-compact='true'] .fb-hud .key-place,
 .fb-ui[data-compact='true'] .fb-hud .key-pin,
+.fb-ui[data-compact='true'] .fb-hud .key-location,
 .fb-ui[data-compact='true'] .fb-hud .key-permalink,
 .fb-ui[data-compact='true'] .fb-hud .key-fly,
 .fb-ui[data-compact='true'] .fb-hud .key-stop,

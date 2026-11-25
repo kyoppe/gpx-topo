@@ -59,6 +59,11 @@ export type Copy = {
     videoSavedFailed: string;
     xPostFailed: string;
     pickPoint: string;
+    currentLocationUnsupported: string;
+    currentLocationPermissionDenied: string;
+    currentLocationUnavailable: string;
+    currentLocationTimeout: string;
+    currentLocationFailed: string;
   };
   ui: {
     mapType: string;
@@ -128,6 +133,7 @@ export type Copy = {
     mapMode: string;
     gpxMode: string;
     copyPermalink: string;
+    currentLocation: string;
     mapPin: string;
     mapPinCancel: string;
     mapPinNameAria: string;
@@ -243,6 +249,11 @@ function makeCopy(language: Language): Copy {
         videoSavedFailed: '動画を保存できませんでした。',
         xPostFailed: 'Xの投稿画面を開けませんでした。',
         pickPoint: '地図をタップして、場所を選んでください。',
+        currentLocationUnsupported: 'このブラウザでは現在地を取得できません。',
+        currentLocationPermissionDenied: '現在地の利用が許可されていません。',
+        currentLocationUnavailable: '現在地を取得できませんでした。',
+        currentLocationTimeout: '現在地の取得がタイムアウトしました。',
+        currentLocationFailed: '現在地を取得できませんでした。',
       },
       ui: {
         mapType: '地図の種類',
@@ -312,6 +323,7 @@ function makeCopy(language: Language): Copy {
         mapMode: 'Map',
         gpxMode: 'GPX',
         copyPermalink: 'パーマリンクをコピー',
+        currentLocation: '現在地を表示',
         mapPin: '地点を示すピン',
         mapPinCancel: 'ピン配置を取消',
         mapPinNameAria: 'ピンの名前',
@@ -431,6 +443,11 @@ function makeCopy(language: Language): Copy {
       videoSavedFailed: 'Could not save the video.',
       xPostFailed: 'Could not open the X post composer.',
       pickPoint: 'Tap the map to choose a spot.',
+      currentLocationUnsupported: 'This browser does not support location access.',
+      currentLocationPermissionDenied: 'Location access was denied.',
+      currentLocationUnavailable: 'Your current location is unavailable.',
+      currentLocationTimeout: 'Getting your current location timed out.',
+      currentLocationFailed: 'Could not get your current location.',
     },
     ui: {
       mapType: 'Map type',
@@ -500,6 +517,7 @@ function makeCopy(language: Language): Copy {
       mapMode: 'Map',
       gpxMode: 'GPX',
       copyPermalink: 'Copy permalink',
+      currentLocation: 'Show current location',
       mapPin: 'Drop a location pin',
       mapPinCancel: 'Cancel pin placement',
       mapPinNameAria: 'Pin name',

@@ -28,6 +28,7 @@ import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } from './geolocation';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
@@ -369,6 +370,8 @@ export default function App() {
   const [mapSearchBusy, setMapSearchBusy] = useState(false);
   const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [mapPin, setMapPin] = useState<MapPermalinkPin | null>(() => permalink?.pin ?? null);
+  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(null);
+  const [currentLocationBusy, setCurrentLocationBusy] = useState(false);
   const [mapPinRemoving, setMapPinRemoving] = useState(false);
   const [mapPinSelecting, setMapPinSelecting] = useState(false);
   const [fpvSelecting, setFpvSelecting] = useState(false);
@@ -444,6 +447,8 @@ export default function App() {
   const permalinkAppliedRef = useRef(false);
   const permalinkDetachedRef = useRef(false);
   const mapPinPlacedAtRef = useRef<number | null>(null);
+  const currentLocationRequestRef = useRef(0);
+  const currentLocationRecenterRef = useRef(false);
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
@@ -1622,6 +1627,7 @@ export default function App() {
       ways: gpx ? ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })) : [],
       marks: gpx && showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
       mapPin: viewMode === 'map' && mapProjection && mapPin ? mapProjection.project(mapPin) : null,
+      currentLocation: viewMode === 'map' && mapProjection && currentLocation ? mapProjection.project(currentLocation) : null,
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
@@ -1631,11 +1637,18 @@ export default function App() {
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [baseMapStyle, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [baseMapStyle, currentLocation, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
   }, [model]);
+
+  useLayoutEffect(() => {
+    const location = model?.currentLocation;
+    if (!apart || !currentLocationRecenterRef.current || !location) return;
+    currentLocationRecenterRef.current = false;
+    engineRef.current?.centerViewOnMapPoint(location.x, location.y);
+  }, [apart, model]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -2444,6 +2457,40 @@ export default function App() {
     addAction('map_pin_placement_started');
     engineRef.current?.startMapPinPlacement();
   };
+  const showCurrentLocation = async () => {
+    if (viewMode !== 'map' || !mapReady) return;
+    const requestId = ++currentLocationRequestRef.current;
+    setCurrentLocationBusy(true);
+    try {
+      const location = await requestCurrentLocation(typeof navigator === 'undefined' ? undefined : navigator.geolocation);
+      if (requestId !== currentLocationRequestRef.current) return;
+      detachPermalink('map_center');
+      currentLocationRecenterRef.current = apartRef.current;
+      setCurrentLocation(location);
+      setMapViewport((viewportState) => ({
+        lat: location.lat,
+        lon: location.lon,
+        scale: viewportState?.scale ?? gpxProjection?.scale ?? 1,
+      }));
+    } catch (error) {
+      if (requestId !== currentLocationRequestRef.current) return;
+      const kind = error instanceof CurrentLocationError ? error.kind : 'unknown';
+      const message =
+        kind === 'unsupported'
+          ? copy.toast.currentLocationUnsupported
+          : kind === 'permission-denied'
+            ? copy.toast.currentLocationPermissionDenied
+            : kind === 'timeout'
+              ? copy.toast.currentLocationTimeout
+              : kind === 'unavailable'
+                ? copy.toast.currentLocationUnavailable
+                : copy.toast.currentLocationFailed;
+      reportWarning('get_current_location', error, { reason: kind });
+      setToast(message);
+    } finally {
+      if (requestId === currentLocationRequestRef.current) setCurrentLocationBusy(false);
+    }
+  };
   const commitMapPinLabel = (label: string) => {
     const normalized = normalizeMapPinLabel(label);
     if (!mapPin || mapPin.label === normalized) return;
@@ -2658,6 +2705,11 @@ export default function App() {
                       />
                     )}
                   </span>
+                </div>
+              )}
+              {viewMode === 'map' && currentLocation && (
+                <div className="pin current-location" data-piece="pin" data-current-location="" drawable="" role="img" aria-label={copy.ui.currentLocation}>
+                  <span className="current-location-marker" aria-hidden="true" />
                 </div>
               )}
               {viewMode === 'gpx' && ways.map((way, index) => (
@@ -3321,6 +3373,7 @@ export default function App() {
               {viewMode === 'map' && (
                 <>
                   <span className="well" data-well="pin" />
+                  <span className="well" data-well="location" />
                   <span className="well" data-well="permalink" />
                 </>
               )}
@@ -3386,6 +3439,31 @@ export default function App() {
                   <path d="M12 21s7-6.2 7-12A7 7 0 0 0 5 9c0 5.8 7 12 7 12Z" />
                   <circle cx="12" cy="9" r="2.4" />
                 </svg>
+              </button>
+            )}
+            {viewMode === 'map' && (
+              <button
+                type="button"
+                className="key key-location"
+                data-piece="key"
+                data-key="location"
+                data-latched={currentLocationBusy ? '' : undefined}
+                drawable=""
+                aria-label={copy.ui.currentLocation}
+                aria-busy={currentLocationBusy}
+                title={copy.ui.currentLocation}
+                disabled={!mapReady}
+                onClick={() => void showCurrentLocation()}
+              >
+                {fb ? (
+                  <KeyFace icon="location" label={copy.ui.currentLocation} />
+                ) : (
+                  <svg className="location-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="12" r="6.8" />
+                    <circle cx="12" cy="12" r="2.2" />
+                    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                  </svg>
+                )}
               </button>
             )}
             {viewMode === 'map' && (
