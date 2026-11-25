@@ -2815,6 +2815,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     const onDown = (ev: PointerEvent) => {
       if (ev.button !== 0 || !model?.route.length) return;
       ev.preventDefault();
+      // Another finger while one is carrying the runner: it is left out, and the runner stays with the first. (Should the
+      // first finger have lost its capture without a lift or a cancel reaching us, it is not holding the runner any more.)
+      if (profileDragId !== null && profileDragId !== ev.pointerId && el.hasPointerCapture(profileDragId)) return;
       if (flight) leaveFlightAtCurrentView();
       profileDragId = ev.pointerId;
       el.setPointerCapture(ev.pointerId);

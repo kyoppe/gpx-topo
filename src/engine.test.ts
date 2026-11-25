@@ -307,18 +307,26 @@ describe('fallback touch gestures', () => {
       const root = document.createElement('div');
       const profile = document.createElement('div');
       profile.dataset.profile = '';
-      profile.setPointerCapture = vi.fn();
-      profile.hasPointerCapture = vi.fn(() => false);
+      // the capture a finger holds, as a browser keeps it until the lift or the cancel
+      const held = new Set<number>();
+      profile.setPointerCapture = vi.fn((id: number) => { held.add(id); });
+      profile.releasePointerCapture = vi.fn((id: number) => { held.delete(id); });
+      profile.hasPointerCapture = vi.fn((id: number) => held.has(id));
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      // a profile whose x is the screen x: the km asked for says which finger moved the runner
+      Object.defineProperty(svg, 'getScreenCTM', { value: () => ({ inverse: () => ({}) }) });
+      vi.stubGlobal('DOMPoint', class { constructor(public x: number, public y: number) {} matrixTransform() { return this; } });
       const cursor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       cursor.dataset.cursor = '';
-      profile.append(cursor);
+      profile.append(svg, cursor);
       root.append(profile);
       document.body.append(root);
       const scene = touchScene({ e: 1 }, { renderPath: 'fallback', uiRoot: root });
-      scene.engine.setModel({ ...model, route: [[0, 0, 0]] as unknown as EngineModel['route'] });
-      const onProfile = (type: string, id: number) =>
-        pointer(profile, type, 300, 300, { pointerId: id, pointerType: 'touch' });
-      return { ...scene, onProfile };
+      const profileKm = vi.fn((x: number) => x);
+      scene.engine.setModel({ ...model, route: [[0, 0, 0]] as unknown as EngineModel['route'], profileKm });
+      const onProfile = (type: string, id: number, x = 300) =>
+        pointer(profile, type, x, 300, { pointerId: id, pointerType: 'touch' });
+      return { ...scene, onProfile, profileKm };
     }
 
     it('leaves a second finger on the canvas out while a finger carries the runner along the profile', () => {
@@ -339,6 +347,42 @@ describe('fallback touch gestures', () => {
       touch('pointerup', 2, 700, 450);
       touch('pointerup', 3, 900, 400);
       onProfile('pointerup', 1);
+    });
+
+    it('keeps the runner with the first finger when a second one goes down on the profile too', () => {
+      const { onProfile, profileKm } = withProfile();
+      onProfile('pointerdown', 1, 100);
+      onProfile('pointerdown', 2, 200);
+      onProfile('pointermove', 2, 250);
+      onProfile('pointermove', 1, 120);
+      // only the first finger carried the runner: 100 (down) and 120 (move)
+      expect(profileKm.mock.calls.map(([x]) => x)).toEqual([100, 120]);
+      onProfile('pointerup', 2, 250);
+      onProfile('pointermove', 1, 130);
+      expect(profileKm.mock.calls.map(([x]) => x)).toEqual([100, 120, 130]);
+    });
+
+    it('lets the next finger take the runner once the first has lifted or been cancelled', () => {
+      for (const end of ['pointerup', 'pointercancel']) {
+        const { onProfile, profileKm } = withProfile();
+        onProfile('pointerdown', 1, 100);
+        onProfile('pointerdown', 2, 200);
+        onProfile(end, 1, 100);
+        onProfile('pointerdown', 3, 300);
+        onProfile('pointermove', 3, 310);
+        expect(profileKm.mock.calls.map(([x]) => x)).toEqual([100, 300, 310]);
+        document.body.replaceChildren();
+      }
+    });
+
+    it('does not stay stuck on a finger that lost its capture without a lift or a cancel', () => {
+      const { onProfile, profileKm } = withProfile();
+      onProfile('pointerdown', 1, 100);
+      // the browser took the capture away (the element changed under the finger): no up or cancel came
+      const profile = document.querySelector<HTMLElement>('[data-profile]')!;
+      profile.releasePointerCapture(1);
+      onProfile('pointerdown', 2, 200);
+      expect(profileKm.mock.calls.map(([x]) => x)).toEqual([100, 200]);
     });
 
     it('takes the canvas back once the runner finger is lifted', () => {
