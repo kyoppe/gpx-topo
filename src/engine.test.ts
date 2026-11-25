@@ -407,6 +407,32 @@ describe('fallback touch gestures', () => {
 });
 
 describe('camera gesture completion', () => {
+  it('keeps the map display centre as the pivot after the view has moved', () => {
+    const scene = setup();
+    const terrain = buildTerrain(
+      { nx: 1, ny: 1, values: new Float32Array([100, 100, 100, 100]), source: 'gsi-dem' },
+      model.mapWidth,
+      model.mapHeight,
+      1,
+    );
+    scene.engine.setModel({ ...model, mapMode: true, terrain });
+    const debug = (window as unknown as {
+      __gpxTopo: {
+        pose(value: { e?: number; pan?: number[] }): void;
+        st: { yawT: number; panT: number[] };
+      };
+    }).__gpxTopo;
+    debug.pose({ e: 1, pan: [120, -60, 0] });
+    scene.paint();
+    const before = [...debug.st.panT];
+
+    pointer(scene.canvas, 'pointerdown');
+    pointer(scene.canvas, 'pointermove', 700, 420);
+
+    expect(debug.st.yawT).not.toBe(0);
+    expect(debug.st.panT).not.toEqual(before);
+  });
+
   it('reports rotation and tilt once on release, including duration and reversals', () => {
     const { canvas, callbacks } = cameraSetup();
     pointer(canvas, 'pointerdown');
