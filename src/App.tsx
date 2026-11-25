@@ -28,6 +28,7 @@ import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { shouldSwitchToGpxAfterFileLoad, toggleViewMode, type ViewMode } from './mapMode';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } from './geolocation';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
@@ -369,6 +370,8 @@ export default function App() {
   const [mapSearchBusy, setMapSearchBusy] = useState(false);
   const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [mapPin, setMapPin] = useState<MapPermalinkPin | null>(() => permalink?.pin ?? null);
+  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(null);
+  const [currentLocationBusy, setCurrentLocationBusy] = useState(false);
   const [mapPinRemoving, setMapPinRemoving] = useState(false);
   const [mapPinSelecting, setMapPinSelecting] = useState(false);
   const [fpvSelecting, setFpvSelecting] = useState(false);
@@ -445,6 +448,8 @@ export default function App() {
   const permalinkAppliedRef = useRef(false);
   const permalinkDetachedRef = useRef(false);
   const mapPinPlacedAtRef = useRef<number | null>(null);
+  const currentLocationRequestRef = useRef(0);
+  const currentLocationRecenterRef = useRef(false);
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
@@ -1634,6 +1639,7 @@ export default function App() {
       ways: gpx ? ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })) : [],
       marks: gpx && showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
       mapPin: viewMode === 'map' && mapProjection && mapPin ? mapProjection.project(mapPin) : null,
+      currentLocation: viewMode === 'map' && mapProjection && currentLocation ? mapProjection.project(currentLocation) : null,
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
@@ -1643,11 +1649,18 @@ export default function App() {
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [baseMapStyle, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [baseMapStyle, currentLocation, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
   }, [model]);
+
+  useLayoutEffect(() => {
+    const location = model?.currentLocation;
+    if (!apart || !currentLocationRecenterRef.current || !location) return;
+    currentLocationRecenterRef.current = false;
+    engineRef.current?.centerViewOnMapPoint(location.x, location.y);
+  }, [apart, model]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -2457,6 +2470,40 @@ export default function App() {
     addAction('map_pin_placement_started');
     engineRef.current?.startMapPinPlacement();
   };
+  const showCurrentLocation = async () => {
+    if (viewMode !== 'map' || !mapReady) return;
+    const requestId = ++currentLocationRequestRef.current;
+    setCurrentLocationBusy(true);
+    try {
+      const location = await requestCurrentLocation(typeof navigator === 'undefined' ? undefined : navigator.geolocation);
+      if (requestId !== currentLocationRequestRef.current) return;
+      detachPermalink('map_center');
+      currentLocationRecenterRef.current = apartRef.current;
+      setCurrentLocation(location);
+      setMapViewport((viewportState) => ({
+        lat: location.lat,
+        lon: location.lon,
+        scale: viewportState?.scale ?? gpxProjection?.scale ?? 1,
+      }));
+    } catch (error) {
+      if (requestId !== currentLocationRequestRef.current) return;
+      const kind = error instanceof CurrentLocationError ? error.kind : 'unknown';
+      const message =
+        kind === 'unsupported'
+          ? copy.toast.currentLocationUnsupported
+          : kind === 'permission-denied'
+            ? copy.toast.currentLocationPermissionDenied
+            : kind === 'timeout'
+              ? copy.toast.currentLocationTimeout
+              : kind === 'unavailable'
+                ? copy.toast.currentLocationUnavailable
+                : copy.toast.currentLocationFailed;
+      reportWarning('get_current_location', error, { reason: kind });
+      setToast(message);
+    } finally {
+      if (requestId === currentLocationRequestRef.current) setCurrentLocationBusy(false);
+    }
+  };
   const commitMapPinLabel = (label: string) => {
     const normalized = normalizeMapPinLabel(label);
     if (!mapPin || mapPin.label === normalized) return;
@@ -2588,60 +2635,81 @@ export default function App() {
 
             <div className="map" data-map="" style={mapStyle}>
               <StageHost host={fb?.mapControls ?? null}>
-              <div
-                className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
-                data-piece="content"
-                data-map-control=""
-                drawable=""
-                role="group"
-                aria-label={copy.ui.mapType}
-              >
-                <button
-                  type="button"
-                  className="map-switch-toggle"
-                  aria-expanded={mapSwitchOpen}
-                  onClick={() => setMapSwitchOpen((open) => !open)}
+              <div className="map-actions">
+                {viewMode === 'map' && (!native || !apart) && (
+                  <button
+                    type="button"
+                    className="map-location-button"
+                    data-piece="content"
+                    data-map-control=""
+                    drawable=""
+                    aria-label={copy.ui.currentLocation}
+                    aria-busy={currentLocationBusy}
+                    disabled={!mapReady}
+                    onClick={() => void showCurrentLocation()}
+                  >
+                    <svg className="location-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <circle cx="12" cy="12" r="6.8" />
+                      <circle cx="12" cy="12" r="2.2" />
+                      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                    </svg>
+                  </button>
+                )}
+                <div
+                  className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
+                  data-piece="content"
+                  data-map-control=""
+                  drawable=""
+                  role="group"
+                  aria-label={copy.ui.mapType}
                 >
-                  <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
+                  <button
+                    type="button"
+                    className="map-switch-toggle"
+                    aria-expanded={mapSwitchOpen}
+                    onClick={() => setMapSwitchOpen((open) => !open)}
+                  >
+                    <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
                   {mapLoading && (
                     <span className="map-switch-loading" role="status" aria-live="polite">
                       <i className="map-spinner" aria-hidden="true" />
                       {copy.ui.mapLoading}
                     </span>
                   )}
-                  <b className="map-switch-chevron" aria-hidden="true">
-                    {mapSwitchOpen ? '⌃' : '⌄'}
-                  </b>
-                </button>
-                {mapSwitchOpen && (
-                  <>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
-                      {copy.ui.standardMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
-                      {copy.ui.paleMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
-                      {copy.ui.blankMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
-                      {copy.ui.aerial}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
-                      {copy.ui.photoNames}
-                    </button>
-                    <span className="map-switch-divider" aria-hidden="true" />
-                    <button
-                      type="button"
-                      className="map-switch-option"
-                      aria-pressed={hillshade}
-                      disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
-                      onClick={toggleHillshade}
-                    >
-                      {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
-                    </button>
-                  </>
-                )}
+                    <b className="map-switch-chevron" aria-hidden="true">
+                      {mapSwitchOpen ? '⌃' : '⌄'}
+                    </b>
+                  </button>
+                  {mapSwitchOpen && (
+                    <>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
+                        {copy.ui.standardMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
+                        {copy.ui.paleMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
+                        {copy.ui.blankMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
+                        {copy.ui.aerial}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
+                        {copy.ui.photoNames}
+                      </button>
+                      <span className="map-switch-divider" aria-hidden="true" />
+                      <button
+                        type="button"
+                        className="map-switch-option"
+                        aria-pressed={hillshade}
+                        disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
+                        onClick={toggleHillshade}
+                      >
+                        {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               </StageHost>
               {viewMode === 'map' && mapPin && (
@@ -2671,6 +2739,11 @@ export default function App() {
                       />
                     )}
                   </span>
+                </div>
+              )}
+              {viewMode === 'map' && currentLocation && (
+                <div className="pin current-location" data-piece="pin" data-current-location="" drawable="" role="img" aria-label={copy.ui.currentLocation}>
+                  <span className="current-location-marker" aria-hidden="true" />
                 </div>
               )}
               {viewMode === 'gpx' && ways.map((way, index) => (
@@ -3378,9 +3451,9 @@ export default function App() {
                   <circle className="map-icon-pin-hole" cx="19" cy="4.5" r="1.1" />
                 </svg>
               ) : fb ? (
-                <KeyFace icon="route" label={gpxActionLabel} />
+                <KeyFace icon="route" label={copy.ui.gpxMode} />
               ) : (
-                gpxActionLabel
+                copy.ui.gpxMode
               )}
             </button>
             {viewMode === 'map' && (

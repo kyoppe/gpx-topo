@@ -35,6 +35,7 @@ export type EngineModel = {
   /** Marks on the map (map px) that are not waypoints, such as the high point. */
   marks: { id: string; x: number; y: number }[];
   mapPin?: { x: number; y: number } | null;
+  currentLocation?: { x: number; y: number } | null;
   date: string;
   lat: number;
   lon: number;
@@ -2694,10 +2695,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const p = get(el, 'pin');
       const spot = el.hasAttribute('data-map-pin')
         ? model?.mapPin
+        : el.hasAttribute('data-current-location')
+          ? model?.currentLocation
         : model?.ways.find((w) => w.id === el.dataset.way) ?? model?.marks.find((m) => m.id === el.dataset.mark);
       p.at = spot ? { x: spot.x, y: spot.y } : { x: 0, y: 0 };
       p.hidden = el.hasAttribute('data-map-pin') && !spot;
-      p.stand = 26;
+      p.stand = el.hasAttribute('data-current-location') ? 16 : 26;
       return p;
     });
     const hikers = of('hiker').map((el) => {

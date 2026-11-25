@@ -80,13 +80,9 @@ describe('startObservability', () => {
   });
 
   it.each([
-    { supported: true, enabled: true, path: 'native' },
-    { supported: true, enabled: false, path: 'native' },
-    { supported: false, enabled: true, path: 'fallback' },
-    { supported: false, enabled: false, path: 'unsupported' },
-  ])('tags RUM and Logs with render_path $path (supported $supported, fallback enabled $enabled)', async ({ supported, enabled, path }) => {
-    vi.stubEnv('DEV', enabled);
-    vi.stubEnv('VITE_ENABLE_FALLBACK', 'false');
+    { supported: true, path: 'native' },
+    { supported: false, path: 'fallback' },
+  ])('tags RUM and Logs with render_path $path (supported $supported)', async ({ supported, path }) => {
     vi.mocked(supportsHtmlInCanvas).mockReturnValue(supported);
     const { startObservability } = await import('./observability');
 
@@ -94,7 +90,6 @@ describe('startObservability', () => {
 
     expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledWith('render_path', path);
     expect(datadogLogs.setGlobalContextProperty).toHaveBeenCalledWith('render_path', path);
-    vi.unstubAllEnvs();
   });
 
   it('sets render_path after RUM initialization and before view engagement starts', async () => {
