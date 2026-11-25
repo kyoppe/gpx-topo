@@ -2882,6 +2882,7 @@ html[data-fb-drag] .fb-panel-body {
     width: 100%;
     flex-wrap: nowrap;
     gap: var(--fb-compact-gap);
+    padding: 8px 0;
   }
 
   .fb-hud .key-mode,
