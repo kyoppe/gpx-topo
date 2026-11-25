@@ -65,3 +65,13 @@ const SHEET_SHARE = 0.6;
 export function sheetOpenHeight(windowHeight: number): number {
   return Math.min(SHEET_MAX_HEIGHT, Math.round(windowHeight * SHEET_SHARE));
 }
+
+/**
+ * A bar this narrow shows its keys as pictures, and has no room for the first person view and the aerial shots as keys of
+ * their own: one key opens them instead. Keep in step with the `max-width: 560px` media query of the bar in styles.css.
+ */
+export const COMPACT_BAR_MAX_WIDTH = 560;
+
+export function isCompactBar(width: number): boolean {
+  return width <= COMPACT_BAR_MAX_WIDTH;
+}

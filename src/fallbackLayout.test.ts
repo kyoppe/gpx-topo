@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FRAME_X, FRAME_Y } from './engine';
-import { DOCK_WIDTH, FALLBACK_EDGE, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, isDocked, orientationOf, sheetOpenHeight } from './fallbackLayout';
+import { COMPACT_BAR_MAX_WIDTH, DOCK_WIDTH, FALLBACK_EDGE, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, isCompactBar, isDocked, orientationOf, sheetOpenHeight } from './fallbackLayout';
 
 describe('fallback layout', () => {
   it('fills a tall phone with a tall map, inset by the pad', () => {
@@ -59,5 +59,24 @@ describe('fallback layout', () => {
     expect(sheetOpenHeight(667)).toBe(400);
     expect(sheetOpenHeight(874)).toBe(520);
     expect(sheetOpenHeight(1366)).toBe(520);
+  });
+});
+
+describe('compact bar', () => {
+  it('is a phone held upright, and not a window with room for a key of each', () => {
+    expect(isCompactBar(390)).toBe(true);
+    expect(isCompactBar(COMPACT_BAR_MAX_WIDTH)).toBe(true);
+    expect(isCompactBar(COMPACT_BAR_MAX_WIDTH + 1)).toBe(false);
+    expect(isCompactBar(844)).toBe(false);
+  });
+
+  it('is never the case of a docked window', () => {
+    for (const width of [760, 900, 1366]) expect(isCompactBar(width)).toBe(false);
+  });
+
+  it('matches the width the bar turns to pictures at in the stylesheet', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
+    expect(css).toContain(`@media (max-width: ${COMPACT_BAR_MAX_WIDTH}px) {\n  .fb-hud .key-open,`);
   });
 });

@@ -58,6 +58,7 @@ export type Copy = {
     videoRecordingFailed: string;
     videoSavedFailed: string;
     xPostFailed: string;
+    pickPoint: string;
   };
   ui: {
     mapType: string;
@@ -143,6 +144,7 @@ export type Copy = {
     flyoverResume: string;
     flyoverStop: string;
     fpv: string;
+    fpvMenu: string;
     fpvCancel: string;
     mapManeuver: string;
     mapManeuverMenu: string;
@@ -154,6 +156,7 @@ export type Copy = {
     asteroid: string;
     dollyZoom: string;
     cancelManeuver: string;
+    viewMoves: string;
     captureImage: string;
     recordVideo: string;
     stopVideoRecording: string;
@@ -234,6 +237,7 @@ function makeCopy(language: Language): Copy {
         videoRecordingFailed: '動画を録画できませんでした。',
         videoSavedFailed: '動画を保存できませんでした。',
         xPostFailed: 'Xの投稿画面を開けませんでした。',
+        pickPoint: '地図をタップして、場所を選んでください。',
       },
       ui: {
         mapType: '地図の種類',
@@ -319,6 +323,7 @@ function makeCopy(language: Language): Copy {
         flyoverResume: 'Flyoverを再開',
         flyoverStop: 'Flyoverを停止',
         fpv: 'FPV視点を開始',
+        fpvMenu: 'FPV',
         fpvCancel: 'FPV視点を終了',
         mapManeuver: '空撮',
         mapManeuverMenu: '空撮マニューバ',
@@ -330,6 +335,7 @@ function makeCopy(language: Language): Copy {
         asteroid: 'アステロイド',
         dollyZoom: 'ドリーズーム',
         cancelManeuver: '空撮をキャンセル',
+        viewMoves: '視点を変える',
         captureImage: '画像にする',
         recordVideo: '画面を録画',
         stopVideoRecording: '録画を停止',
@@ -414,6 +420,7 @@ function makeCopy(language: Language): Copy {
       videoRecordingFailed: 'Could not record the video.',
       videoSavedFailed: 'Could not save the video.',
       xPostFailed: 'Could not open the X post composer.',
+      pickPoint: 'Tap the map to choose a spot.',
     },
     ui: {
       mapType: 'Map type',
@@ -499,6 +506,7 @@ function makeCopy(language: Language): Copy {
       flyoverResume: 'Resume Flyover',
       flyoverStop: 'Stop Flyover',
       fpv: 'Start FPV view',
+      fpvMenu: 'FPV',
       fpvCancel: 'Exit FPV view',
       mapManeuver: 'Aerial shot',
       mapManeuverMenu: 'Aerial shot maneuvers',
@@ -510,6 +518,7 @@ function makeCopy(language: Language): Copy {
       asteroid: 'Asteroid',
       dollyZoom: 'Dolly Zoom',
       cancelManeuver: 'Cancel aerial shot',
+      viewMoves: 'Change the view',
       captureImage: 'Capture image',
       recordVideo: 'Record screen',
       stopVideoRecording: 'Stop recording',

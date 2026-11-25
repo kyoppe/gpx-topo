@@ -21,12 +21,12 @@ import { searchGsiAddress } from './gsiSearch';
 import { installFallbackPaint, type FallbackPaint } from './fallbackPaint';
 import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement } from './htmlInCanvas';
 import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
-import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
+import { DOCK_WIDTH, fallbackLayoutFor, isCompactBar, isDocked } from './fallbackLayout';
 import { fallbackPerformanceFor } from './fallbackPerf';
 import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
-import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
+import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
@@ -474,6 +474,8 @@ export default function App() {
 
   // Fallback: a wide, tall window keeps the panel beside the map (the canvas gives it room); a smaller one has a drawer.
   const docked = fb !== null && isDocked(viewport.width, viewport.height);
+  // a narrow bar has one key for the first person view and the aerial shots; a wider one has a key of each, as the scene does
+  const compactBar = fb !== null && isCompactBar(viewport.width);
   const layout = useMemo(
     () => (fb ? fallbackLayoutFor(viewport.width - (docked ? DOCK_WIDTH : 0), viewport.height) : layoutFor(viewport.width, viewport.height)),
     [docked, fb, viewport],
@@ -1222,6 +1224,12 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  // Fallback: choosing a spot is a tap on the map, and nothing on the bar says so
+  const choosingSpot = fpvSelecting || mapManeuver?.phase === 'select';
+  useEffect(() => {
+    if (fb && choosingSpot) setToast(copy.toast.pickPoint);
+  }, [fb, choosingSpot, copy]);
+
   // ---------------------------------------------------------------- waypoints
   /** Where a waypoint `at` km along the route stands (clamped to the route). */
   const placeAt = useCallback(
@@ -1826,15 +1834,16 @@ export default function App() {
   // Fallback: Esc closes the dialog that is up. The engine's own Esc handling knows nothing of these dialogs and
   // would lay the model flat, so this listens first and keeps the key from reaching it.
   useEffect(() => {
-    if (!fb || (!infoOpen && !pop && !fbMedia)) return;
+    if (!fb || (!infoOpen && !pop && !fbMedia && !mapManeuverMenuOpen)) return;
     return listenDialogEscape(() => {
       if (fbMedia) closeFbMedia();
+      else if (mapManeuverMenuOpen) setMapManeuverMenuOpen(false);
       else if (infoOpen) {
         addAction('info_flag_toggled', { open: false });
         setInfoOpen(false);
       } else setPop(null);
     });
-  }, [fb, infoOpen, pop, fbMedia]);
+  }, [fb, infoOpen, pop, fbMedia, mapManeuverMenuOpen]);
 
   // ---------------------------------------------------------------- actions
   const onFile = async (file: File | undefined) => {
@@ -2226,6 +2235,14 @@ export default function App() {
     engineRef.current?.startFpv();
     addAction('fpv_selection_started');
   };
+  /** Fallback, narrow bar: the one key for the view. It opens the menu; while the first person view or an aerial shot is on, it ends it. */
+  const onMovesKey = () => {
+    if (fpvActive || fpvSelecting) toggleFpv();
+    else if (mapManeuverActive) cancelMapManeuver();
+    else setMapManeuverMenuOpen((open) => !open);
+  };
+  const movesKeyShown = compactBar && (fpvAvailable || mapManeuverKeyAvailable || fpvActive || fpvSelecting || mapManeuverActive);
+  const movesRunning = fpvActive || fpvSelecting || mapManeuverActive;
   const selectMapStyle = (style: MapStyle) => {
     detachPermalink('map_style');
     addAction('map_style_changed', { style });
@@ -3051,7 +3068,7 @@ export default function App() {
               </div>
             )}
             </StageHost>
-            {mapManeuverAvailable && mapManeuverMenuOpen && !mapManeuverActive && (
+            {!fb && mapManeuverAvailable && mapManeuverMenuOpen && !mapManeuverActive && (
               <div className="maneuver-menu-layer" data-hud="">
                 <div
                   className="maneuver-menu"
@@ -3258,7 +3275,7 @@ export default function App() {
                 </svg>
               </button>
             )}
-            {fpvAvailable && (
+            {!compactBar && fpvAvailable && (
               <button
                 type="button"
                 className={`key key-fpv${fpvActive ? ' fpv-active' : ''}${fpvSelecting ? ' fpv-selecting' : ''}`}
@@ -3315,7 +3332,7 @@ export default function App() {
             </button>
               </>
             )}
-            {mapManeuverKeyAvailable && !mapManeuverActive && (
+            {!compactBar && mapManeuverKeyAvailable && !mapManeuverActive && (
               <button
                 type="button"
                 className="key key-maneuver"
@@ -3330,7 +3347,7 @@ export default function App() {
                 ✦
               </button>
             )}
-            {mapManeuverActive && (
+            {!compactBar && mapManeuverActive && (
               <button
                 type="button"
                 className="key key-maneuver-cancel"
@@ -3342,6 +3359,29 @@ export default function App() {
                 onClick={cancelMapManeuver}
               >
                 ×
+              </button>
+            )}
+            {movesKeyShown && (
+              <button
+                type="button"
+                className={`key key-moves${mapManeuverActive ? ' key-maneuver-cancel' : ''}`}
+                data-piece="key"
+                // the keys the page dims and lets through while something runs, and the engine's pointer check, know these names
+                data-key={fpvActive || fpvSelecting ? 'fpv' : mapManeuverActive ? 'map-cancel' : 'moves'}
+                data-latched={fpvActive || fpvSelecting ? '' : undefined}
+                drawable=""
+                aria-label={fpvActive || fpvSelecting ? copy.ui.fpvCancel : mapManeuverActive ? copy.ui.cancelManeuver : copy.ui.viewMoves}
+                aria-expanded={movesRunning ? undefined : mapManeuverMenuOpen}
+                onClick={onMovesKey}
+              >
+                {movesRunning ? (
+                  '×'
+                ) : (
+                  <svg className="moves-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
               </button>
             )}
             <button
@@ -3491,6 +3531,52 @@ export default function App() {
             <button type="button" className="fb-dialog-close" data-autofocus="" aria-label={copy.ui.closeDialog} onClick={toggleInfo}>
               ×
             </button>
+          </FallbackDialog>
+        </StageHost>
+      )}
+
+      {fb && mapManeuverAvailable && mapManeuverMenuOpen && !mapManeuverActive && (
+        <StageHost host={fb.modal}>
+          <FallbackDialog
+            label={compactBar ? copy.ui.viewMoves : copy.ui.mapManeuverMenu}
+            closeLabel={copy.ui.close}
+            className="fb-moves-dialog"
+            onClose={() => setMapManeuverMenuOpen(false)}
+          >
+            <div className="fb-moves">
+              <strong>{compactBar ? copy.ui.viewMoves : copy.ui.mapManeuverMenu}</strong>
+              {compactBar && fpvAvailable && (
+                <>
+                  <button
+                    type="button"
+                    className="pop-btn pop-ok"
+                    data-autofocus=""
+                    aria-label={copy.ui.fpv}
+                    onClick={() => {
+                      setMapManeuverMenuOpen(false);
+                      toggleFpv();
+                    }}
+                  >
+                    {copy.ui.fpvMenu}
+                  </button>
+                  <div className="fb-moves-divider" role="separator" />
+                </>
+              )}
+              {MAP_MANEUVER_KINDS.map((kind, index) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className="pop-btn"
+                  data-autofocus={!(compactBar && fpvAvailable) && index === 0 ? '' : undefined}
+                  onClick={() => startMapManeuver(kind)}
+                >
+                  {copy.ui[kind]}
+                </button>
+              ))}
+              <button type="button" className="pop-btn fb-moves-close" onClick={() => setMapManeuverMenuOpen(false)}>
+                {copy.ui.close}
+              </button>
+            </div>
           </FallbackDialog>
         </StageHost>
       )}

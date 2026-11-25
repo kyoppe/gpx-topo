@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAP_MANEUVERS, MAP_MANEUVR_APPROACH_SECONDS, maneuverActionPhase } from './mapManeuver';
+import { MAP_MANEUVER_KINDS, MAP_MANEUVERS, MAP_MANEUVR_APPROACH_SECONDS, maneuverActionPhase } from './mapManeuver';
 
 describe('map camera maneuvers', () => {
   it('keeps the approach and action timings explicit', () => {
@@ -18,5 +18,10 @@ describe('map camera maneuvers', () => {
     expect(maneuverActionPhase('dronie', 8)).toBe('hold');
     expect(maneuverActionPhase('circle', 11.99)).toBe('move');
     expect(maneuverActionPhase('rocket', 10)).toBe('hold');
+  });
+
+  it('lists every maneuver once, for a menu', () => {
+    expect(MAP_MANEUVER_KINDS).toEqual(['dronie', 'circle', 'rocket', 'helix', 'boomerang', 'asteroid', 'dollyZoom']);
+    expect(new Set(MAP_MANEUVER_KINDS).size).toBe(Object.keys(MAP_MANEUVERS).length);
   });
 });
