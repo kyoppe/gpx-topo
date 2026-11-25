@@ -407,6 +407,91 @@ describe('fallback touch gestures', () => {
 });
 
 describe('camera gesture completion', () => {
+  type NativeDebug = {
+    st: {
+      e: number; eT: number; yaw: number; yawT: number; tilt: number; tiltT: number;
+      zoom: number; zoomT: number; pan: number[]; panT: number[];
+    };
+    mapToScreen(mx: number, my: number): [number, number];
+  };
+  const nativeScene = () => {
+    const scene = setup(100, { renderPath: 'native' });
+    const terrain = buildTerrain(
+      { nx: 1, ny: 1, values: new Float32Array([100, 100, 100, 100]), source: 'gsi-dem' },
+      model.mapWidth,
+      model.mapHeight,
+      1,
+    );
+    scene.engine.setModel({ ...model, mapMode: true, terrain });
+    const debug = (window as unknown as { __gpxTopo: NativeDebug }).__gpxTopo;
+    return { scene, debug };
+  };
+  const settleNativeCamera = (scene: ReturnType<typeof setup>, debug: NativeDebug) => {
+    debug.st.yaw = debug.st.yawT;
+    debug.st.tilt = debug.st.tiltT;
+    debug.st.zoom = debug.st.zoomT;
+    debug.st.pan = [...debug.st.panT];
+    scene.paint();
+  };
+  const screenDistance = (a: [number, number], b: [number, number]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const mapPointAtScreen = (debug: NativeDebug, target: [number, number]) => {
+    let x = model.mapWidth / 2;
+    let y = model.mapHeight / 2;
+    for (let i = 0; i < 12; i += 1) {
+      const p = debug.mapToScreen(x, y);
+      const px = debug.mapToScreen(x + 1, y);
+      const py = debug.mapToScreen(x, y + 1);
+      const j00 = px[0] - p[0];
+      const j01 = py[0] - p[0];
+      const j10 = px[1] - p[1];
+      const j11 = py[1] - p[1];
+      const det = j00 * j11 - j01 * j10;
+      const ex = target[0] - p[0];
+      const ey = target[1] - p[1];
+      x += (ex * j11 - j01 * ey) / det;
+      y += (j00 * ey - ex * j10) / det;
+    }
+    return [x, y] as [number, number];
+  };
+
+  it('keeps the terrain centre as the native rotation pivot while the terrain fits', () => {
+    const { scene, debug } = nativeScene();
+    debug.st.e = debug.st.eT = 1;
+    debug.st.zoom = debug.st.zoomT = 1;
+    scene.paint();
+    const center = debug.mapToScreen(model.mapWidth / 2, model.mapHeight / 2);
+
+    pointer(scene.canvas, 'pointerdown');
+    pointer(scene.canvas, 'pointermove', 700, 400);
+    settleNativeCamera(scene, debug);
+
+    expect(screenDistance(debug.mapToScreen(model.mapWidth / 2, model.mapHeight / 2), center)).toBeLessThan(0.1);
+    pointer(scene.canvas, 'pointerup', 700, 400);
+  });
+
+  it('keeps the display-centre ground point as the native pivot when the terrain overflows', () => {
+    const { scene, debug } = nativeScene();
+    debug.st.e = debug.st.eT = 0;
+    scene.paint();
+    const displayCenter = debug.mapToScreen(model.mapWidth / 2, model.mapHeight / 2);
+    debug.st.e = debug.st.eT = 1;
+    debug.st.zoom = debug.st.zoomT = 2;
+    scene.paint();
+    const corners = [[0, 0], [model.mapWidth, 0], [model.mapWidth, model.mapHeight], [0, model.mapHeight]]
+      .map(([x, y]) => debug.mapToScreen(x, y));
+    expect(corners.some(([x]) => x < 0 || x > 1200)).toBe(true);
+    const displayPivot = mapPointAtScreen(debug, displayCenter);
+    const center = debug.mapToScreen(model.mapWidth / 2, model.mapHeight / 2);
+
+    pointer(scene.canvas, 'pointerdown');
+    pointer(scene.canvas, 'pointermove', 700, 400);
+    settleNativeCamera(scene, debug);
+
+    expect(screenDistance(debug.mapToScreen(displayPivot[0], displayPivot[1]), displayCenter)).toBeLessThan(0.1);
+    expect(screenDistance(debug.mapToScreen(model.mapWidth / 2, model.mapHeight / 2), center)).toBeGreaterThan(20);
+    pointer(scene.canvas, 'pointerup', 700, 400);
+  });
+
   it('uses the display pivot as soon as projected terrain exceeds the screen width', () => {
     expect(fitsWithinScreenWidth([0, 1200], 1200)).toBe(true);
     expect(fitsWithinScreenWidth([-0.1, 1200], 1200)).toBe(false);
