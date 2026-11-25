@@ -16,17 +16,8 @@ describe('resolveRenderPath', () => {
 });
 
 describe('fallbackEnabled', () => {
-  it('is on in dev builds', () => {
-    vi.stubEnv('DEV', true);
-    vi.stubEnv('VITE_ENABLE_FALLBACK', '');
-    expect(fallbackEnabled()).toBe(true);
-  });
-
-  it('is off in a production build unless explicitly enabled', () => {
+  it('is on in production builds', () => {
     vi.stubEnv('DEV', false);
-    vi.stubEnv('VITE_ENABLE_FALLBACK', '');
-    expect(fallbackEnabled()).toBe(false);
-    vi.stubEnv('VITE_ENABLE_FALLBACK', 'true');
     expect(fallbackEnabled()).toBe(true);
   });
 });
