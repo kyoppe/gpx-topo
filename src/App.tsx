@@ -36,6 +36,7 @@ import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
 import { detectLanguage, getCopy, type Copy } from './i18n';
+import { resolveInitialMapViewport, shouldWaitForInitialMapViewport, type GpxRestoreState } from './initialMapViewport';
 import { addAction, reportError, reportInfo, reportWarning, startVital } from './observability';
 import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, saveView, startNow, type MapViewport } from './session';
 import { buildTerrain } from './terrain';
@@ -149,7 +150,6 @@ type Pop =
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
 
 type GpxSource = 'user';
-type GpxRestoreState = 'pending' | 'none' | 'ready';
 type PendingGpxFile = { file: File; xml: string; route: GpxRoute };
 
 type LatestMedia = 'photo' | 'video';
@@ -996,16 +996,16 @@ export default function App() {
       const fitted = permalink?.center && permalink.area ? fromPermalinkView(permalinkFrame, permalink.area, permalink.pan) : null;
       if (fitted) permalinkFitRef.current = { pan: fitted.pan };
       // a session GPX still restoring outranks the default view: wait for it, as the map did before
-      if (!permalink?.center && !gpxProjection && gpxRestoreState === 'pending') return;
-      setMapViewport({
-        lat: permalink?.center?.lat ?? gpxProjection?.centerLat ?? DEFAULT_MAP_VIEWPORT.lat,
-        lon: permalink?.center?.lon ?? gpxProjection?.centerLon ?? DEFAULT_MAP_VIEWPORT.lon,
-        scale: fitted
-          ? fitted.scale
-          : permalink?.center
-            ? (gpxProjection?.scale ?? DEFAULT_MAP_VIEWPORT.scale)
-            : (savedView?.mapViewport?.scale ?? gpxProjection?.scale ?? DEFAULT_MAP_VIEWPORT.scale),
-      });
+      if (shouldWaitForInitialMapViewport(permalink?.center ?? null, gpxProjection, gpxRestoreState)) return;
+      setMapViewport(
+        resolveInitialMapViewport({
+          permalinkCenter: permalink?.center ?? null,
+          fittedScale: fitted?.scale ?? null,
+          savedMapViewport: savedView?.mapViewport ?? null,
+          gpxProjection,
+          defaultViewport: DEFAULT_MAP_VIEWPORT,
+        }),
+      );
       return;
     }
     viewRestoredRef.current = true;
@@ -2569,7 +2569,7 @@ export default function App() {
                     <path className="route-line" d={routeD} />
                   </svg>
                 )}
-                {!terrain && <span className="terrain-status">{route ? copy.ui.loadingTerrain : copy.ui.loadingGpx}</span>}
+                {!terrain && <span className="terrain-status">{viewMode === 'gpx' ? copy.ui.loadingGpx : copy.ui.loadingTerrain}</span>}
               </div>
             ))}
             <canvas ref={photoRef} aria-hidden="true" style={{ display: 'none' }} />

@@ -254,7 +254,7 @@ includes `@context.status`: `ok`, `error`, or `aborted`.
 
 | `@vital.name` | Measured interval | Context fields |
 | --- | --- | --- |
-| `gpx_parse` | The `parseGpx()` call, excluding fetching, file reads, and waypoint preparation | `source`: `file`, `restore`, or `fixture`; `point_count` on success |
+| `gpx_parse` | The `parseGpx()` call, excluding fetching, file reads, and waypoint preparation | `source`: `file` or `restore`; `point_count` on success |
 | `dem_load` | Each `loadDemGrid()` call | `phase`: `coarse` or `fine`; `nx`, `ny` |
 | `html_in_canvas_engine_start` | From just before `createEngine()` to its return or throw | `is_webview`, `user_agent_data_brands` when available |
 | `html_in_canvas_first_paint` | Engine ready to the existing first successful paint callback | `is_webview`, `user_agent_data_brands` when available |
