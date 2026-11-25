@@ -2854,9 +2854,14 @@ html[data-fb-drag] .fb-panel-body {
   }
 }
 
-/* what the scene alone can do (the photo, the video, the drone moves, the first person view) is left out here */
+/* the photo and the video are made here too; the dialog after them takes the share sheet's place of the scene's print */
 .fb-hud .key-camera,
-.fb-hud .key-video,
+.fb-hud .key-video {
+  width: auto;
+  padding: 0 10px;
+}
+
+/* what the scene alone can do (the posting to X, the drone moves, the first person view) is left out here */
 .fb-hud .key-x,
 .fb-hud .key-maneuver,
 .fb-hud .key-maneuver-cancel,
@@ -3120,6 +3125,39 @@ html[data-fb-drag] .fb-panel-body {
   color: #f2efe6;
   font: 400 24px/1 var(--sans);
   cursor: pointer;
+}
+
+/* the photo or the video just made, with the keys to share or save it */
+.fb-media-dialog {
+  width: min(440px, 100%);
+  border-radius: 14px;
+  background: #f6f7f8;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.fb-media {
+  display: flex;
+  min-height: 0;
+  width: 100%;
+  flex-direction: column;
+}
+
+.fb-media img,
+.fb-media video {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  max-height: calc(100vh - var(--fb-edge) * 2 - 72px);
+  background: #18202b;
+  object-fit: contain;
+}
+
+.fb-media-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
 }
 
 @keyframes fb-fade {

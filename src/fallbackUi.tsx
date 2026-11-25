@@ -4,7 +4,7 @@
 // they are ordinary, visible HTML beside the canvas: a side panel that folds away, a bar along the bottom, and dialogs.
 // The app renders the very same React elements (so every handler is shared) into the hosts made here.
 
-import { useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 import type { Copy } from './i18n';
 import { sheetOpenHeight } from './fallbackLayout';
@@ -211,12 +211,56 @@ export function listenDialogEscape(onEscape: () => void): () => void {
   return () => window.removeEventListener('keydown', onKey, true);
 }
 
-/** A dialog over the map: a scrim that closes it, and a card that springs up. */
+const FOCUSABLE = 'a[href], button, input, select, textarea, video[controls], [tabindex]';
+
+/** What a key can reach inside `root`, in tab order (the scrim and anything taken out of the order are left out). */
+function focusableIn(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => !el.hasAttribute('disabled') && el.getAttribute('tabindex') !== '-1' && el.getAttribute('aria-hidden') !== 'true',
+  );
+}
+
+/**
+ * A dialog over the map: a scrim that closes it, and a card that springs up.
+ *
+ * It is modal for a keyboard too: on opening, focus moves in (to the element marked `data-autofocus`, else the first one
+ * it can reach); Tab and Shift+Tab stay inside it; and on closing, focus goes back to where it was.
+ */
 export function FallbackDialog({ children, label, closeLabel, onClose, className = '' }: { children: ReactNode; label: string; closeLabel: string; onClose: () => void; className?: string }) {
+  const card = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const origin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const el = card.current;
+    if (el) (el.querySelector<HTMLElement>('[data-autofocus]') ?? focusableIn(el)[0] ?? el).focus();
+    return () => {
+      if (origin?.isConnected) origin.focus();
+    };
+  }, []);
+
+  const keep = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab') return;
+    const items = focusableIn(event.currentTarget);
+    if (items.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === event.currentTarget)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div className="fb-dialog-layer">
       <button type="button" className="fb-scrim" aria-label={closeLabel} tabIndex={-1} onClick={onClose} />
-      <div className={`fb-dialog ${className}`.trim()} role="dialog" aria-modal="true" aria-label={label}>
+      <div ref={card} className={`fb-dialog ${className}`.trim()} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} onKeyDown={keep}>
         {children}
       </div>
     </div>

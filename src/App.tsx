@@ -23,6 +23,7 @@ import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement 
 import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
 import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackPerformanceFor } from './fallbackPerf';
+import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
@@ -180,6 +181,9 @@ function downloadBlob(blob: Blob, filename: string) {
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/** Fallback: a photo or a video made here, with the file the share sheet takes. */
+type FallbackMedia = { kind: 'photo' | 'video'; url: string; blob: Blob; file: File; actions: MediaActions };
 
 /** A waypoint's km: typing a new one moves it along the route once Enter is pressed or the field is left; Esc puts it back. */
 function KmField({ km, label, onCommit }: { km: number; label: string; onCommit: (km: number) => void }) {
@@ -365,6 +369,8 @@ export default function App() {
   /** the photo of the view: its picture, while it is out of the camera key */
   const [shot, setShot] = useState<{ url: string; blob: Blob; aspect: number } | null>(null);
   const [shotOpen, setShotOpen] = useState(false);
+  /** Fallback: the photo or the video just made. It has a dialog of its own (the scene's print is not there) to share or save from. */
+  const [fbMedia, setFbMedia] = useState<FallbackMedia | null>(null);
   const [latestMedia, setLatestMedia] = useState<LatestMedia | null>(null);
   const [xHint, setXHint] = useState<{ kind: HintKind; seq: number; phase: 'in' | 'out' } | null>(null);
   const [videoRecording, setVideoRecording] = useState(false);
@@ -1820,14 +1826,15 @@ export default function App() {
   // Fallback: Esc closes the dialog that is up. The engine's own Esc handling knows nothing of these dialogs and
   // would lay the model flat, so this listens first and keeps the key from reaching it.
   useEffect(() => {
-    if (!fb || (!infoOpen && !pop)) return;
+    if (!fb || (!infoOpen && !pop && !fbMedia)) return;
     return listenDialogEscape(() => {
-      if (infoOpen) {
+      if (fbMedia) closeFbMedia();
+      else if (infoOpen) {
         addAction('info_flag_toggled', { open: false });
         setInfoOpen(false);
       } else setPop(null);
     });
-  }, [fb, infoOpen, pop]);
+  }, [fb, infoOpen, pop, fbMedia]);
 
   // ---------------------------------------------------------------- actions
   const onFile = async (file: File | undefined) => {
@@ -1890,16 +1897,71 @@ export default function App() {
   };
 
   // the camera key takes a photo of the view; it comes out as a print floating over the map
+  /** Fallback: lay a photo or a video out in its dialog. The one before it (if any) is let go. */
+  const showFbMedia = (kind: FallbackMedia['kind'], blob: Blob, name: string) => {
+    const type = plainMimeType(blob.type, kind === 'photo' ? 'image/png' : 'video/mp4');
+    const file = new File([blob], name, { type });
+    const url = URL.createObjectURL(blob);
+    setFbMedia((current) => {
+      if (current) URL.revokeObjectURL(current.url);
+      return { kind, url, blob, file, actions: mediaActions(canShareFile(file), isTouchDevice(window)) };
+    });
+    addAction(kind === 'photo' ? 'photo_shown' : 'video_shown', { route_name: route?.name || 'gpx-topo' });
+  };
+  const closeFbMedia = () => {
+    setFbMedia((current) => {
+      if (current) URL.revokeObjectURL(current.url);
+      return null;
+    });
+  };
+  /** Fallback: the file goes into Downloads (Files on a phone, so a phone is offered the share sheet instead). */
+  const saveFbMedia = () => {
+    const media = fbMedia;
+    if (!media) return;
+    const props = { route_name: route?.name || 'gpx-topo', kind: media.kind };
+    try {
+      downloadBlob(media.blob, media.file.name);
+      addAction('media_saved', props);
+    } catch (error) {
+      reportError('save_media', error, props);
+      setToast(saveFailureMessage(media.kind, copy.toast));
+    }
+  };
+  /**
+   * Fallback: the share sheet of the device, which can put the file in Photos or send it to X. Where there is none, or
+   * the one button is also the way to save (a phone's sheet), a sheet that fails ends in a download.
+   */
+  const shareFbMedia = async () => {
+    const media = fbMedia;
+    if (!media) return;
+    if (media.actions !== 'save') {
+      try {
+        const result = await shareFile(media.file, copy.shareText);
+        if (result === 'shared') addAction('media_shared', { route_name: route?.name || 'gpx-topo', kind: media.kind });
+        if (result !== 'unsupported') return;
+      } catch (error) {
+        reportWarning('share_media', error);
+        // with a Save key of its own beside it, a sheet that is busy or refused is left alone
+        if (media.actions === 'split') return;
+      }
+    }
+    saveFbMedia();
+  };
+
   const exportPng = async () => {
     const engine = engineRef.current;
     // one photo at a time: while one is out, the key takes no other
-    if (!engine || shotOpen || shot) return;
+    if (!engine || shotOpen || shot || fbMedia) return;
     addAction('photo_requested', { route_name: route?.name || 'gpx-topo' });
     try {
       const blob = await engine.capture();
       if (!blob) {
         reportError('export_png', new Error('PNG capture returned no blob'), { route_name: route?.name || 'gpx-topo' });
         setToast(copy.toast.pngExportFailed);
+        return;
+      }
+      if (fb) {
+        showFbMedia('photo', blob, shotName());
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -2000,9 +2062,14 @@ export default function App() {
       try {
         if (!blob.size) throw new Error('Video recording returned an empty blob.');
         const fileName = videoFileName(outputMimeType, startedAt);
-        downloadBlob(blob, fileName);
-        setLatestMedia('video');
-        showXHint('video');
+        if (fb) {
+          // the phone's share sheet saves it to Photos or sends it on; a download would land in Files
+          showFbMedia('video', blob, fileName);
+        } else {
+          downloadBlob(blob, fileName);
+          setLatestMedia('video');
+          showXHint('video');
+        }
         addAction('video_recording_stopped', {
           reason,
           duration_ms: durationMs,
@@ -3421,9 +3488,47 @@ export default function App() {
             <div className="flag flag-static">
               <FlagContent brushes={[]} copy={copy} />
             </div>
-            <button type="button" className="fb-dialog-close" aria-label={copy.ui.closeDialog} onClick={toggleInfo}>
+            <button type="button" className="fb-dialog-close" data-autofocus="" aria-label={copy.ui.closeDialog} onClick={toggleInfo}>
               ×
             </button>
+          </FallbackDialog>
+        </StageHost>
+      )}
+
+      {fb && fbMedia && (
+        <StageHost host={fb.modal}>
+          <FallbackDialog
+            label={fbMedia.kind === 'photo' ? copy.ui.imageOfView : copy.ui.videoOfView}
+            closeLabel={copy.ui.close}
+            className="fb-media-dialog"
+            onClose={closeFbMedia}
+          >
+            <div className="fb-media">
+              {fbMedia.kind === 'photo' ? (
+                <img src={fbMedia.url} alt={copy.ui.imageOfView} />
+              ) : (
+                <video src={fbMedia.url} controls playsInline preload="metadata" aria-label={copy.ui.videoOfView} />
+              )}
+              <div className="fb-media-foot">
+                {fbMedia.actions === 'split' ? (
+                  <>
+                    <button type="button" className="pop-btn pop-ok" data-autofocus="" onClick={() => void shareFbMedia()}>
+                      {copy.ui.share}
+                    </button>
+                    <button type="button" className="pop-btn pop-ok" onClick={saveFbMedia}>
+                      {copy.ui.save}
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="pop-btn pop-ok" data-autofocus="" onClick={() => void shareFbMedia()}>
+                    {fbMedia.actions === 'both' ? copy.ui.shareMedia : copy.ui.save}
+                  </button>
+                )}
+                <button type="button" className="pop-btn" onClick={closeFbMedia}>
+                  {copy.ui.close}
+                </button>
+              </div>
+            </div>
           </FallbackDialog>
         </StageHost>
       )}
