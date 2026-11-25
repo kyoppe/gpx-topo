@@ -38,7 +38,6 @@ export type Copy = {
   monthLabel(year: number, month: number): string;
   dayLength(rise: number | null, set: number | null): string;
   toast: {
-    defaultGpxFailed: string;
     mapTilesFailed: string;
     demFallback: string;
     waypointAdded(name: string, km: number): string;
@@ -228,7 +227,6 @@ function makeCopy(language: Language): Copy {
         return `${Math.floor(minutes / 60)}時間${minutes % 60}分`;
       },
       toast: {
-        defaultGpxFailed: 'テスト用 GPX を読み込めませんでした。GPX を開いてください。',
         mapTilesFailed: '地理院タイルを読み込めませんでした。',
         demFallback: 'GSI DEM を読み込めなかったため、GPX の標高から地形を作っています。',
         waypointAdded: (name, km) => `${name} を ${km.toFixed(1)} km に追加しました。`,
@@ -422,7 +420,6 @@ function makeCopy(language: Language): Copy {
       return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     },
     toast: {
-      defaultGpxFailed: 'Could not load the sample GPX. Please open a GPX file.',
       mapTilesFailed: 'Could not load the GSI map tiles.',
       demFallback: 'Could not load the GSI DEM, so the terrain is built from GPX elevations.',
       waypointAdded: (name, km) => `${name} added at ${km.toFixed(1)} km.`,

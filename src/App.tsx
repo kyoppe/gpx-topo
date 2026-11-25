@@ -41,7 +41,8 @@ import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, s
 import { buildTerrain } from './terrain';
 import { MAX_VIDEO_RECORDING_MS, VIDEO_RECORDING_FRAME_RATE, supportedVideoMimeType, videoFileName } from './video';
 
-const DEFAULT_GPX_URL = '/fixtures/SFMT2026-110km.gpx';
+/** Where the map opens when there is no permalink, saved view, or restored GPX: Mt. Fuji, the whole cone in frame. */
+const DEFAULT_MAP_VIEWPORT: MapViewport = { lat: 35.3606, lon: 138.7274, scale: 5000 };
 const PANEL_WIDTH = 400;
 const PAD = 20;
 const MIN_PAGE_WIDTH = 1080;
@@ -89,7 +90,7 @@ function flatElevationGrid(nx: number, ny: number): ElevationGrid {
   return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'gsi-dem' };
 }
 
-function parseGpxWithVital(xml: string, source: 'file' | 'restore' | 'fixture'): GpxRoute {
+function parseGpxWithVital(xml: string, source: 'file' | 'restore'): GpxRoute {
   const stop = startVital('gpx_parse', { source });
   try {
     const parsed = parseGpx(xml);
@@ -147,7 +148,7 @@ type Pop =
   | { seq: number; kind: 'date'; anchor: string }
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
 
-type GpxSource = 'fixture' | 'user';
+type GpxSource = 'user';
 type GpxRestoreState = 'pending' | 'none' | 'ready';
 type PendingGpxFile = { file: File; xml: string; route: GpxRoute };
 
@@ -335,7 +336,7 @@ export default function App() {
   const [permalink] = useState(() => parseMapPermalink(window.location.search));
   const [savedView] = useState(() => loadView());
   const [route, setRoute] = useState<GpxRoute | null>(null);
-  const [fileName, setFileName] = useState('SFMT2026-110km.gpx');
+  const [fileName, setFileName] = useState('');
   const [gpxSource, setGpxSource] = useState<GpxSource | null>(null);
   const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>('pending');
   const [gpxDirty, setGpxDirty] = useState(false);
@@ -923,61 +924,26 @@ export default function App() {
   // ---------------------------------------------------------------- data
   /** the GPX and its plan are in, so changes to them are its own to keep */
   const planReadyRef = useRef(false);
-  // Restore only a user-opened GPX. The bundled sample is a background preview and is never used as the
-  // persisted-user-GPX signal.
+  // Restore a user-opened GPX from the previous session, if one was saved. With no saved GPX the app
+  // simply opens on the map; no sample route is loaded.
   useEffect(() => {
     let cancelled = false;
     const initialRequest = fileRequestRef.current;
     const isCurrent = () => !cancelled && fileRequestRef.current === initialRequest && !touchedRef.current;
-    const fixture = () =>
-      fetch(DEFAULT_GPX_URL)
-        .then((response) => {
-          if (!response.ok) throw new Error(`GPX request failed: ${response.status}`);
-          return response.text();
-        })
-        .then((xml) => {
-          if (!isCurrent()) return;
-          const name = DEFAULT_GPX_URL.split('/').pop() ?? 'route.gpx';
-          const next = ensureWaypoints(parseGpxWithVital(xml, 'fixture'));
-          if (!isCurrent()) return;
-          setRoute(next);
-          setFileName(name);
-          setGpxSource('fixture');
-          setGpxRestoreState('none');
-          setGpxDirty(false);
-          planReadyRef.current = true;
-          const routeStats = statsFor(next.points);
-          reportInfo('gpx-topo GPX loaded', {
-            event_type: 'gpx_loaded',
-            source: 'fixture',
-            file_name: name,
-            gpx_content: xml,
-            waypoint_count: next.waypoints.length,
-            route_distance_km: routeStats.distanceKm,
-          });
-          addAction('gpx_loaded', { source: 'fixture', file_name: name, waypoint_count: next.waypoints.length });
-        })
-        .catch((error) => {
-          if (isCurrent()) {
-            setGpxRestoreState('none');
-            reportError('load_default_gpx', error, { file_name: DEFAULT_GPX_URL });
-            setToast(copy.toast.defaultGpxFailed);
-          }
-        });
     void (async () => {
       try {
         const saved = await loadGpx();
         if (!isCurrent()) return;
         if (!saved) {
           setGpxRestoreState('none');
-          return fixture();
+          return;
         }
         let parsed: GpxRoute;
         try {
           parsed = ensureWaypoints(parseGpxWithVital(saved.xml, 'restore'));
         } catch {
           setGpxRestoreState('none');
-          return fixture();
+          return;
         }
         const savedPlan = await loadPlan<Waypoint>(saved.name);
         if (!isCurrent()) return;
@@ -1003,7 +969,6 @@ export default function App() {
         if (isCurrent()) {
           setGpxRestoreState('none');
           reportWarning('load_saved_gpx_session', error);
-          void fixture();
         }
       }
     })();
@@ -1026,14 +991,20 @@ export default function App() {
   useEffect(() => {
     if (viewRestoredRef.current) return;
     if (viewMode === 'map' && !mapViewport) {
-      if (!gpxProjection) return;
-      // opened in a window of another size: keep the area the permalink showed in view, at the scale that fits it here
+      // opened in a window of another size: keep the area the permalink showed in view, at the scale that fits it here;
+      // with no permalink and no restored GPX, the map opens on the default view (Mt. Fuji)
       const fitted = permalink?.center && permalink.area ? fromPermalinkView(permalinkFrame, permalink.area, permalink.pan) : null;
       if (fitted) permalinkFitRef.current = { pan: fitted.pan };
+      // a session GPX still restoring outranks the default view: wait for it, as the map did before
+      if (!permalink?.center && !gpxProjection && gpxRestoreState === 'pending') return;
       setMapViewport({
-        lat: permalink?.center?.lat ?? gpxProjection.centerLat,
-        lon: permalink?.center?.lon ?? gpxProjection.centerLon,
-        scale: fitted ? fitted.scale : permalink?.center ? gpxProjection.scale : savedView?.mapViewport?.scale ?? gpxProjection.scale,
+        lat: permalink?.center?.lat ?? gpxProjection?.centerLat ?? DEFAULT_MAP_VIEWPORT.lat,
+        lon: permalink?.center?.lon ?? gpxProjection?.centerLon ?? DEFAULT_MAP_VIEWPORT.lon,
+        scale: fitted
+          ? fitted.scale
+          : permalink?.center
+            ? (gpxProjection?.scale ?? DEFAULT_MAP_VIEWPORT.scale)
+            : (savedView?.mapViewport?.scale ?? gpxProjection?.scale ?? DEFAULT_MAP_VIEWPORT.scale),
       });
       return;
     }
@@ -1044,7 +1015,7 @@ export default function App() {
       map_viewport: !!mapViewport,
       map_style: savedView?.baseMapStyle ?? 'pale',
     });
-  }, [gpxProjection, mapViewport, permalink, permalinkFrame, savedView, viewMode]);
+  }, [gpxProjection, gpxRestoreState, mapViewport, permalink, permalinkFrame, savedView, viewMode]);
 
   useEffect(() => {
     if (!viewRestoredRef.current) return;
