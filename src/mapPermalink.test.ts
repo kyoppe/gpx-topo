@@ -84,6 +84,12 @@ describe('parseMapPermalink', () => {
     });
   });
 
+  it('parses an optional 3D focus point', () => {
+    expect(parseMapPermalink('?mode=map&lat=35.68&lon=139.76&view=3d&focus_lat=35.283639&focus_lon=139.260572')).toMatchObject({
+      focus: { lat: 35.283639, lon: 139.260572 },
+    });
+  });
+
   it('ignores 3D parameters in a flat view and lets auto sunlight win over time', () => {
     const result = parseMapPermalink('?mode=map&view=flat&bearing=12&zoom=2&sun=auto&time=18%3A30');
 
@@ -307,6 +313,30 @@ describe('the display area of a permalink', () => {
     expect(params.get('area_h')).toBe('640');
     expect(params.get('area_scale')).toBe('52428.8');
     expect(parseMapPermalink(new URL(url).search)?.area).toEqual({ width: 1000, height: 640, scale: 52428.8 });
+  });
+
+  it('writes an optional 3D focus point', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 35.68, lon: 139.76 },
+        view: '3d',
+        bearing: 0,
+        pitch: 45,
+        zoom: 2,
+        focus: { lat: 35.2836394, lon: 139.2605724 },
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        sunlight: true,
+        sunAuto: false,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+    expect(url).toContain('focus_lat=35.283639&focus_lon=139.260572');
+    expect(parseMapPermalink(new URL(url).search)?.focus).toEqual({ lat: 35.283639, lon: 139.260572 });
   });
 
   it('omits the area when there is none', () => {
