@@ -2818,6 +2818,11 @@ html[data-fb-drag] .fb-panel-body {
   min-width: 84px;
 }
 
+.fb-hud .key-moves {
+  width: 40px;
+  padding: 0;
+}
+
 .fb-hud .key-flyover-compact {
   width: 40px;
   min-width: 40px;
@@ -2871,7 +2876,12 @@ html[data-fb-drag] .fb-panel-body {
   }
 
   .fb-hud .hud {
-    gap: 6px;
+    --fb-compact-key-width: 40px;
+    --fb-compact-flip-width: 84px;
+    --fb-compact-gap: 6px;
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: var(--fb-compact-gap);
   }
 
   .fb-hud .key-mode,
@@ -2884,9 +2894,38 @@ html[data-fb-drag] .fb-panel-body {
   .fb-hud .key-camera,
   .fb-hud .key-video,
   .fb-hud .key-moves {
-    width: 40px;
-    min-width: 40px;
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
     padding: 0;
+  }
+
+  .fb-hud .key-flip:not(.key-flyover-compact) {
+    width: var(--fb-compact-flip-width);
+    min-width: var(--fb-compact-flip-width);
+    padding: 0;
+  }
+
+  .fb-hud .key-flyover-compact,
+  .fb-hud .key-fly.key-flip {
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
+    padding: 0;
+  }
+}
+
+@media (max-width: 385px) {
+  .fb-hud .hud {
+    --fb-compact-key-width: 34px;
+    --fb-compact-flip-width: 64px;
+    --fb-compact-gap: 3px;
+  }
+}
+
+@media (max-width: 319px) {
+  .fb-hud .hud {
+    --fb-compact-key-width: 30px;
+    --fb-compact-flip-width: 56px;
+    --fb-compact-gap: 2px;
   }
 }
 
@@ -2908,16 +2947,11 @@ html[data-fb-drag] .fb-panel-body {
   order: 1;
 }
 
-.fb-hud .key-moves {
-  width: 40px;
-  padding: 0;
-}
-
 @media (max-width: 560px) {
   .fb-hud .key-camera,
   .fb-hud .key-video {
-    width: 40px;
-    min-width: 40px;
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
     padding: 0;
   }
 }

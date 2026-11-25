@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import { FRAME_X, FRAME_Y } from './engine';
-import { COMPACT_BAR_MAX_WIDTH, DOCK_WIDTH, FALLBACK_EDGE, FALLBACK_PAD, FALLBACK_PANEL_WIDTH, fallbackLayoutFor, isCompactBar, isDocked, orientationOf, sheetOpenHeight } from './fallbackLayout';
+import {
+  COMPACT_BAR_MAX_WIDTH,
+  DOCK_WIDTH,
+  FALLBACK_EDGE,
+  FALLBACK_PAD,
+  FALLBACK_PANEL_WIDTH,
+  compactHudMetrics,
+  compactHudRowWidth,
+  fallbackLayoutFor,
+  isCompactBar,
+  isDocked,
+  orientationOf,
+  sheetOpenHeight,
+} from './fallbackLayout';
 
 describe('fallback layout', () => {
   it('fills a tall phone with a tall map, inset by the pad', () => {
@@ -72,6 +85,23 @@ describe('compact bar', () => {
 
   it('is never the case of a docked window', () => {
     for (const width of [760, 900, 1366]) expect(isCompactBar(width)).toBe(false);
+  });
+
+  it('fits the normal compact HUD in one row from its minimum supported width', () => {
+    for (const width of [280, 320, 375, 390]) {
+      const { keyWidth, flipWidth, gap } = compactHudMetrics(width);
+      const row = compactHudRowWidth([keyWidth, keyWidth, keyWidth, flipWidth, keyWidth, keyWidth, keyWidth], gap);
+      expect(row).toBe(6 * keyWidth + flipWidth + gap * 6);
+      expect(row).toBeLessThanOrEqual(width - FALLBACK_EDGE * 2);
+    }
+  });
+
+  it('fits the compact flyover HUD in one row from its minimum supported width', () => {
+    for (const width of [280, 320, 375, 390]) {
+      const { keyWidth, gap } = compactHudMetrics(width);
+      expect(compactHudRowWidth(Array.from({ length: 8 }, () => keyWidth), gap)).toBe(8 * keyWidth + gap * 7);
+      expect(compactHudRowWidth(Array.from({ length: 8 }, () => keyWidth), gap)).toBeLessThanOrEqual(width - FALLBACK_EDGE * 2);
+    }
   });
 
   it('matches the width the bar turns to pictures at in the stylesheet', async () => {
