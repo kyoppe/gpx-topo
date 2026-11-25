@@ -50,3 +50,11 @@ export function mediaActions(shareable: boolean, touch: boolean): MediaActions {
 export function isTouchDevice(win: Pick<Window, 'matchMedia'>): boolean {
   return typeof win.matchMedia === 'function' && win.matchMedia('(pointer: coarse)').matches;
 }
+
+/**
+ * What to tell the user when the file of a photo or a video could not be saved. A video that was recorded and made but
+ * not saved is not a failed recording, so it has its own words (and the dialog stays up, to try again).
+ */
+export function saveFailureMessage(kind: 'photo' | 'video', toast: { imageSavedFailed: string; videoSavedFailed: string }): string {
+  return kind === 'photo' ? toast.imageSavedFailed : toast.videoSavedFailed;
+}

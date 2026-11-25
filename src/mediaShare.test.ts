@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { canShareFile, isTouchDevice, mediaActions, plainMimeType, shareFile } from './mediaShare';
+import { getCopy } from './i18n';
+import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile } from './mediaShare';
 
 const file = new File(['x'], 'gpx-topo.png', { type: 'image/png' });
 
@@ -108,5 +109,14 @@ describe('isTouchDevice', () => {
 
   it('is not touch where matchMedia is missing', () => {
     expect(isTouchDevice({} as Pick<Window, 'matchMedia'>)).toBe(false);
+  });
+});
+
+describe('saveFailureMessage', () => {
+  it.each(['en', 'ja'] as const)('tells a video that was made but not saved from a recording that failed (%s)', (lang) => {
+    const { toast } = getCopy(lang);
+    expect(saveFailureMessage('photo', toast)).toBe(toast.imageSavedFailed);
+    expect(saveFailureMessage('video', toast)).toBe(toast.videoSavedFailed);
+    expect(saveFailureMessage('video', toast)).not.toBe(toast.videoRecordingFailed);
   });
 });

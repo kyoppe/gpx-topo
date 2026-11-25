@@ -23,7 +23,7 @@ import { getHtmlInCanvasContext, supportsHtmlInCanvas, type HtmlInCanvasElement 
 import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip, type PanelTabId } from './fallbackUi';
 import { DOCK_WIDTH, fallbackLayoutFor, isDocked } from './fallbackLayout';
 import { fallbackPerformanceFor } from './fallbackPerf';
-import { canShareFile, isTouchDevice, mediaActions, plainMimeType, shareFile, type MediaActions } from './mediaShare';
+import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { toggleViewMode, type ViewMode } from './mapMode';
 import type { MapManeuverKind, MapManeuverPhase } from './mapManeuver';
@@ -1924,7 +1924,7 @@ export default function App() {
       addAction('media_saved', props);
     } catch (error) {
       reportError('save_media', error, props);
-      setToast(media.kind === 'photo' ? copy.toast.imageSavedFailed : copy.toast.videoRecordingFailed);
+      setToast(saveFailureMessage(media.kind, copy.toast));
     }
   };
   /**
@@ -3488,7 +3488,7 @@ export default function App() {
             <div className="flag flag-static">
               <FlagContent brushes={[]} copy={copy} />
             </div>
-            <button type="button" className="fb-dialog-close" aria-label={copy.ui.closeDialog} onClick={toggleInfo}>
+            <button type="button" className="fb-dialog-close" data-autofocus="" aria-label={copy.ui.closeDialog} onClick={toggleInfo}>
               ×
             </button>
           </FallbackDialog>
@@ -3512,7 +3512,7 @@ export default function App() {
               <div className="fb-media-foot">
                 {fbMedia.actions === 'split' ? (
                   <>
-                    <button type="button" className="pop-btn pop-ok" onClick={() => void shareFbMedia()}>
+                    <button type="button" className="pop-btn pop-ok" data-autofocus="" onClick={() => void shareFbMedia()}>
                       {copy.ui.share}
                     </button>
                     <button type="button" className="pop-btn pop-ok" onClick={saveFbMedia}>
@@ -3520,7 +3520,7 @@ export default function App() {
                     </button>
                   </>
                 ) : (
-                  <button type="button" className="pop-btn pop-ok" onClick={() => void shareFbMedia()}>
+                  <button type="button" className="pop-btn pop-ok" data-autofocus="" onClick={() => void shareFbMedia()}>
                     {fbMedia.actions === 'both' ? copy.ui.shareMedia : copy.ui.save}
                   </button>
                 )}

@@ -56,6 +56,7 @@ export type Copy = {
     permalinkCopyFailed: string;
     videoRecordingUnsupported: string;
     videoRecordingFailed: string;
+    videoSavedFailed: string;
     xPostFailed: string;
   };
   ui: {
@@ -231,6 +232,7 @@ function makeCopy(language: Language): Copy {
         permalinkCopyFailed: 'パーマリンクをコピーできませんでした。',
         videoRecordingUnsupported: 'このブラウザでは動画を録画できません。',
         videoRecordingFailed: '動画を録画できませんでした。',
+        videoSavedFailed: '動画を保存できませんでした。',
         xPostFailed: 'Xの投稿画面を開けませんでした。',
       },
       ui: {
@@ -410,6 +412,7 @@ function makeCopy(language: Language): Copy {
       permalinkCopyFailed: 'Could not copy the permalink.',
       videoRecordingUnsupported: 'Video recording is not supported by this browser.',
       videoRecordingFailed: 'Could not record the video.',
+      videoSavedFailed: 'Could not save the video.',
       xPostFailed: 'Could not open the X post composer.',
     },
     ui: {

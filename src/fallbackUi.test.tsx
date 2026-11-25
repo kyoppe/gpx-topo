@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFallbackUi, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip } from './fallbackUi';
+import { createFallbackUi, FallbackDialog, FallbackTimePicker, KeyFace, listenDialogEscape, PanelTabs, SheetGrip } from './fallbackUi';
 import { getCopy } from './i18n';
 
 const copy = getCopy('en');
@@ -278,5 +278,100 @@ describe('FallbackTimePicker', () => {
     click(container.querySelector<HTMLButtonElement>('.pop-btn:not(.pop-ok)')!);
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe('FallbackDialog', () => {
+  const press = (el: Element, shiftKey = false) => {
+    const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true });
+    act(() => void el.dispatchEvent(event));
+    return event;
+  };
+  const dialog = (children: React.ReactNode) => (
+    <FallbackDialog label="Photo" closeLabel="Close" onClose={() => {}}>
+      {children}
+    </FallbackDialog>
+  );
+
+  it('moves focus in to the element marked for it, else to the first one it can reach', () => {
+    render(
+      dialog(
+        <>
+          <button id="a">A</button>
+          <button id="b" data-autofocus="">
+            B
+          </button>
+        </>,
+      ),
+    );
+    expect(document.activeElement?.id).toBe('b');
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(
+      dialog(
+        <>
+          <button id="a">A</button>
+          <button id="b">B</button>
+        </>,
+      ),
+    );
+    expect(document.activeElement?.id).toBe('a');
+  });
+
+  it('leaves the scrim out of the keys\' order, and takes the card itself when it holds nothing to reach', () => {
+    render(dialog(<p>just words</p>));
+    expect(document.activeElement?.getAttribute('role')).toBe('dialog');
+  });
+
+  it('keeps Tab and Shift+Tab inside, wrapping at either end', () => {
+    render(
+      dialog(
+        <>
+          <button id="a">A</button>
+          <button id="b">B</button>
+          <button id="c">C</button>
+        </>,
+      ),
+    );
+    const at = (id: string) => document.getElementById(id)!;
+    at('c').focus();
+    expect(press(at('c')).defaultPrevented).toBe(true);
+    expect(document.activeElement?.id).toBe('a');
+    expect(press(at('a'), true).defaultPrevented).toBe(true);
+    expect(document.activeElement?.id).toBe('c');
+    // in the middle the browser moves on by itself
+    at('b').focus();
+    expect(press(at('b')).defaultPrevented).toBe(false);
+    expect(press(at('b'), true).defaultPrevented).toBe(false);
+  });
+
+  it('does not count a disabled key, or one taken out of the order', () => {
+    render(
+      dialog(
+        <>
+          <button id="a">A</button>
+          <button id="skipped" tabIndex={-1}>
+            skipped
+          </button>
+          <button id="off" disabled>
+            off
+          </button>
+          <button id="z">Z</button>
+        </>,
+      ),
+    );
+    document.getElementById('z')!.focus();
+    press(document.getElementById('z')!);
+    expect(document.activeElement?.id).toBe('a');
+  });
+
+  it('gives focus back to where it was when it closes', () => {
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    render(dialog(<button id="a">A</button>));
+    expect(document.activeElement?.id).toBe('a');
+    render(null);
+    expect(document.activeElement).toBe(opener);
   });
 });
