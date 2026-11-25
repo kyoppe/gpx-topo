@@ -285,6 +285,16 @@ function sunInput(root: ParentNode | null): HTMLInputElement | null {
   return root?.querySelector<HTMLInputElement>('input[data-sun]') ?? null;
 }
 
+function RouteIcon() {
+  return (
+    <svg className="route-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="5.5" cy="18.5" r="2" />
+      <path d="M7.5 18.5h6a3.5 3.5 0 0 0 0-7h-3a3.5 3.5 0 0 1 0-7h6" />
+      <circle cx="18.5" cy="4.5" r="2" />
+    </svg>
+  );
+}
+
 function Fallback({ copy }: { copy: Copy }) {
   return (
     <main lang={copy.language} className="unsupported">
@@ -3438,10 +3448,8 @@ export default function App() {
                   <path className="map-icon-pin" d="M15.8 4.5c0-2 1.4-3.5 3.2-3.5s3.2 1.5 3.2 3.5c0 2.5-3.2 6.7-3.2 6.7s-3.2-4.2-3.2-6.7Z" />
                   <circle className="map-icon-pin-hole" cx="19" cy="4.5" r="1.1" />
                 </svg>
-              ) : fb ? (
-                <KeyFace icon="route" label={gpxActionLabel} />
               ) : (
-                gpxActionLabel
+                <RouteIcon />
               )}
             </button>
             {viewMode === 'map' && (
