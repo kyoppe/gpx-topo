@@ -51,4 +51,11 @@ describe('createCenteredProjection', () => {
     expect(projection.scale).toBeGreaterThan(0.001);
     expect(projection.tiles(5).length).toBeLessThanOrEqual(MAX_CENTERED_PROJECTION_TILES);
   });
+
+  it('lowers source zoom when a huge saved viewport would exceed the tile budget', () => {
+    const projection = createCenteredProjection(35.681236, 139.767125, 100_000, 100_000, 0.001);
+    const zoom = projection.zoomFor(1.5, 5, 18);
+    expect(zoom).toBe(5);
+    expect(projection.tiles(zoom).length).toBeLessThanOrEqual(MAX_CENTERED_PROJECTION_TILES);
+  });
 });

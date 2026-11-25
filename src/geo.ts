@@ -4,12 +4,23 @@ const TILE = 256;
 const EARTH_CIRCUMFERENCE_M = 40_075_016.686;
 const MIN_TILE_ZOOM = 5;
 const TILE_AXIS_LIMIT = 128;
+const TILE_AXIS_BUDGET = TILE_AXIS_LIMIT - 3;
 export const MAX_CENTERED_PROJECTION_TILES = TILE_AXIS_LIMIT ** 2;
 
 function safeCenteredScale(width: number, height: number, scale: number) {
   const tileWorld = TILE / 2 ** MIN_TILE_ZOOM;
-  const minScale = Math.max(width, height) / ((TILE_AXIS_LIMIT - 1) * tileWorld);
+  const minScale = Math.max(width, height) / (TILE_AXIS_BUDGET * tileWorld);
   return Math.max(1e-6, scale, minScale);
+}
+
+function zoomForTileBudget(width: number, height: number, scale: number, texelsPerPx: number, min: number, max: number) {
+  const requestedZoom = Math.round(Math.log2(scale * texelsPerPx));
+  const maxSafeZoom = Math.max(
+    0,
+    Math.floor(Math.log2((TILE_AXIS_BUDGET * TILE * scale) / Math.max(width, height))),
+  );
+  const boundedZoom = Math.min(max, requestedZoom, maxSafeZoom);
+  return maxSafeZoom < min ? boundedZoom : Math.max(min, boundedZoom);
 }
 
 export type MapPoint = {
@@ -130,7 +141,7 @@ export function createMapProjection(
   };
 
   const zoomFor = (texelsPerPx: number, min: number, max: number) =>
-    Math.max(min, Math.min(max, Math.round(Math.log2(scale * texelsPerPx))));
+    zoomForTileBudget(width, height, scale, texelsPerPx, min, max);
 
   return {
     width,
@@ -210,7 +221,7 @@ export function createCenteredProjection(
     return list;
   };
   const zoomFor = (texelsPerPx: number, min: number, max: number) =>
-    Math.max(min, Math.min(max, Math.round(Math.log2(safeScale * texelsPerPx))));
+    zoomForTileBudget(width, height, safeScale, texelsPerPx, min, max);
   return {
     width,
     height,
