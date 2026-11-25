@@ -657,6 +657,19 @@ export default function App() {
     },
     [drawMapBuffer],
   );
+  // How the map image stood when a two-finger move began moving it: a cancel puts it back exactly there. (The moves are
+  // clamped to the buffer, so undoing their sum would not.)
+  const mapDragBeginRef = useRef<[number, number] | null>(null);
+  const beginMapDrag = useCallback(() => {
+    mapDragBeginRef.current = [...mapDragOffsetRef.current];
+  }, []);
+  const cancelMapDrag = useCallback(() => {
+    const begin = mapDragBeginRef.current;
+    mapDragBeginRef.current = null;
+    if (!begin) return;
+    mapDragOffsetRef.current = begin;
+    drawMapBuffer(begin);
+  }, [drawMapBuffer]);
   const panMap = useCallback((_dx: number, _dy: number) => {
     const [offsetX, offsetY] = mapDragOffsetRef.current;
     const current = mapProjectionRef.current;
@@ -1325,6 +1338,8 @@ export default function App() {
         onFrameRateChange: ({ fps, frameMs, reason }) => addAction('render_fps_changed', { mode: 'motion', fps, frame_ms: frameMs, reason }),
         onMapDrag: panMapPreview,
         onMapPan: panMap,
+        onMapDragBegin: beginMapDrag,
+        onMapDragCancel: cancelMapDrag,
         onCameraRotate: (change) => addAction('camera_rotate_completed', change),
         onCameraPan: (change) => addAction('camera_pan_completed', change),
         onCameraZoom: (change) => addAction('camera_zoom_completed', change),
@@ -2552,22 +2567,22 @@ export default function App() {
                     </div>
                     <div className="map-pin-field">
                       <b className="map-pin-marker" aria-hidden="true">●</b>
-                      <input
+                      <textarea
                         key={`${mapPin.lat}:${mapPin.lon}`}
-                        type="text"
-                        defaultValue={mapPin.label.replace(/\n/g, ' ')}
+                        defaultValue={mapPin.label}
                         maxLength={40}
+                        rows={2}
                         placeholder={copy.ui.mapPinNameAria}
                         aria-label={copy.ui.mapPinNameAria}
                         enterKeyHint="done"
-                        onBlur={(event) => {
-                          // this field is one line: a name made of two lines (native, or a permalink) shows its break as a space,
-                          // and only a real edit turns it into one line
-                          if (event.currentTarget.value === mapPin.label.replace(/\n/g, ' ')) return;
-                          commitMapPinLabel(event.currentTarget.value);
-                        }}
+                        onBlur={(event) => commitMapPinLabel(event.currentTarget.value)}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) event.currentTarget.blur();
+                          if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                          // the same as on the pin itself: Enter finishes the name (the blur commits it); Shift+Enter breaks the line, once at most
+                          if (!event.shiftKey || event.currentTarget.value.includes('\n')) {
+                            event.preventDefault();
+                            if (!event.shiftKey) event.currentTarget.blur();
+                          }
                         }}
                       />
                     </div>

@@ -103,6 +103,10 @@ export type EngineCallbacks = {
   onMapDrag(dx: number, dy: number): void;
   /** A completed drag in the flat map mode, in screen px. */
   onMapPan(dx: number, dy: number): void;
+  /** A two-finger move is about to start moving the map image (fallback): note how it stands, to put it back on a cancel. */
+  onMapDragBegin?(): void;
+  /** That move was cancelled (no `onMapPan` follows): put the map image back as `onMapDragBegin` found it. */
+  onMapDragCancel?(): void;
   onCameraRotate(change: CameraRotation): void;
   onCameraPan(change: CameraPan): void;
   onCameraZoom(change: CameraZoom): void;
@@ -2787,6 +2791,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
    * carries the runner along. It is handled on the profile itself: a press anywhere on it puts the runner there,
    * and dragging carries it along the route.
    */
+  /** The finger carrying the runner along the profile (fallback), while one does. */
+  let profileDragId: number | null = null;
   function bindProfileDrag() {
     const el = profileEl;
     // the same profile again (the panel is looked up after every change): keep its listeners and any drag under way
@@ -2796,7 +2802,6 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     profileBound = null;
     if (!fallback || !el) return;
     profileBound = el;
-    let active: number | null = null;
     const kmAtPointer = (ev: PointerEvent) => {
       const svg = el.querySelector('svg');
       const ctm = svg?.getScreenCTM();
@@ -2811,17 +2816,17 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (ev.button !== 0 || !model?.route.length) return;
       ev.preventDefault();
       if (flight) leaveFlightAtCurrentView();
-      active = ev.pointerId;
+      profileDragId = ev.pointerId;
       el.setPointerCapture(ev.pointerId);
       setHover(null);
       carry(ev);
     };
     const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId === active) carry(ev);
+      if (ev.pointerId === profileDragId) carry(ev);
     };
     const onUp = (ev: PointerEvent) => {
-      if (ev.pointerId !== active) return;
-      active = null;
+      if (ev.pointerId !== profileDragId) return;
+      profileDragId = null;
       if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
     };
     el.addEventListener('pointerdown', onDown);
@@ -2829,6 +2834,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onUp);
     unbindProfileDrag = () => {
+      profileDragId = null;
       el.removeEventListener('pointerdown', onDown);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
@@ -4699,9 +4705,18 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     callbacks.onViewInteraction?.(reason);
   };
   const onPointerDown = (ev: PointerEvent) => {
-    if (fallback && ev.pointerType === 'touch' && ev.target === canvas && touchDown(ev)) {
-      ev.preventDefault();
-      return;
+    if (fallback && ev.pointerType === 'touch' && ev.target === canvas) {
+      // A finger is already carrying the runner along the profile, or turning a drum. Those began on the page beside the
+      // canvas or on a piece, so they are not among the touches tracked here: this finger is left out of it all the same.
+      if (drag === 'drum' || drag === 'runner' || profileDragId !== null) {
+        ignoredTouchIds.add(ev.pointerId);
+        ev.preventDefault();
+        return;
+      }
+      if (touchDown(ev)) {
+        ev.preventDefault();
+        return;
+      }
     }
     if (cameraDrag) {
       if (cameraDrag.pointerId !== ev.pointerId) return;
@@ -5151,6 +5166,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     x: number;
     y: number;
     startedAt: number;
+    /** The map image has been moved by this pinch (and `onMapDragBegin` told the app). */
+    mapMoved: boolean;
     zoom: Omit<CameraZoom, 'duration_ms'> | null;
     pan: Omit<CameraPan, 'duration_ms'> | null;
   } | null = null;
@@ -5169,7 +5186,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       ignoredTouchIds.add(ev.pointerId);
       return true;
     }
-    if (mapManeuver || drag === 'drum' || drag === 'runner') {
+    if (mapManeuver) {
       touchPoints.delete(ev.pointerId);
       return false;
     }
@@ -5191,6 +5208,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       x: (a.x + b.x) / 2,
       y: (a.y + b.y) / 2,
       startedAt: performance.now(),
+      mapMoved: false,
       zoom: null,
       pan: null,
     };
@@ -5285,6 +5303,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       } else if (model?.mapMode && st.e < 0.03) {
         // laid flat, the map under the fingers is moved, as one finger does
         notifyViewInteraction('map_pan');
+        if (!pinch.mapMoved) {
+          pinch.mapMoved = true;
+          callbacks.onMapDragBegin?.();
+        }
         callbacks.onMapDrag(mid[0] - pinch.x, mid[1] - pinch.y);
         mapDragTotal[0] += mid[0] - pinch.x;
         mapDragTotal[1] += mid[1] - pinch.y;
@@ -5302,8 +5324,8 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     drag = null;
     canvas.classList.remove('turning');
     if (!completed) {
-      // the map preview moved with the fingers: bring it back, as the gesture never happened
-      if (Math.abs(mapDragTotal[0]) + Math.abs(mapDragTotal[1]) > 0.5) callbacks.onMapDrag(-mapDragTotal[0], -mapDragTotal[1]);
+      // the map image moved with the fingers: the app puts it back exactly as it stood (it clamps the moves, so undoing the sum would not)
+      if (gesture?.mapMoved) callbacks.onMapDragCancel?.();
       mapDragTotal = [0, 0];
       need();
       return;

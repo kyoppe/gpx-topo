@@ -2890,26 +2890,29 @@ html[data-fb-drag] .fb-panel-body {
   border-radius: 50%;
 }
 
-.map-pin-field input {
+.map-pin-field textarea {
+  box-sizing: border-box;
   min-width: 0;
   flex: 1;
-  height: 36px;
-  padding: 0 8px;
+  /* two lines at most, as on the pin: room for both, so the name does not scroll */
+  height: 56px;
+  padding: 6px 8px;
   border: 0;
+  resize: none;
   border-radius: 8px;
   background: #fff;
   box-shadow: inset 0 0 0 1px var(--rule);
   color: var(--ink);
   /* 16px keeps iOS from zooming the page when the field is focused */
-  font: 600 16px var(--sans);
+  font: 600 16px/1.3 var(--sans);
   outline: none;
 }
 
-.map-pin-field input:focus {
+.map-pin-field textarea:focus {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-.map-pin-field input::placeholder {
+.map-pin-field textarea::placeholder {
   color: var(--ink3);
   font-weight: 400;
 }

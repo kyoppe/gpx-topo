@@ -60,7 +60,7 @@ function setup(width = 100, options?: EngineOptions) {
   document.body.append(stage);
   const callbacks: EngineCallbacks = {
     onFirstPaint: vi.fn(), onApartChange: vi.fn(), onRouteClick: vi.fn(),
-    onMapDrag: vi.fn(), onMapPan: vi.fn(),
+    onMapDrag: vi.fn(), onMapPan: vi.fn(), onMapDragBegin: vi.fn(), onMapDragCancel: vi.fn(),
     onCameraRotate: vi.fn(), onCameraPan: vi.fn(), onCameraZoom: vi.fn(),
     onDetail: vi.fn(), onTimeCommit: vi.fn(), onPopClosed: vi.fn(),
     onFlightChange: vi.fn(), onMapManeuverChange: vi.fn(), onInfoChange: vi.fn(), onPhotoChange: vi.fn(),
@@ -251,20 +251,43 @@ describe('fallback touch gestures', () => {
     expect(st.yawT).not.toBe(0);
   });
 
-  it('a cancel throws the pinch away: nothing is reported, and the map preview goes back', () => {
+  it('a cancel throws the pinch away: nothing is reported, and the app puts the map image back as it stood', () => {
     const { touch, callbacks } = touchScene({ e: 0 }, { renderPath: 'fallback' }, true);
     touch('pointerdown', 1, 500, 400);
     touch('pointerdown', 2, 700, 400);
     touch('pointermove', 1, 530, 420);
     touch('pointermove', 2, 730, 420);
+    // told once, before the first move of the image
+    expect(callbacks.onMapDragBegin).toHaveBeenCalledOnce();
+    expect(vi.mocked(callbacks.onMapDragBegin!).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(callbacks.onMapDrag).mock.invocationCallOrder[0]);
     touch('pointercancel', 1, 530, 420);
+    expect(callbacks.onMapDragCancel).toHaveBeenCalledOnce();
     expect(callbacks.onMapPan).not.toHaveBeenCalled();
-    // the preview moved 30 and 20 with the fingers, and the same comes back
-    const moves = vi.mocked(callbacks.onMapDrag).mock.calls;
-    expect(moves.reduce((sum, [dx]) => sum + dx, 0)).toBeCloseTo(0);
-    expect(moves.reduce((sum, [, dy]) => sum + dy, 0)).toBeCloseTo(0);
+    // the preview is not undone by moving it back: that would not restore a clamped one
+    expect(callbacks.onMapDrag).toHaveBeenCalledTimes(2);
     touch('pointercancel', 2, 730, 420);
+    expect(callbacks.onMapDragCancel).toHaveBeenCalledOnce();
     expect(callbacks.onMapPan).not.toHaveBeenCalled();
+  });
+
+  it('a lift keeps the map image where the fingers left it: no restore', () => {
+    const { touch, callbacks } = touchScene({ e: 0 }, { renderPath: 'fallback' }, true);
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointermove', 1, 530, 420);
+    touch('pointermove', 2, 730, 420);
+    touch('pointerup', 1, 530, 420);
+    expect(callbacks.onMapPan).toHaveBeenCalledOnce();
+    expect(callbacks.onMapDragCancel).not.toHaveBeenCalled();
+  });
+
+  it('a cancel with no map move does not touch the map image', () => {
+    const { touch, callbacks } = touchScene({ e: 0 }, { renderPath: 'fallback' }, true);
+    touch('pointerdown', 1, 500, 400);
+    touch('pointerdown', 2, 700, 400);
+    touch('pointercancel', 1, 500, 400);
+    expect(callbacks.onMapDragBegin).not.toHaveBeenCalled();
+    expect(callbacks.onMapDragCancel).not.toHaveBeenCalled();
   });
 
   it('a cancel reports no camera pan or zoom either', () => {
@@ -277,6 +300,56 @@ describe('fallback touch gestures', () => {
     touch('pointercancel', 2, 840, 420);
     expect(callbacks.onCameraPan).not.toHaveBeenCalled();
     expect(callbacks.onCameraZoom).not.toHaveBeenCalled();
+  });
+
+  describe('a finger already busy outside the canvas', () => {
+    function withProfile() {
+      const root = document.createElement('div');
+      const profile = document.createElement('div');
+      profile.dataset.profile = '';
+      profile.setPointerCapture = vi.fn();
+      profile.hasPointerCapture = vi.fn(() => false);
+      const cursor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      cursor.dataset.cursor = '';
+      profile.append(cursor);
+      root.append(profile);
+      document.body.append(root);
+      const scene = touchScene({ e: 1 }, { renderPath: 'fallback', uiRoot: root });
+      scene.engine.setModel({ ...model, route: [[0, 0, 0]] as unknown as EngineModel['route'] });
+      const onProfile = (type: string, id: number) =>
+        pointer(profile, type, 300, 300, { pointerId: id, pointerType: 'touch' });
+      return { ...scene, onProfile };
+    }
+
+    it('leaves a second finger on the canvas out while a finger carries the runner along the profile', () => {
+      const { touch, onProfile, st } = withProfile();
+      onProfile('pointerdown', 1);
+      const { yawT, tiltT, zoomT, panT } = st;
+      const pan = [...panT];
+      touch('pointerdown', 2, 500, 400);
+      touch('pointermove', 2, 700, 450);
+      expect(st.yawT).toBe(yawT);
+      expect(st.tiltT).toBe(tiltT);
+      expect(st.zoomT).toBe(zoomT);
+      expect(st.panT).toEqual(pan);
+      // a third finger does not start a pinch with it either
+      touch('pointerdown', 3, 800, 400);
+      touch('pointermove', 3, 900, 400);
+      expect(st.zoomT).toBe(zoomT);
+      touch('pointerup', 2, 700, 450);
+      touch('pointerup', 3, 900, 400);
+      onProfile('pointerup', 1);
+    });
+
+    it('takes the canvas back once the runner finger is lifted', () => {
+      const { touch, onProfile, st } = withProfile();
+      onProfile('pointerdown', 1);
+      onProfile('pointerup', 1);
+      const yawT = st.yawT;
+      touch('pointerdown', 2, 500, 400);
+      touch('pointermove', 2, 560, 400);
+      expect(st.yawT).not.toBe(yawT);
+    });
   });
 
   it('native: touches are not read as a pinch (the page keeps its own handling)', () => {
