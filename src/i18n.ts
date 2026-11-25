@@ -137,6 +137,10 @@ export type Copy = {
     mapSearchFailed: string;
     mapSearchBusy: string;
     openGpx: string;
+    replaceGpxTitle: string;
+    replaceGpxMessage(name: string): string;
+    saveAndOpenGpx: string;
+    openWithoutSavingGpx: string;
     clickRouteMode: string;
     raise: string;
     layFlat: string;
@@ -317,6 +321,10 @@ function makeCopy(language: Language): Copy {
         mapSearchFailed: '検索できませんでした。',
         mapSearchBusy: '検索中…',
         openGpx: 'GPX を開く',
+        replaceGpxTitle: 'GPXを置き換えますか',
+        replaceGpxMessage: (name) => `現在のGPXには変更があります。${name}を開く前に、現在のGPXを保存しますか。`,
+        saveAndOpenGpx: '保存して開く',
+        openWithoutSavingGpx: '保存せずに開く',
         clickRouteMode: 'ルートをクリック',
         raise: '起こす',
         layFlat: '寝かす',
@@ -501,6 +509,10 @@ function makeCopy(language: Language): Copy {
       mapSearchFailed: 'Search failed.',
       mapSearchBusy: 'Searching…',
       openGpx: 'Open GPX',
+      replaceGpxTitle: 'Replace the current GPX?',
+      replaceGpxMessage: (name) => `The current GPX has changes. Save it before opening ${name}?`,
+      saveAndOpenGpx: 'Save and open',
+      openWithoutSavingGpx: 'Open without saving',
       clickRouteMode: 'Click the route',
       raise: 'Raise',
       layFlat: 'Lay flat',
