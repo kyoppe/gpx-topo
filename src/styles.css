@@ -2814,8 +2814,25 @@ html[data-fb-drag] .fb-panel-body {
 }
 
 .fb-hud .key-flip {
-  width: auto;
+  width: 84px;
   min-width: 84px;
+}
+
+.fb-hud .key-flyover-compact {
+  width: 40px;
+  min-width: 40px;
+  padding: 0 10px;
+}
+
+.fb-hud .key-flyover-compact .key-icon {
+  stroke: #fff;
+}
+
+/* Keep the running flyover control the same compact size as its play state while retaining its blue state. */
+.fb-hud .key-fly.key-flip {
+  width: auto;
+  min-width: 40px;
+  padding: 0 10px;
 }
 
 /* a key's picture and its words: a narrow bar shows the picture only (the words stay for screen readers) */
@@ -2852,6 +2869,25 @@ html[data-fb-drag] .fb-panel-body {
     clip-path: inset(50%);
     white-space: nowrap;
   }
+
+  .fb-hud .hud {
+    gap: 6px;
+  }
+
+  .fb-hud .key-mode,
+  .fb-hud .key-open,
+  .fb-hud .key-place,
+  .fb-hud .key-pin,
+  .fb-hud .key-permalink,
+  .fb-hud .key-fly,
+  .fb-hud .key-stop,
+  .fb-hud .key-camera,
+  .fb-hud .key-video,
+  .fb-hud .key-moves {
+    width: 40px;
+    min-width: 40px;
+    padding: 0;
+  }
 }
 
 /* the photo and the video are made here too; the dialog after them takes the share sheet's place of the scene's print */
@@ -2859,6 +2895,7 @@ html[data-fb-drag] .fb-panel-body {
 .fb-hud .key-video {
   width: auto;
   padding: 0 10px;
+  order: 2;
 }
 
 /* the first person view and the aerial shots: a key of each on a wide bar, one key for the view on a narrow one */
@@ -2868,6 +2905,26 @@ html[data-fb-drag] .fb-panel-body {
 .fb-hud .key-moves {
   width: auto;
   padding: 0 10px;
+  order: 1;
+}
+
+.fb-hud .key-moves {
+  width: 40px;
+  padding: 0;
+}
+
+@media (max-width: 560px) {
+  .fb-hud .key-camera,
+  .fb-hud .key-video {
+    width: 40px;
+    min-width: 40px;
+    padding: 0;
+  }
+}
+
+.fb-hud .key-moves-placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* the compact view key represents the same aerial-view controls as the native yellow keys */

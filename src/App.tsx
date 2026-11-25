@@ -3384,9 +3384,12 @@ export default function App() {
                 )}
               </button>
             )}
+            {fb && compactBar && viewMode === 'map' && !movesKeyShown && (
+              <span className="key key-moves key-moves-placeholder" aria-hidden="true" />
+            )}
             <button
               type="button"
-              className="key key-flip"
+              className={`key key-flip${fb && compactBar && flyoverPlaying ? ' key-flyover-compact' : ''}`}
               data-piece="key"
               data-key="flip"
               data-face="front"
@@ -3399,7 +3402,7 @@ export default function App() {
                 engineRef.current?.toggle();
               }}
             >
-              {copy.ui.raise}
+              {fb && compactBar && flyoverPlaying ? <KeyFace icon="raise" label={copy.ui.raise} /> : copy.ui.raise}
             </button>
             <button
               type="button"
