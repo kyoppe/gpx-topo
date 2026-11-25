@@ -187,13 +187,6 @@ const KEY_ICONS = {
       <path d="M18 14v6M15 17h6" />
     </>
   ),
-  location: (
-    <>
-      <circle cx="12" cy="12" r="6.8" />
-      <circle cx="12" cy="12" r="2.2" />
-      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-    </>
-  ),
 } as const;
 
 /** What a key shows in the fallback: a picture (on a narrow bar) and its words (on a wide one, or for a screen reader). */

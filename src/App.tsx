@@ -2622,60 +2622,82 @@ export default function App() {
 
             <div className="map" data-map="" style={mapStyle}>
               <StageHost host={fb?.mapControls ?? null}>
-              <div
-                className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
-                data-piece="content"
-                data-map-control=""
-                drawable=""
-                role="group"
-                aria-label={copy.ui.mapType}
-              >
-                <button
-                  type="button"
-                  className="map-switch-toggle"
-                  aria-expanded={mapSwitchOpen}
-                  onClick={() => setMapSwitchOpen((open) => !open)}
+              <div className="map-actions">
+                {viewMode === 'map' && (
+                  <button
+                    type="button"
+                    className="map-location-button"
+                    data-piece="content"
+                    data-map-control=""
+                    drawable=""
+                    aria-label={copy.ui.currentLocation}
+                    aria-busy={currentLocationBusy}
+                    disabled={!mapReady}
+                    onClick={() => void showCurrentLocation()}
+                  >
+                    <svg className="location-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <circle cx="12" cy="12" r="6.8" />
+                      <circle cx="12" cy="12" r="2.2" />
+                      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                    </svg>
+                    {copy.ui.currentLocation}
+                  </button>
+                )}
+                <div
+                  className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
+                  data-piece="content"
+                  data-map-control=""
+                  drawable=""
+                  role="group"
+                  aria-label={copy.ui.mapType}
                 >
-                  <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
+                  <button
+                    type="button"
+                    className="map-switch-toggle"
+                    aria-expanded={mapSwitchOpen}
+                    onClick={() => setMapSwitchOpen((open) => !open)}
+                  >
+                    <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
                   {mapLoading && (
                     <span className="map-switch-loading" role="status" aria-live="polite">
                       <i className="map-spinner" aria-hidden="true" />
                       {copy.ui.mapLoading}
                     </span>
                   )}
-                  <b className="map-switch-chevron" aria-hidden="true">
-                    {mapSwitchOpen ? '⌃' : '⌄'}
-                  </b>
-                </button>
-                {mapSwitchOpen && (
-                  <>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
-                      {copy.ui.standardMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
-                      {copy.ui.paleMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
-                      {copy.ui.blankMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
-                      {copy.ui.aerial}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
-                      {copy.ui.photoNames}
-                    </button>
-                    <span className="map-switch-divider" aria-hidden="true" />
-                    <button
-                      type="button"
-                      className="map-switch-option"
-                      aria-pressed={hillshade}
-                      disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
-                      onClick={toggleHillshade}
-                    >
-                      {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
-                    </button>
-                  </>
-                )}
+                    <b className="map-switch-chevron" aria-hidden="true">
+                      {mapSwitchOpen ? '⌃' : '⌄'}
+                    </b>
+                  </button>
+                  {mapSwitchOpen && (
+                    <>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
+                        {copy.ui.standardMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
+                        {copy.ui.paleMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
+                        {copy.ui.blankMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
+                        {copy.ui.aerial}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
+                        {copy.ui.photoNames}
+                      </button>
+                      <span className="map-switch-divider" aria-hidden="true" />
+                      <button
+                        type="button"
+                        className="map-switch-option"
+                        aria-pressed={hillshade}
+                        disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
+                        onClick={toggleHillshade}
+                      >
+                        {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               </StageHost>
               {viewMode === 'map' && mapPin && (
@@ -3373,7 +3395,6 @@ export default function App() {
               {viewMode === 'map' && (
                 <>
                   <span className="well" data-well="pin" />
-                  <span className="well" data-well="location" />
                   <span className="well" data-well="permalink" />
                 </>
               )}
@@ -3439,31 +3460,6 @@ export default function App() {
                   <path d="M12 21s7-6.2 7-12A7 7 0 0 0 5 9c0 5.8 7 12 7 12Z" />
                   <circle cx="12" cy="9" r="2.4" />
                 </svg>
-              </button>
-            )}
-            {viewMode === 'map' && (
-              <button
-                type="button"
-                className="key key-location"
-                data-piece="key"
-                data-key="location"
-                data-latched={currentLocationBusy ? '' : undefined}
-                drawable=""
-                aria-label={copy.ui.currentLocation}
-                aria-busy={currentLocationBusy}
-                title={copy.ui.currentLocation}
-                disabled={!mapReady}
-                onClick={() => void showCurrentLocation()}
-              >
-                {fb ? (
-                  <KeyFace icon="location" label={copy.ui.currentLocation} />
-                ) : (
-                  <svg className="location-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <circle cx="12" cy="12" r="6.8" />
-                    <circle cx="12" cy="12" r="2.2" />
-                    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-                  </svg>
-                )}
               </button>
             )}
             {viewMode === 'map' && (
