@@ -3,9 +3,10 @@ import type { MapProjection, MapTile } from './geo';
 /**
  * Two pictures of the selected GSI map. The flat pale map is Zessoku's: the hillshade over it at 35 %.
  * The 3D pale map has no hillshade, and the map's own contours and vegetation marks are taken out,
- * so the model's 10 m contours are all that draws the relief. Aerial photos stay untouched.
+ * so the model's 10 m contours are all that draws the relief. Aerial photos and the blank map stay untouched.
  */
-const PALE_MAX_ZOOM = 18;
+const MAP_MAX_ZOOM = 18;
+const BLANK_MAX_ZOOM = 14;
 /** Start with one extra source zoom so the first close view does not need a new base texture. */
 const INITIAL_ZOOM_BONUS = 1;
 const HILLSHADE_MAX_ZOOM = 16;
@@ -14,7 +15,23 @@ const PAPER = '#f2f1ee';
 const TILE = 256;
 const PHOTO_NAMES_OPACITY = 0.42;
 
-export type MapStyle = 'std' | 'pale' | 'photo' | 'photoNames';
+export type MapStyle = 'std' | 'pale' | 'blank' | 'photo' | 'photoNames';
+
+function mapLayer(style: MapStyle) {
+  return style === 'photo' || style === 'photoNames' ? 'seamlessphoto' : style;
+}
+
+export function maxZoomForStyle(style: MapStyle) {
+  return style === 'blank' ? BLANK_MAX_ZOOM : MAP_MAX_ZOOM;
+}
+
+function stripsRelief(style: MapStyle) {
+  return style === 'std' || style === 'pale';
+}
+
+function usesHillshade(style: MapStyle) {
+  return style === 'std' || style === 'pale' || style === 'blank';
+}
 
 type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -247,8 +264,9 @@ export async function renderBasemaps(
         : null
       : null;
   const strip = stripper();
-  const zoom = Math.min(PALE_MAX_ZOOM, projection.zoomFor(density, 5, PALE_MAX_ZOOM) + INITIAL_ZOOM_BONUS);
-  const layer = style === 'std' || style === 'pale' ? style : 'seamlessphoto';
+  const maxZoom = maxZoomForStyle(style);
+  const zoom = Math.min(maxZoom, projection.zoomFor(density, 5, maxZoom) + INITIAL_ZOOM_BONUS);
+  const layer = mapLayer(style);
   let loaded = 0;
   await Promise.all(
     tilesIn(projection, zoom, region).map(async (tile) => {
@@ -258,7 +276,7 @@ export async function renderBasemaps(
       loaded += 1;
       placeTile(flat, image, tile, region, density);
       if (photo) placeTile(photo, image, tile, region, density);
-      placeTile(relief, style === 'std' || style === 'pale' ? strip(image) : image, tile, region, density);
+      placeTile(relief, stripsRelief(style) ? strip(image) : image, tile, region, density);
       image.close();
       onProgress();
     }),
@@ -279,7 +297,7 @@ export async function renderBasemaps(
     flat.globalAlpha = 1;
     relief.globalAlpha = 1;
   }
-  if (hillshade && (style === 'std' || style === 'pale')) {
+  if (hillshade && usesHillshade(style)) {
     const hillTiles = tilesIn(projection, Math.min(zoom, HILLSHADE_MAX_ZOOM), region);
     const shades = await Promise.all(hillTiles.map((tile) => loadTile(tileUrl('hillshademap', tile), signal)));
     if (signal.aborted) return;
@@ -308,8 +326,8 @@ export async function streamRelief(
   style: MapStyle = 'pale',
 ) {
   const strip = stripper();
-  const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
-  const layer = style === 'std' || style === 'pale' ? style : 'seamlessphoto';
+  const zoom = projection.zoomFor(density, 5, maxZoomForStyle(style));
+  const layer = mapLayer(style);
   const fetchRegion: MapRegion = {
     x: Math.max(0, region.x - region.w * DETAIL_HALO),
     y: Math.max(0, region.y - region.h * DETAIL_HALO),
@@ -327,7 +345,7 @@ export async function streamRelief(
       const image = await loadTile(tileUrl(layer, tile), signal);
       if (!image) return;
       if (signal.aborted) return image.close();
-      placeTile(context, style === 'std' || style === 'pale' ? strip(image) : image, tile, region, density);
+      placeTile(context, stripsRelief(style) ? strip(image) : image, tile, region, density);
       image.close();
       onTile();
     }),
@@ -356,7 +374,7 @@ export async function streamNames(
   signal: AbortSignal,
   onTile: () => void,
 ) {
-  const zoom = projection.zoomFor(density, 5, PALE_MAX_ZOOM);
+  const zoom = projection.zoomFor(density, 5, MAP_MAX_ZOOM);
   const fetchRegion: MapRegion = {
     x: Math.max(0, region.x - region.w * DETAIL_HALO),
     y: Math.max(0, region.y - region.h * DETAIL_HALO),

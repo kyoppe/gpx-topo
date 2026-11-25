@@ -37,6 +37,17 @@ describe('session', () => {
     });
   });
 
+  it('keeps the blank map style for the next visit', () => {
+    saveView({
+      viewMode: 'map',
+      mapViewport: null,
+      baseMapStyle: 'blank',
+      hillshade: true,
+      mapSunlight: true,
+    });
+    expect(loadView()).toMatchObject({ baseMapStyle: 'blank' });
+  });
+
   it('ignores an invalid saved view', () => {
     localStorage.setItem(
       'gpx-topo:view',

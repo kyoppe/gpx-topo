@@ -72,7 +72,14 @@ export function loadView(): SavedView | null {
     if (!raw) return null;
     const value = JSON.parse(raw) as Partial<SavedView>;
     if (value.viewMode !== 'gpx' && value.viewMode !== 'map') return null;
-    if (value.baseMapStyle !== 'std' && value.baseMapStyle !== 'pale' && value.baseMapStyle !== 'photo' && value.baseMapStyle !== 'photoNames') return null;
+    if (
+      value.baseMapStyle !== 'std' &&
+      value.baseMapStyle !== 'pale' &&
+      value.baseMapStyle !== 'blank' &&
+      value.baseMapStyle !== 'photo' &&
+      value.baseMapStyle !== 'photoNames'
+    )
+      return null;
     if (value.mapViewport !== null && !validMapViewport(value.mapViewport)) return null;
     if (value.hillshade !== undefined && typeof value.hillshade !== 'boolean') return null;
     if (value.mapSunlight !== undefined && typeof value.mapSunlight !== 'boolean') return null;

@@ -65,6 +65,7 @@ export type Copy = {
     map: string;
     standardMap: string;
     paleMap: string;
+    blankMap: string;
     aerial: string;
     photoNames: string;
     hillshadeOn: string;
@@ -244,6 +245,7 @@ function makeCopy(language: Language): Copy {
         map: '地図',
         standardMap: '標準',
         paleMap: '淡色',
+        blankMap: '白地図',
         aerial: '写真',
         photoNames: '写真+地名',
         hillshadeOn: '陰影あり',
@@ -282,7 +284,7 @@ function makeCopy(language: Language): Copy {
         waypointElapsedAria: (name) => `${name} の経過時間`,
         deleteWaypointAria: (name) => `${name} を削除`,
         estimated: '推定',
-        gsiCredit: '地理院タイル (淡色地図・陰影起伏図・標高タイル) 国土地理院',
+        gsiCredit: '地理院タイル (淡色地図・白地図・陰影起伏図・標高タイル) 国土地理院',
         previousMonth: '前の月',
         nextMonth: '次の月',
         elapsedTime: 'スタートからの経過時間',
@@ -427,6 +429,7 @@ function makeCopy(language: Language): Copy {
       map: 'Map',
       standardMap: 'Standard',
       paleMap: 'Pale',
+      blankMap: 'Blank',
       aerial: 'Aerial',
       photoNames: 'Aerial + names',
       hillshadeOn: 'Hillshade on',
@@ -465,7 +468,7 @@ function makeCopy(language: Language): Copy {
       waypointElapsedAria: (name) => `${name} elapsed time`,
       deleteWaypointAria: (name) => `Delete ${name}`,
       estimated: 'estimated',
-      gsiCredit: 'GSI tiles (Pale map, hillshade, elevation) Geospatial Information Authority of Japan',
+      gsiCredit: 'GSI tiles (Pale map, blank map, hillshade, elevation) Geospatial Information Authority of Japan',
       previousMonth: 'Previous month',
       nextMonth: 'Next month',
       elapsedTime: 'Elapsed time from start',

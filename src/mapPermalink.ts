@@ -267,7 +267,9 @@ export function parseMapPermalink(search: string): MapPermalink | null {
 
   const styleValue = params.get('style');
   const mapStyle: MapStyle | null =
-    styleValue === 'std' || styleValue === 'pale' || styleValue === 'photo' || styleValue === 'photoNames' ? styleValue : null;
+    styleValue === 'std' || styleValue === 'pale' || styleValue === 'blank' || styleValue === 'photo' || styleValue === 'photoNames'
+      ? styleValue
+      : null;
   if (mapStyle) usedParameters.push('style');
   else if (styleValue !== null) ignoredParameters.push('style');
 

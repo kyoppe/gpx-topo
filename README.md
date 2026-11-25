@@ -3,7 +3,7 @@
 `gpx-topo` shows a GPX route on a faint GSI map and raises the same page into a 3D terrain model built from GSI DEM tiles.
 
 - The terrain is one continuous surface at true scale: heights use the same metres per pixel as the map (1:1), with 10 m contours and 50 m index contours.
-- The map can use the GSI pale map or seamless aerial photos. The pale map has hillshade only when flat; on the 3D model its hillshade, own contour lines, and vegetation marks are taken out, so the relief is drawn by the model's contours and sunlight. Aerial photos do not use the GSI hillshade.
+- The map can use the GSI standard, pale, blank map, or seamless aerial photos. The pale map has hillshade only when flat; on the 3D model its hillshade, own contour lines, and vegetation marks are taken out, so the relief is drawn by the model's contours and sunlight. Aerial photos do not use the GSI hillshade.
 - React owns the page: the map, waypoint pins, the side panel, the bar, and the pickers are ordinary HTML.
 - HTML-in-Canvas (`<canvas layoutsubtree>`, `texElementSubImage2D`, `updateElementGeometry`) turns each piece into a WebGL2 texture and keeps the real DOM under it, so text stays selectable and buttons stay clickable while the model is turned.
 - The bar is a row of real buttons. On the flat map they are plain flat buttons; as the page stands up they rise into keys on a slab in front of the camera. The date and time pickers rise off the panel; the time picker turns as two lit drums.
@@ -67,6 +67,7 @@ selection, and commit version tagging are documented in
 GSI tiles (Geospatial Information Authority of Japan), attributed in the side panel:
 
 - `pale`: base map. For the 3D model its contour lines (and their labels) and its small grey vegetation marks are removed by colour and shape
+- `blank`: GSI blank map, kept unchanged in the 3D model
 - `hillshademap`: hillshade over the flat map at 35% opacity
 - `dem_png` (DEM10B): elevation for the terrain and its contours. The tiles are decoded from their PNG bytes, not read back from a canvas, because browsers with fingerprint protection (such as Brave Shields) add noise to canvas reads and one step of red in these tiles is 655 m. Sea tiles are treated as 0 m. If DEM tiles fail, the terrain falls back to GPX elevations.
 

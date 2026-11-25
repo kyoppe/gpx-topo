@@ -2,6 +2,31 @@ import type { GpxRoute, TrackPoint } from './gpx';
 
 const TILE = 256;
 const EARTH_CIRCUMFERENCE_M = 40_075_016.686;
+const TILE_AXIS_LIMIT = 128;
+const TILE_AXIS_BUDGET = TILE_AXIS_LIMIT - 3;
+export const MAX_MAP_TILES = TILE_AXIS_LIMIT ** 2;
+
+function safeProjectionScale(width: number, height: number, scale: number) {
+  const viewport = Math.max(width, height, 1);
+  const minScale = viewport / (TILE_AXIS_BUDGET * TILE);
+  return Math.max(1e-6, scale, minScale);
+}
+
+function maxTileZoom(width: number, height: number, scale: number) {
+  const viewport = Math.max(width, height, 1);
+  return Math.floor(Math.log2((TILE_AXIS_BUDGET * TILE * scale) / viewport));
+}
+
+function boundedTileZoom(width: number, height: number, scale: number, zoom: number) {
+  return Math.max(0, Math.min(Math.floor(zoom), maxTileZoom(width, height, scale)));
+}
+
+function zoomForTiles(width: number, height: number, scale: number, texelsPerPx: number, min: number, max: number) {
+  const requested = Math.round(Math.log2(scale * texelsPerPx));
+  const safeMax = Math.max(0, maxTileZoom(width, height, scale));
+  const bounded = Math.min(max, requested, safeMax);
+  return safeMax < min ? bounded : Math.max(min, bounded);
+}
 
 export type MapPoint = {
   x: number;
@@ -70,10 +95,14 @@ export function createMapProjection(
   }
   const spanX = Math.max(maxX - minX, 1e-6);
   const spanY = Math.max(maxY - minY, 1e-6);
-  const scale = Math.min(
-    (width * (1 - 2 * padding)) / spanX,
-    (height * (1 - 2 * padding)) / spanY,
-    2 ** 17,
+  const scale = safeProjectionScale(
+    width,
+    height,
+    Math.min(
+      (width * (1 - 2 * padding)) / spanX,
+      (height * (1 - 2 * padding)) / spanY,
+      2 ** 17,
+    ),
   );
   const centerX = (minX + maxX) / 2;
   const centerY = (minY + maxY) / 2;
@@ -95,7 +124,8 @@ export function createMapProjection(
   const inverse = (x: number, y: number) => geoPoint(originX + x / scale, originY + y / scale);
 
   const tiles = (zoom: number) => {
-    const count = 2 ** zoom;
+    const safeZoom = boundedTileZoom(width, height, scale, zoom);
+    const count = 2 ** safeZoom;
     const tileWorld = TILE / count;
     const size = tileWorld * scale;
     const x0 = Math.floor(originX / tileWorld);
@@ -107,8 +137,8 @@ export function createMapProjection(
       for (let tx = x0; tx <= x1; tx += 1) {
         const wrapped = ((tx % count) + count) % count;
         list.push({
-          key: `${zoom}/${wrapped}/${ty}`,
-          z: zoom,
+          key: `${safeZoom}/${wrapped}/${ty}`,
+          z: safeZoom,
           x: wrapped,
           y: ty,
           left: (tx * tileWorld - originX) * scale,
@@ -121,7 +151,7 @@ export function createMapProjection(
   };
 
   const zoomFor = (texelsPerPx: number, min: number, max: number) =>
-    Math.max(min, Math.min(max, Math.round(Math.log2(scale * texelsPerPx))));
+    zoomForTiles(width, height, scale, texelsPerPx, min, max);
 
   return {
     width,
@@ -147,7 +177,7 @@ export function createCenteredProjection(
   height: number,
   scale: number,
 ): MapProjection {
-  const safeScale = Math.max(1e-6, scale);
+  const safeScale = safeProjectionScale(width, height, scale);
   const center = worldPoint(centerLat, centerLon);
   const originX = center.x - width / 2 / safeScale;
   const originY = center.y - height / 2 / safeScale;
@@ -176,7 +206,8 @@ export function createCenteredProjection(
     };
   };
   const tiles = (zoom: number) => {
-    const count = 2 ** zoom;
+    const safeZoom = boundedTileZoom(width, height, safeScale, zoom);
+    const count = 2 ** safeZoom;
     const tileWorld = TILE / count;
     const size = tileWorld * safeScale;
     const x0 = Math.floor(originX / tileWorld);
@@ -188,8 +219,8 @@ export function createCenteredProjection(
       for (let tx = x0; tx <= x1; tx += 1) {
         const wrapped = ((tx % count) + count) % count;
         list.push({
-          key: `${zoom}/${wrapped}/${ty}`,
-          z: zoom,
+          key: `${safeZoom}/${wrapped}/${ty}`,
+          z: safeZoom,
           x: wrapped,
           y: ty,
           left: (tx * tileWorld - originX) * safeScale,
@@ -201,7 +232,7 @@ export function createCenteredProjection(
     return list;
   };
   const zoomFor = (texelsPerPx: number, min: number, max: number) =>
-    Math.max(min, Math.min(max, Math.round(Math.log2(safeScale * texelsPerPx))));
+    zoomForTiles(width, height, safeScale, texelsPerPx, min, max);
   return {
     width,
     height,
