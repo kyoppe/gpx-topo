@@ -49,6 +49,18 @@ import { MAX_VIDEO_RECORDING_MS, VIDEO_RECORDING_FRAME_RATE, supportedVideoMimeT
 
 /** Where the map opens when there is no permalink, saved view, or restored GPX: Mt. Fuji, the whole cone in frame. */
 const DEFAULT_MAP_VIEWPORT: MapViewport = { lat: 35.3606, lon: 138.7274, scale: 5000 };
+const TUTORIAL_SAMPLE_GPX = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="GPX Topo tutorial" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>GPX Topo tutorial route</name></metadata>
+  <wpt lat="35.3621" lon="138.7302"><name>Start</name><ele>820</ele></wpt>
+  <wpt lat="35.3554" lon="138.7241"><name>Viewpoint</name><ele>1260</ele></wpt>
+  <trk><name>GPX Topo tutorial route</name><trkseg>
+    <trkpt lat="35.3621" lon="138.7302"><ele>820</ele></trkpt>
+    <trkpt lat="35.3604" lon="138.7283"><ele>910</ele></trkpt>
+    <trkpt lat="35.3580" lon="138.7264"><ele>1080</ele></trkpt>
+    <trkpt lat="35.3554" lon="138.7241"><ele>1260</ele></trkpt>
+  </trkseg></trk>
+</gpx>`;
 const PANEL_WIDTH = 400;
 const PAD = 20;
 const MIN_PAGE_WIDTH = 1080;
@@ -306,6 +318,8 @@ function Fallback({ copy }: { copy: Copy }) {
 export default function App() {
   const [renderPath] = useState(() => resolveRenderPath(supportsHtmlInCanvas(), fallbackEnabled()));
   const native = renderPath === 'native';
+  const tutorialMode = new URLSearchParams(window.location.search).get('tutorial');
+  const tutorialGpx = tutorialMode === 'gpx';
   // The fallback renders the page into an ordinary element beside the canvas; null on the native path.
   // It exists from the first render, so every ref in the page is set in the same commit as on the native path.
   const [fallbackHost] = useState<HTMLDivElement | null>(() => (renderPath === 'fallback' ? document.createElement('div') : null));
@@ -340,10 +354,10 @@ export default function App() {
   }, [copy.appName, language]);
   const [permalink] = useState(() => parseMapPermalink(window.location.search));
   const [savedView] = useState(() => loadView());
-  const [route, setRoute] = useState<GpxRoute | null>(null);
-  const [fileName, setFileName] = useState('');
-  const [gpxSource, setGpxSource] = useState<GpxSource | null>(null);
-  const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>('pending');
+  const [route, setRoute] = useState<GpxRoute | null>(() => (tutorialGpx ? ensureWaypoints(parseGpx(TUTORIAL_SAMPLE_GPX)) : null));
+  const [fileName, setFileName] = useState(() => (tutorialGpx ? 'tutorial-route.gpx' : ''));
+  const [gpxSource, setGpxSource] = useState<GpxSource | null>(() => (tutorialGpx ? 'user' : null));
+  const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>(() => (tutorialGpx ? 'ready' : 'pending'));
   const [gpxDirty, setGpxDirty] = useState(false);
   const [pendingGpxFile, setPendingGpxFile] = useState<PendingGpxFile | null>(null);
   // the start set last time carries over; a GPX opened afresh starts now (see onFile)
@@ -363,7 +377,7 @@ export default function App() {
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => (permalink ? 'map' : 'map'));
+  const [viewMode, setViewMode] = useState<ViewMode>(() => (tutorialGpx ? 'gpx' : 'map'));
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
     // a permalink with its display area sets the scale itself (below), from the frame this window has
     if (permalink?.center && savedView?.mapViewport && !permalink.area) return { ...savedView.mapViewport, ...permalink.center };
@@ -936,6 +950,10 @@ export default function App() {
   // Restore a user-opened GPX from the previous session, if one was saved. With no saved GPX the app
   // simply opens on the map; no sample route is loaded.
   useEffect(() => {
+    if (tutorialGpx) {
+      planReadyRef.current = true;
+      return;
+    }
     let cancelled = false;
     const initialRequest = fileRequestRef.current;
     const isCurrent = () => !cancelled && fileRequestRef.current === initialRequest && !touchedRef.current;
@@ -984,7 +1002,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tutorialGpx]);
 
   useEffect(() => {
     if (!enterGpxAfterLoadRef.current) return;

@@ -3669,6 +3669,121 @@ html[data-fb-drag] .fb-panel-body {
   filter: blur(24px);
 }
 
+.about-native-scene {
+  position: absolute;
+  inset: 8% 2% 12%;
+  overflow: hidden;
+  border: 1px solid rgba(24, 32, 43, 0.18);
+  border-radius: 24px;
+  background: #e8e7e1;
+  box-shadow: 0 28px 55px rgba(24, 32, 43, 0.2);
+}
+
+.about-native-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.about-native-terrain-host {
+  position: absolute;
+  top: 0;
+  left: -2000px;
+  width: 640px;
+  height: 440px;
+  opacity: 0.001;
+  pointer-events: none;
+}
+
+.about-native-terrain {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(225, 226, 222, 0.82)),
+    #e8e7e1;
+}
+
+.about-native-contours {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: rgba(48, 84, 240, 0.3);
+  stroke-width: 1.1;
+}
+
+.about-native-contours path:nth-child(2n) {
+  stroke: rgba(24, 32, 43, 0.16);
+  stroke-width: 0.8;
+}
+
+.about-native-paper {
+  position: absolute;
+  top: 37%;
+  left: 31%;
+  display: flex;
+  width: 260px;
+  min-height: 120px;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 18px;
+  border: 1px solid rgba(24, 32, 43, 0.22);
+  border-radius: 5px;
+  background: rgba(252, 251, 245, 0.9);
+  box-shadow: 8px 13px 0 rgba(24, 32, 43, 0.12);
+  color: var(--ink);
+  transform: rotate(-5deg);
+}
+
+.about-native-paper strong {
+  font-size: 23px;
+  line-height: 1.25;
+}
+
+.about-native-paper span {
+  color: var(--ink2);
+  font: 11px var(--mono);
+}
+
+.about-native-credits {
+  position: absolute;
+  inset: 40px 88px 32px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 28px;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.3;
+  text-align: center;
+  transform: translateY(190px);
+  animation: about-native-credits 1.4s cubic-bezier(0.2, 0.72, 0.28, 1) 280ms 1 both;
+}
+
+.about-native-credits p {
+  margin: 0;
+}
+
+.about-native-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+@keyframes about-native-credits {
+  from {
+    transform: translateY(190px);
+  }
+  to {
+    transform: translateY(-100px);
+  }
+}
+
 .about-hero-map {
   position: absolute;
   inset: 8% 2% 12%;
@@ -4140,11 +4255,16 @@ html[data-fb-drag] .fb-panel-body {
 
 @media (prefers-reduced-motion: reduce) {
   .about-native .about-hero-map,
+  .about-native .about-native-credits,
   .tutorial-highlight span {
     animation: none;
   }
 
   .about-native .about-hero-map {
     transform: rotateX(46deg) rotateZ(-4deg) translateY(-8px);
+  }
+
+  .about-native .about-native-credits {
+    transform: translateY(-100px);
   }
 }

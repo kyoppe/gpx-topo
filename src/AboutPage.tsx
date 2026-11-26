@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import AboutHero from './AboutHero';
 import { detectLanguage } from './i18n';
 import { supportsHtmlInCanvas } from './htmlInCanvas';
 import { siteCopy } from './siteCopy';
@@ -46,20 +47,24 @@ export default function AboutPage() {
       <SiteHeader copy={copy} />
       <section className="about-hero" aria-labelledby="about-hero-title">
         <div className="about-hero-scene" data-native-showcase={native ? 'true' : 'false'} aria-hidden="true">
-          <div className="about-hero-map">
-            <svg className="about-contours" viewBox="0 0 640 440" preserveAspectRatio="none">
-              <path d="M-20 350C70 285 95 390 180 310S330 250 390 300s105 70 170-5 100-50 150-100" />
-              <path d="M-30 390C80 315 105 425 200 340s130-35 205 20 100 47 160-30 105-35 145-90" />
-              <path d="M-10 260c105-35 105 75 205-5s145-60 220 10 95 45 160-15 100-30 150-70" />
-              <path d="M70 210c80-15 80 45 150-10s125-50 185 5 85 38 140-18 90-20 125-55" />
-              <path d="M190 160c65 15 72 45 125-5s95-48 140-5 73 45 115 0" />
-              <path d="M255 105c40 24 78 34 106 0s68-36 104-5 60 38 91 8" />
-            </svg>
-            <div className="about-hero-sign">
-              <strong>{copy.heroTitle}</strong>
-              <span>{copy.footer}</span>
+          {native ? (
+            <AboutHero copy={copy} />
+          ) : (
+            <div className="about-hero-map">
+              <svg className="about-contours" viewBox="0 0 640 440" preserveAspectRatio="none">
+                <path d="M-20 350C70 285 95 390 180 310S330 250 390 300s105 70 170-5 100-50 150-100" />
+                <path d="M-30 390C80 315 105 425 200 340s130-35 205 20 100 47 160-30 105-35 145-90" />
+                <path d="M-10 260c105-35 105 75 205-5s145-60 220 10 95 45 160-15 100-30 150-70" />
+                <path d="M70 210c80-15 80 45 150-10s125-50 185 5 85 38 140-18 90-20 125-55" />
+                <path d="M190 160c65 15 72 45 125-5s95-48 140-5 73 45 115 0" />
+                <path d="M255 105c40 24 78 34 106 0s68-36 104-5 60 38 91 8" />
+              </svg>
+              <div className="about-hero-sign">
+                <strong>{copy.heroTitle}</strong>
+                <span>{copy.footer}</span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
         <div className="about-hero-copy">
           <p className="site-eyebrow">{copy.footer}</p>
