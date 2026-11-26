@@ -99,6 +99,7 @@ vi.mock('./mapPermalink', async () => {
 });
 
 const { default: App } = await import('./App');
+const { legacyFixtureProjectionScale } = await import('./initialMapViewport');
 
 const DEFAULT_VIEWPORT = { lat: 35.3606, lon: 138.7274, scale: 5000 };
 const mountedRoots: Array<ReturnType<typeof createRoot>> = [];
@@ -212,5 +213,36 @@ describe('App initial restore lifecycle', () => {
 
     expect(lastSavedViewport()).toMatchObject({ lat: 34.6937, lon: 135.5023 });
     expect(lastSavedViewport()?.scale).not.toBe(SAVED_VIEW.mapViewport.scale);
+  });
+
+  it('keeps the former fixture scale for an area-less permalink without a saved GPX', async () => {
+    harness.permalink = {
+      center: { lat: 35.68, lon: 139.76 },
+      view: 'flat',
+      bearing: null,
+      pitch: null,
+      zoom: null,
+      pan: null,
+      focus: null,
+      date: null,
+      mapStyle: null,
+      hillshade: null,
+      pin: null,
+      fpv: null,
+      area: null,
+      sun: null,
+      sunSpeed: 'normal',
+      timeMinutes: null,
+      usedParameters: [],
+      ignoredParameters: [],
+    };
+
+    await renderApp();
+
+    expect(lastSavedViewport()).toEqual({
+      lat: 35.68,
+      lon: 139.76,
+      scale: legacyFixtureProjectionScale(620, 608),
+    });
   });
 });

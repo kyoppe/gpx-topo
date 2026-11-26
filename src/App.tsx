@@ -36,7 +36,12 @@ import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
 import { detectLanguage, getCopy, type Copy } from './i18n';
-import { resolveInitialMapViewport, shouldWaitForInitialMapViewport, type GpxRestoreState } from './initialMapViewport';
+import {
+  legacyFixtureProjectionScale,
+  resolveInitialMapViewport,
+  shouldWaitForInitialMapViewport,
+  type GpxRestoreState,
+} from './initialMapViewport';
 import { addAction, reportError, reportInfo, reportWarning, startVital } from './observability';
 import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, saveView, startNow, type MapViewport } from './session';
 import { buildTerrain } from './terrain';
@@ -515,6 +520,10 @@ export default function App() {
   const gpxProjection = useMemo(
     () => (points ? createMapProjection({ points }, layout.mapWidth, layout.mapHeight) : null),
     [points, layout.mapWidth, layout.mapHeight],
+  );
+  const legacyPermalinkScale = useMemo(
+    () => legacyFixtureProjectionScale(layout.mapWidth, layout.mapHeight),
+    [layout.mapHeight, layout.mapWidth],
   );
   const mapProjection = useMemo(
     () =>
@@ -1003,6 +1012,7 @@ export default function App() {
           fittedScale: fitted?.scale ?? null,
           savedMapViewport: savedView?.mapViewport ?? null,
           gpxProjection,
+          legacyPermalinkScale: permalink?.center && !permalink.area ? legacyPermalinkScale : null,
           defaultViewport: DEFAULT_MAP_VIEWPORT,
         }),
       );
@@ -1015,7 +1025,7 @@ export default function App() {
       map_viewport: !!mapViewport,
       map_style: savedView?.baseMapStyle ?? 'pale',
     });
-  }, [gpxProjection, gpxRestoreState, mapViewport, permalink, permalinkFrame, savedView, viewMode]);
+  }, [gpxProjection, gpxRestoreState, legacyPermalinkScale, mapViewport, permalink, permalinkFrame, savedView, viewMode]);
 
   useEffect(() => {
     if (!viewRestoredRef.current) return;
