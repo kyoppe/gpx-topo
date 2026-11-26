@@ -452,6 +452,7 @@ export default function App() {
   const mapPinPlacedAtRef = useRef<number | null>(null);
   const currentLocationRequestRef = useRef(0);
   const currentLocationRecenterRef = useRef(false);
+  const pendingCurrentLocationRef = useRef<{ requestId: number; location: CurrentLocation } | null>(null);
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
@@ -685,6 +686,7 @@ export default function App() {
       context.clearRect(0, 0, target.width, target.height);
       context.drawImage(source, sx, sy, sourceWidth, sourceHeight, 0, 0, target.width, target.height);
     }
+    engineRef.current?.setFlatMapDragOffset(offset[0], offset[1]);
     engineRef.current?.refreshMap();
   }, []);
   const panMapPreview = useCallback(
@@ -1166,6 +1168,7 @@ export default function App() {
       if (viewMode === 'map') {
         mapBufferRef.current = { flat: nextFlat, relief: nextRelief, density, pad };
         mapDragOffsetRef.current = [0, 0];
+        engineRef.current?.setFlatMapDragOffset(0, 0);
       } else {
         mapBufferRef.current = null;
       }
@@ -1631,14 +1634,15 @@ export default function App() {
   }, [apart, viewMode]);
 
   useEffect(() => {
-    // The current-location control is flat-only, so do not leave a marker
-    // behind without a way to clear it while the map is raised.
-    if (!apart || (!currentLocation && !currentLocationBusy)) return;
-    currentLocationRequestRef.current += 1;
-    currentLocationRecenterRef.current = false;
-    setCurrentLocation(null);
-    setCurrentLocationBusy(false);
-  }, [apart, currentLocation, currentLocationBusy]);
+    const pending = pendingCurrentLocationRef.current;
+    if (!pending || viewMode !== 'map' || apart || !mapProjection || !mapReady) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (pendingCurrentLocationRef.current?.requestId !== pending.requestId) return;
+      pendingCurrentLocationRef.current = null;
+      setCurrentLocation(pending.location);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [apart, mapProjection, mapReady, viewMode]);
 
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !terrain) return null;
@@ -2485,6 +2489,7 @@ export default function App() {
   const clearCurrentLocation = () => {
     if (!currentLocation) return;
     currentLocationRequestRef.current += 1;
+    pendingCurrentLocationRef.current = null;
     currentLocationRecenterRef.current = false;
     setCurrentLocation(null);
     setCurrentLocationBusy(false);
@@ -2498,7 +2503,7 @@ export default function App() {
       if (requestId !== currentLocationRequestRef.current) return;
       detachPermalink('map_center');
       currentLocationRecenterRef.current = apartRef.current;
-      setCurrentLocation(location);
+      pendingCurrentLocationRef.current = { requestId, location };
       setMapViewport((viewportState) => ({
         lat: location.lat,
         lon: location.lon,
@@ -2761,7 +2766,12 @@ export default function App() {
               )}
               {viewMode === 'map' && currentLocation && (
                 <div className="pin current-location" data-piece="pin" data-current-location="" drawable="" role="img" aria-label={copy.ui.currentLocation}>
-                  <span className="current-location-marker" aria-hidden="true" />
+                  <span className="current-location-marker" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d="M12 21s7-6.2 7-12A7 7 0 0 0 5 9c0 5.8 7 12 7 12Z" />
+                      <circle cx="12" cy="9" r="2.4" />
+                    </svg>
+                  </span>
                 </div>
               )}
               {viewMode === 'gpx' && ways.map((way, index) => (
