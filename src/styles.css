@@ -3772,6 +3772,7 @@ html[data-fb-drag] .fb-panel-body {
 
 .about-native-credits p {
   margin: 0;
+  white-space: pre-line;
 }
 
 .about-native-status {
@@ -3943,8 +3944,9 @@ html[data-fb-drag] .fb-panel-body {
   line-height: 1.9;
 }
 
-.site-device-card.is-inactive {
-  opacity: 0.46;
+.about-page[data-primary-input='pointer'] .site-device-card-touch,
+.about-page[data-primary-input='touch'] .site-device-card-pointer {
+  display: none;
 }
 
 .site-faq {
@@ -4234,10 +4236,6 @@ html[data-fb-drag] .fb-panel-body {
 
   .site-card p {
     margin-top: 20px;
-  }
-
-  .site-device-card.is-inactive {
-    display: none;
   }
 
   .tutorial-app-frame,

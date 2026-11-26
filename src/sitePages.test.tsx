@@ -33,6 +33,9 @@ describe('standalone site pages', () => {
     expect(container.querySelector('h1')?.textContent).toContain('Turn a flat map');
     expect(container.textContent).toContain('What you can do');
     expect(container.textContent).toContain('Ways to use it');
+    expect(['pointer', 'touch']).toContain(container.querySelector('.about-page')?.getAttribute('data-primary-input'));
+    expect(container.querySelector('.site-device-card-pointer')).not.toBeNull();
+    expect(container.querySelector('.site-device-card-touch')).not.toBeNull();
     expect(container.querySelector('a[href="/tutorial"]')).not.toBeNull();
     expect(container.querySelector('a[href="/"]')).not.toBeNull();
     expect(container.querySelector('a[href*="gpx-wallpaper"]')).not.toBeNull();

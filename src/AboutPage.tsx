@@ -110,7 +110,7 @@ export default function AboutPage() {
         <p className="site-eyebrow">{copy.footer}</p>
         <h2 id="about-operation-title">{copy.operation}</h2>
         <div className="site-grid site-grid-two">
-          <article className={`site-card site-device-card${touch ? ' is-inactive' : ''}`}>
+          <article className="site-card site-device-card site-device-card-pointer">
             <h3>{copy.pointerTitle}</h3>
             <ul>
               {copy.pointerItems.map((item) => (
@@ -118,7 +118,7 @@ export default function AboutPage() {
               ))}
             </ul>
           </article>
-          <article className={`site-card site-device-card${touch ? '' : ' is-inactive'}`}>
+          <article className="site-card site-device-card site-device-card-touch">
             <h3>{copy.touchTitle}</h3>
             <ul>
               {copy.touchItems.map((item) => (

@@ -50,11 +50,11 @@ import { MAX_VIDEO_RECORDING_MS, VIDEO_RECORDING_FRAME_RATE, supportedVideoMimeT
 /** Where the map opens when there is no permalink, saved view, or restored GPX: Mt. Fuji, the whole cone in frame. */
 const DEFAULT_MAP_VIEWPORT: MapViewport = { lat: 35.3606, lon: 138.7274, scale: 5000 };
 const TUTORIAL_SAMPLE_GPX = `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="GPX Topo tutorial" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata><name>GPX Topo tutorial route</name></metadata>
+<gpx version="1.1" creator="tutorial" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Tutorial route</name></metadata>
   <wpt lat="35.3621" lon="138.7302"><name>Start</name><ele>820</ele></wpt>
   <wpt lat="35.3554" lon="138.7241"><name>Viewpoint</name><ele>1260</ele></wpt>
-  <trk><name>GPX Topo tutorial route</name><trkseg>
+  <trk><name>Tutorial route</name><trkseg>
     <trkpt lat="35.3621" lon="138.7302"><ele>820</ele></trkpt>
     <trkpt lat="35.3604" lon="138.7283"><ele>910</ele></trkpt>
     <trkpt lat="35.3580" lon="138.7264"><ele>1080</ele></trkpt>

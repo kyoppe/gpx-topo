@@ -66,12 +66,10 @@ function renderTerrainContent(copy: SiteCopy, terrainRef?: Ref<HTMLDivElement>) 
         <strong>{copy.heroTitle}</strong>
         <span>{copy.footer}</span>
       </div>
-      <div className="about-native-credits" aria-label={copy.heroLead}>
-        <p>{copy.heroTitle}</p>
-        <p>{copy.heroLead}</p>
-        <p>{copy.canItems[2]}</p>
-        <p>{copy.canItems[3]}</p>
-        <p>{copy.canItems[4]}</p>
+      <div className="about-native-credits" aria-label={copy.heroCredits.join(' ')}>
+        {copy.heroCredits.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ export type SiteCopy = {
   navMap: string;
   heroTitle: string;
   heroLead: string;
+  heroCredits: readonly string[];
   heroButton: string;
   heroTutorial: string;
   aboutCan: string;
@@ -42,6 +43,7 @@ const JAPANESE: SiteCopy = {
   navMap: '地図を開く',
   heroTitle: '平面地図を、地形模型に起こす。',
   heroLead: '好きな場所を探し、地形を起こし、光の変化やルートを眺めるための地図です。',
+  heroCredits: ['平面地図を、地形模型に起こす。', '好きな場所を、\nズームや回転で探検する。', '時刻を動かして、\n太陽と影の変化を見る。', 'GPXを重ねれば、\nルートも地形の上に表示できる。'],
   heroButton: '地図を開く',
   heroTutorial: '使い方を見る',
   aboutCan: 'このアプリでできること',
@@ -103,6 +105,7 @@ const ENGLISH: SiteCopy = {
   navMap: 'Open map',
   heroTitle: 'Turn a flat map into a terrain model.',
   heroLead: 'Find a place, raise its terrain, and explore light, shadow, and routes.',
+  heroCredits: ['Turn a flat map into a terrain model.', 'Explore a place with\nzoom and rotation.', 'Change the time to inspect\nsunlight and shadows.', 'Overlay a GPX route\non the terrain.'],
   heroButton: 'Open map',
   heroTutorial: 'View the tutorial',
   aboutCan: 'What you can do',
