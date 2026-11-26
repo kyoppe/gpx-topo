@@ -35,6 +35,7 @@ import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coo
 import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
+import { CurrentLocationButton } from './CurrentLocationButton';
 import { detectLanguage, getCopy, type Copy } from './i18n';
 import { addAction, reportError, reportInfo, reportWarning, startVital } from './observability';
 import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, saveView, startNow, type MapViewport } from './session';
@@ -2470,6 +2471,13 @@ export default function App() {
     addAction('map_pin_placement_started');
     engineRef.current?.startMapPinPlacement();
   };
+  const clearCurrentLocation = () => {
+    if (!currentLocation) return;
+    currentLocationRequestRef.current += 1;
+    currentLocationRecenterRef.current = false;
+    setCurrentLocation(null);
+    setCurrentLocationBusy(false);
+  };
   const showCurrentLocation = async () => {
     if (viewMode !== 'map' || !mapReady) return;
     const requestId = ++currentLocationRequestRef.current;
@@ -2503,6 +2511,14 @@ export default function App() {
     } finally {
       if (requestId === currentLocationRequestRef.current) setCurrentLocationBusy(false);
     }
+  };
+  const toggleCurrentLocation = () => {
+    if (viewMode !== 'map' || !mapReady || currentLocationBusy) return;
+    if (currentLocation) {
+      clearCurrentLocation();
+      return;
+    }
+    void showCurrentLocation();
   };
   const commitMapPinLabel = (label: string) => {
     const normalized = normalizeMapPinLabel(label);
@@ -2636,24 +2652,15 @@ export default function App() {
             <div className="map" data-map="" style={mapStyle}>
               <StageHost host={fb?.mapControls ?? null}>
               <div className="map-actions">
-                {viewMode === 'map' && (!native || !apart) && (
-                  <button
-                    type="button"
-                    className="map-location-button"
-                    data-piece="content"
-                    data-map-control=""
-                    drawable=""
-                    aria-label={copy.ui.currentLocation}
-                    aria-busy={currentLocationBusy}
-                    disabled={!mapReady}
-                    onClick={() => void showCurrentLocation()}
-                  >
-                    <svg className="location-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                      <circle cx="12" cy="12" r="6.8" />
-                      <circle cx="12" cy="12" r="2.2" />
-                      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-                    </svg>
-                  </button>
+                {viewMode === 'map' && !apart && (
+                  <CurrentLocationButton
+                    active={Boolean(currentLocation)}
+                    busy={currentLocationBusy}
+                    disabled={!mapReady || currentLocationBusy}
+                    label={copy.ui.currentLocation}
+                    clearLabel={copy.ui.currentLocationClear}
+                    onClick={toggleCurrentLocation}
+                  />
                 )}
                 <div
                   className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}

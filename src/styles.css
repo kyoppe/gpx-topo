@@ -202,6 +202,18 @@ body {
   background: #fff;
 }
 
+.map-location-button[data-latched] {
+  background: var(--ink);
+  color: #fff;
+  box-shadow:
+    0 1px 3px rgba(24, 32, 43, 0.22),
+    inset 0 0 0 1px #0a0e15;
+}
+
+.map-location-button[data-latched]:hover {
+  background: #273140;
+}
+
 .map-location-button:focus {
   outline: none;
 }
