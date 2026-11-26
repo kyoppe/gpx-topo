@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import AboutPage from './AboutPage';
-import { detectLanguage } from './i18n';
+import { detectLanguage, getCopy } from './i18n';
+import { FlagContent } from './Flag';
 import TutorialPage from './TutorialPage';
 import { siteCopy } from './siteCopy';
 
@@ -48,5 +49,20 @@ describe('standalone site pages', () => {
     act(() => container.querySelector<HTMLButtonElement>('.tutorial-restart')?.click());
     expect(container.querySelector('h2')?.textContent).toBe(copy.mapSteps[0].title);
     expect(container.querySelector('iframe')?.src).toContain('tutorial=map');
+  });
+
+  it('keeps Info compact and links to the standalone pages', () => {
+    const copy = getCopy('en');
+    const { container } = render(<FlagContent brushes={[]} copy={copy} />);
+
+    expect(container.textContent).toContain(copy.appName);
+    expect(container.textContent).toContain(copy.flag.lead);
+    expect(container.querySelector('a[href="/about"]')?.textContent).toBe(copy.flag.about);
+    expect(container.querySelector('a[href="/tutorial"]')?.textContent).toBe(copy.flag.tutorial);
+    expect(container.textContent).toContain(copy.flag.madeBy);
+    expect(container.textContent).toContain(copy.flag.otherApps);
+    expect(container.textContent).not.toContain('Modes');
+    expect(container.textContent).not.toContain('Load a route');
+    expect(container.textContent).not.toContain('Waypoints and times');
   });
 });
