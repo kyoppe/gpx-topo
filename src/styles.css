@@ -3510,7 +3510,7 @@ html[data-fb-drag] .fb-panel-body {
 
 /* ---------------------------------------------------------------- standalone About and tutorial pages */
 .site-page {
-  min-height: 100%;
+  height: 100%;
   overflow: auto;
   overscroll-behavior-y: contain;
   background:
