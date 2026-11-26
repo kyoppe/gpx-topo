@@ -2058,7 +2058,9 @@ export default function App() {
     if (!media) return;
     if (media.actions !== 'save') {
       try {
-        const result = await shareFile(media.file, copy.shareText);
+        const permalink = buildCurrentMapPermalink();
+        const shareText = permalink ? shareTextWithPermalink(copy.shareText, permalink.url) : copy.shareText;
+        const result = await shareFile(media.file, shareText);
         if (result === 'shared') addAction('media_shared', { route_name: route?.name || 'gpx-topo', kind: media.kind });
         if (result !== 'unsupported') return;
       } catch (error) {
