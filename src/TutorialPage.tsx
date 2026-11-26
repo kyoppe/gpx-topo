@@ -13,7 +13,11 @@ export default function TutorialPage() {
   );
   const [stepIndex, setStepIndex] = useState(0);
   const steps = useMemo(
-    () => [...copy.mapSteps.map((step) => ({ ...step, mode: copy.mapMode })), ...copy.gpxSteps.map((step) => ({ ...step, mode: copy.gpxMode }))],
+    () =>
+      [...copy.mapSteps, ...copy.gpxSteps].map((step) => ({
+        ...step,
+        mode: step.appMode === 'map' ? copy.mapMode : copy.gpxMode,
+      })),
     [copy],
   );
   const step = steps[stepIndex];
@@ -26,7 +30,6 @@ export default function TutorialPage() {
   const restart = () => setStepIndex(0);
   const previous = () => setStepIndex((current) => Math.max(0, current - 1));
   const next = () => setStepIndex((current) => Math.min(steps.length - 1, current + 1));
-  const isMapStep = stepIndex < copy.mapSteps.length;
 
   return (
     <main className="site-page tutorial-page">
@@ -54,13 +57,10 @@ export default function TutorialPage() {
       <section className="tutorial-stage" aria-label={step.title}>
         <div className="tutorial-app-frame">
           <iframe
-            key={isMapStep ? 'map' : 'gpx'}
+            key={`${step.appMode}-${step.target}`}
             title={`${copy.footer} ${step.mode}`}
-            src={`/?tutorial=${isMapStep ? 'map' : 'gpx'}&lang=${language}`}
+            src={`/?tutorial=${step.appMode}&step=${stepIndex}&target=${step.target}&lang=${language}`}
           />
-          <div className={`tutorial-highlight tutorial-highlight-${isMapStep ? 'map' : 'gpx'}`} aria-hidden="true">
-            <span />
-          </div>
         </div>
         <aside className="tutorial-caption">
           <div className="tutorial-caption-meta">

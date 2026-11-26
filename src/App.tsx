@@ -307,7 +307,7 @@ function Fallback({ copy }: { copy: Copy }) {
   return (
     <main lang={copy.language} className="unsupported">
       <div className="unsupported-card">
-        <p className="unsupported-mark">gpx-topo</p>
+        <p className="unsupported-mark">{copy.appName}</p>
         <h1>{copy.fallbackTitle}</h1>
         <p>{copy.fallbackBody}</p>
       </div>
@@ -318,8 +318,11 @@ function Fallback({ copy }: { copy: Copy }) {
 export default function App() {
   const [renderPath] = useState(() => resolveRenderPath(supportsHtmlInCanvas(), fallbackEnabled()));
   const native = renderPath === 'native';
-  const tutorialMode = new URLSearchParams(window.location.search).get('tutorial');
+  const tutorialParams = new URLSearchParams(window.location.search);
+  const tutorialMode = tutorialParams.get('tutorial');
   const tutorialGpx = tutorialMode === 'gpx';
+  const tutorialStep = Math.max(0, Number(tutorialParams.get('step') ?? 0) || 0);
+  const tutorialTarget = tutorialParams.get('target') ?? '';
   // The fallback renders the page into an ordinary element beside the canvas; null on the native path.
   // It exists from the first render, so every ref in the page is set in the same commit as on the native path.
   const [fallbackHost] = useState<HTMLDivElement | null>(() => (renderPath === 'fallback' ? document.createElement('div') : null));
@@ -353,7 +356,7 @@ export default function App() {
     document.title = copy.appName;
   }, [copy.appName, language]);
   const [permalink] = useState(() => parseMapPermalink(window.location.search));
-  const [savedView] = useState(() => loadView());
+  const [savedView] = useState(() => (tutorialMode ? null : loadView()));
   const [route, setRoute] = useState<GpxRoute | null>(() => (tutorialGpx ? ensureWaypoints(parseGpx(TUTORIAL_SAMPLE_GPX)) : null));
   const [fileName, setFileName] = useState(() => (tutorialGpx ? 'tutorial-route.gpx' : ''));
   const [gpxSource, setGpxSource] = useState<GpxSource | null>(() => (tutorialGpx ? 'user' : null));
@@ -379,6 +382,7 @@ export default function App() {
   const [apart, setApart] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => (tutorialGpx ? 'gpx' : 'map'));
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
+    if (tutorialMode === 'map') return DEFAULT_MAP_VIEWPORT;
     // a permalink with its display area sets the scale itself (below), from the frame this window has
     if (permalink?.center && savedView?.mapViewport && !permalink.area) return { ...savedView.mapViewport, ...permalink.center };
     if (permalink?.center) return null;
@@ -950,7 +954,7 @@ export default function App() {
   // Restore a user-opened GPX from the previous session, if one was saved. With no saved GPX the app
   // simply opens on the map; no sample route is loaded.
   useEffect(() => {
-    if (tutorialGpx) {
+    if (tutorialMode) {
       planReadyRef.current = true;
       return;
     }
@@ -1002,7 +1006,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [tutorialGpx]);
+  }, [tutorialMode]);
 
   useEffect(() => {
     if (!enterGpxAfterLoadRef.current) return;
@@ -1653,6 +1657,12 @@ export default function App() {
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
   }, [model]);
+
+  useLayoutEffect(() => {
+    if (!tutorialMode || !model || !engineRef.current) return;
+    const raised = tutorialGpx ? tutorialStep >= 6 : tutorialStep >= 2 && tutorialStep < 9;
+    engineRef.current.setViewState({ raised });
+  }, [model, tutorialGpx, tutorialMode, tutorialStep]);
 
   useLayoutEffect(() => {
     const location = model?.currentLocation;
@@ -2580,6 +2590,7 @@ export default function App() {
     <main
       lang={language}
       className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}${fb ? ' fallback-ui' : ''}${docked ? ' fb-docked' : ''}`}
+      data-tutorial-target={tutorialTarget || undefined}
     >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <StageHost host={fallbackHost}>

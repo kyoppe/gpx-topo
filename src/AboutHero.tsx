@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 
 import type { HtmlInCanvasContext, HtmlInCanvasElement } from './htmlInCanvas';
 import type { SiteCopy } from './siteCopy';
@@ -51,9 +51,9 @@ function createProgram(gl: WebGL2RenderingContext) {
   return program;
 }
 
-function renderTerrainContent(copy: SiteCopy) {
+function renderTerrainContent(copy: SiteCopy, terrainRef?: Ref<HTMLDivElement>) {
   return (
-    <div className="about-native-terrain" data-drawable="">
+    <div ref={terrainRef} className="about-native-terrain" drawable="">
       <svg className="about-native-contours" viewBox="0 0 640 440" preserveAspectRatio="none" aria-hidden="true">
         <path d="M-20 350C70 285 95 390 180 310S330 250 390 300s105 70 170-5 100-50 150-100" />
         <path d="M-30 390C80 315 105 425 200 340s130-35 205 20 100 47 160-30 105-35 145-90" />
@@ -83,96 +83,112 @@ export default function AboutHero({ copy }: { copy: SiteCopy }) {
   const angleRef = useRef(0);
   const pausedRef = useRef(false);
   const [paused, setPaused] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const terrain = terrainRef.current;
     if (!canvas || !terrain) return;
-    const gl = canvas.getContext('webgl2') as HtmlInCanvasContext | null;
-    if (!gl || typeof gl.texElementSubImage2D !== 'function') return;
-
     canvas.setAttribute('content', 'drawable');
     canvas.setAttribute('layoutsubtree', '');
-    const program = createProgram(gl);
-    const position = gl.getAttribLocation(program, 'aPosition');
-    const angle = gl.getUniformLocation(program, 'uAngle');
-    const texture = gl.createTexture();
-    const buffer = gl.createBuffer();
-    if (position < 0 || !angle || !texture || !buffer) return;
+    let cleanup = () => {};
+    try {
+      const gl = canvas.getContext('webgl2') as HtmlInCanvasContext | null;
+      if (!gl || typeof gl.texElementSubImage2D !== 'function') throw new Error('HTML-in-Canvas is unavailable.');
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-      gl.STATIC_DRAW,
-    );
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      const program = createProgram(gl);
+      const position = gl.getAttribLocation(program, 'aPosition');
+      const angle = gl.getUniformLocation(program, 'uAngle');
+      const texture = gl.createTexture();
+      const buffer = gl.createBuffer();
+      if (position < 0 || !angle || !texture || !buffer) throw new Error('About hero WebGL resources are unavailable.');
 
-    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    const targetAngle = 0.78;
-    let frame = 0;
-    let startedAt = performance.now();
-    let textureWidth = 0;
-    let textureHeight = 0;
-
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      canvas.width = Math.max(1, Math.round(rect.width * dpr));
-      canvas.height = Math.max(1, Math.round(rect.height * dpr));
-      gl.viewport(0, 0, canvas.width, canvas.height);
-    };
-
-    const draw = (nextAngle: number) => {
-      const width = Math.max(1, terrain.offsetWidth);
-      const height = Math.max(1, terrain.offsetHeight);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      if (textureWidth !== width || textureHeight !== height) {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        textureWidth = width;
-        textureHeight = height;
-      }
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-      gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, terrain, { width, height });
-      gl.clearColor(0.93, 0.93, 0.91, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.useProgram(program);
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.enableVertexAttribArray(position);
-      gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-      gl.uniform1f(angle, nextAngle);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      canvas.requestPaint?.();
-    };
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+        gl.STATIC_DRAW,
+      );
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    const tick = (now: number) => {
-      if (pausedRef.current) return;
-      const progress = reducedMotion ? 1 : Math.min(1, (now - startedAt - 280) / 1400);
-      const eased = progress <= 0 ? 0 : 1 - (1 - progress) ** 3;
-      angleRef.current = targetAngle * eased;
+      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+      const targetAngle = 0.78;
+      let frame = 0;
+      const startedAt = performance.now();
+      let textureWidth = 0;
+      let textureHeight = 0;
+
+      const resize = () => {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = Math.max(1, Math.round(rect.width * dpr));
+        canvas.height = Math.max(1, Math.round(rect.height * dpr));
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      };
+
+      const draw = (nextAngle: number) => {
+        const width = Math.max(1, terrain.offsetWidth);
+        const height = Math.max(1, terrain.offsetHeight);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        if (textureWidth !== width || textureHeight !== height) {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+          textureWidth = width;
+          textureHeight = height;
+        }
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+        gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, terrain, { width, height });
+        gl.clearColor(0.93, 0.93, 0.91, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(program);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.enableVertexAttribArray(position);
+        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+        gl.uniform1f(angle, nextAngle);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        canvas.requestPaint?.();
+      };
+
+      const tick = (now: number) => {
+        if (pausedRef.current) return;
+        const progress = reducedMotion ? 1 : Math.min(1, (now - startedAt - 280) / 1400);
+        const eased = progress <= 0 ? 0 : 1 - (1 - progress) ** 3;
+        angleRef.current = targetAngle * eased;
+        resize();
+        try {
+          draw(angleRef.current);
+        } catch {
+          setFailed(true);
+          return;
+        }
+        if (progress < 1) frame = requestAnimationFrame(tick);
+      };
+
       resize();
-      draw(angleRef.current);
-      if (progress < 1) frame = requestAnimationFrame(tick);
-    };
-
-    resize();
-    tick(startedAt);
-    if (reducedMotion) angleRef.current = targetAngle;
-    else frame = requestAnimationFrame(tick);
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      gl.deleteTexture(texture);
-      gl.deleteBuffer(buffer);
-      gl.deleteProgram(program);
-    };
+      tick(startedAt);
+      if (reducedMotion) angleRef.current = targetAngle;
+      else frame = requestAnimationFrame(tick);
+      const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
+      observer?.observe(canvas);
+      cleanup = () => {
+        cancelAnimationFrame(frame);
+        observer?.disconnect();
+        gl.deleteTexture(texture);
+        gl.deleteBuffer(buffer);
+        gl.deleteProgram(program);
+      };
+    } catch {
+      setFailed(true);
+    }
+    return cleanup;
   }, []);
+
+  if (failed) {
+    return <div className="about-native-fallback-art">{renderTerrainContent(copy)}</div>;
+  }
 
   return (
     <div
@@ -183,8 +199,8 @@ export default function AboutHero({ copy }: { copy: SiteCopy }) {
       }}
     >
       <canvas ref={canvasRef} className="about-native-canvas" aria-label={copy.heroTitle}>
-        <div ref={terrainRef} className="about-native-terrain-host">
-          {renderTerrainContent(copy)}
+        <div className="about-native-terrain-host">
+          {renderTerrainContent(copy, terrainRef)}
         </div>
       </canvas>
       <span className="about-native-status" aria-live="polite">

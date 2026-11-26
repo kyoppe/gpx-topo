@@ -49,6 +49,13 @@ describe('standalone site pages', () => {
     act(() => container.querySelector<HTMLButtonElement>('.tutorial-restart')?.click());
     expect(container.querySelector('h2')?.textContent).toBe(copy.mapSteps[0].title);
     expect(container.querySelector('iframe')?.src).toContain('tutorial=map');
+
+    const dots = Array.from(container.querySelectorAll<HTMLButtonElement>('.tutorial-dots button'));
+    act(() => dots[dots.length - 1].click());
+    expect(container.querySelector('h2')?.textContent).toBe(copy.gpxSteps[5].title);
+    expect(container.querySelector('.tutorial-caption-meta')?.textContent).toContain(copy.mapMode);
+    expect(container.querySelector('iframe')?.src).toContain('tutorial=map');
+    expect(container.querySelector('iframe')?.src).toContain('step=10');
   });
 
   it('keeps Info compact and links to the standalone pages', () => {

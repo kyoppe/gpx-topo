@@ -3685,13 +3685,20 @@ html[data-fb-drag] .fb-panel-body {
   height: 100%;
 }
 
+.about-native-fallback-art {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
 .about-native-terrain-host {
   position: absolute;
   top: 0;
   left: -2000px;
   width: 640px;
   height: 440px;
-  opacity: 0.001;
+  opacity: 1;
   pointer-events: none;
 }
 
@@ -4011,36 +4018,31 @@ html[data-fb-drag] .fb-panel-body {
   border: 0;
 }
 
-.tutorial-highlight {
-  position: absolute;
-  pointer-events: none;
+/* The tutorial highlight belongs to the real application frame, not to the tutorial page shell. */
+.app[data-tutorial-target='search'] .in-map-search,
+.app[data-tutorial-target='raise'] .key-mode,
+.app[data-tutorial-target='sun'] .in-sun,
+.app[data-tutorial-target='permalink'] .key-permalink,
+.app[data-tutorial-target='open'] .key-open,
+.app[data-tutorial-target='return'] .key-mode,
+.app[data-tutorial-target='progress'] .in-stats,
+.app[data-tutorial-target='progress'] .profile-box {
+  outline: 3px solid #f15c3a;
+  outline-offset: 6px;
+  box-shadow: 0 0 0 10px rgba(241, 92, 58, 0.18);
 }
 
-.tutorial-highlight span {
-  display: block;
-  width: 54px;
-  height: 54px;
-  border: 2px solid #f15c3a;
-  border-radius: 50%;
-  box-shadow: 0 0 0 7px rgba(241, 92, 58, 0.18);
-  animation: tutorial-pulse 1.6s ease-in-out infinite;
+.app[data-tutorial-target='terrain'] .terrain,
+.app[data-tutorial-target='route'] .terrain {
+  outline: 4px solid #f15c3a;
+  outline-offset: -4px;
+  filter: drop-shadow(0 0 12px rgba(241, 92, 58, 0.58));
 }
 
-.tutorial-highlight-map {
-  top: 20%;
-  left: 50%;
-}
-
-.tutorial-highlight-gpx {
-  right: 9%;
-  bottom: 7%;
-}
-
-@keyframes tutorial-pulse {
-  50% {
-    transform: scale(1.14);
-    opacity: 0.58;
-  }
+.app[data-tutorial-target='waypoints'] [data-way] {
+  outline: 3px solid #f15c3a;
+  outline-offset: 5px;
+  box-shadow: 0 0 0 9px rgba(241, 92, 58, 0.18);
 }
 
 .tutorial-caption {
@@ -4255,8 +4257,7 @@ html[data-fb-drag] .fb-panel-body {
 
 @media (prefers-reduced-motion: reduce) {
   .about-native .about-hero-map,
-  .about-native .about-native-credits,
-  .tutorial-highlight span {
+  .about-native .about-native-credits {
     animation: none;
   }
 
