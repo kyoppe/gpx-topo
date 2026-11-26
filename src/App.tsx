@@ -26,6 +26,7 @@ import { fallbackPerformanceFor } from './fallbackPerf';
 import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { shouldSwitchToGpxAfterFileLoad, toggleViewMode, type ViewMode } from './mapMode';
+import { shouldShowCurrentLocationControl } from './currentLocationControl';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } from './geolocation';
@@ -1629,6 +1630,16 @@ export default function App() {
     engineRef.current?.refreshHud();
   }, [apart, viewMode]);
 
+  useEffect(() => {
+    // The current-location control is flat-only, so do not leave a marker
+    // behind without a way to clear it while the map is raised.
+    if (!apart || (!currentLocation && !currentLocationBusy)) return;
+    currentLocationRequestRef.current += 1;
+    currentLocationRecenterRef.current = false;
+    setCurrentLocation(null);
+    setCurrentLocationBusy(false);
+  }, [apart, currentLocation, currentLocationBusy]);
+
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !terrain) return null;
     const gpx = viewMode === 'gpx' && progress && profile;
@@ -2652,7 +2663,7 @@ export default function App() {
             <div className="map" data-map="" style={mapStyle}>
               <StageHost host={fb?.mapControls ?? null}>
               <div className="map-actions">
-                {viewMode === 'map' && !apart && (
+                {shouldShowCurrentLocationControl(viewMode, apart) && (
                   <CurrentLocationButton
                     active={Boolean(currentLocation)}
                     busy={currentLocationBusy}
