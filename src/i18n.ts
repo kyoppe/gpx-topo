@@ -38,7 +38,6 @@ export type Copy = {
   monthLabel(year: number, month: number): string;
   dayLength(rise: number | null, set: number | null): string;
   toast: {
-    defaultGpxFailed: string;
     mapTilesFailed: string;
     demFallback: string;
     waypointAdded(name: string, km: number): string;
@@ -228,7 +227,6 @@ function makeCopy(language: Language): Copy {
         return `${Math.floor(minutes / 60)}時間${minutes % 60}分`;
       },
       toast: {
-        defaultGpxFailed: 'テスト用 GPX を読み込めませんでした。GPX を開いてください。',
         mapTilesFailed: '地理院タイルを読み込めませんでした。',
         demFallback: 'GSI DEM を読み込めなかったため、GPX の標高から地形を作っています。',
         waypointAdded: (name, km) => `${name} を ${km.toFixed(1)} km に追加しました。`,
@@ -380,7 +378,7 @@ function makeCopy(language: Language): Copy {
         gpxModeDescription: 'GPXを開き、ルート・ウェイポイント・経過時間を扱います。',
         mapModeDescription: '地図を検索・ドラッグし、選んだ範囲を立体化します。',
         loadRoute: 'ルートを読み込む',
-        loadRouteItems: ['「GPX を開く」で手元の GPX ファイルを読み込む（最初はサンプルのコース）', 'カメラのボタンで、今の画面を PNG で保存'],
+        loadRouteItems: ['「GPX を開く」で手元の GPX ファイルを読み込む', 'カメラのボタンで、今の画面を PNG で保存'],
         viewMap: '地図を見る',
         viewMapItems: ['「起こす」で立体に、「寝かす」で平面に。Esc でも平面に戻る', 'ドラッグで回転、右ドラッグか Shift + ドラッグで移動', 'ホイールで立ち上げてズーム。地図の右下で航空写真に切り替え', '▶ でコースを後ろから追いかける Flyover'],
         waypointsAndTimes: 'ウェイポイントと時刻',
@@ -422,7 +420,6 @@ function makeCopy(language: Language): Copy {
       return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     },
     toast: {
-      defaultGpxFailed: 'Could not load the sample GPX. Please open a GPX file.',
       mapTilesFailed: 'Could not load the GSI map tiles.',
       demFallback: 'Could not load the GSI DEM, so the terrain is built from GPX elevations.',
       waypointAdded: (name, km) => `${name} added at ${km.toFixed(1)} km.`,
@@ -574,7 +571,7 @@ function makeCopy(language: Language): Copy {
       gpxModeDescription: 'Open a GPX and work with routes, waypoints, and elapsed time.',
       mapModeDescription: 'Search and drag the map, then raise the chosen area into 3D.',
       loadRoute: 'Load a route',
-      loadRouteItems: ['Open a GPX file with “Open GPX” (a sample route is loaded first)', 'Use the camera button to save the current view as a PNG'],
+      loadRouteItems: ['Open a GPX file with “Open GPX”', 'Use the camera button to save the current view as a PNG'],
       viewMap: 'View the map',
       viewMapItems: ['Use “Raise” for 3D and “Lay flat” for 2D. Esc also lays it flat.', 'Drag to rotate; right-drag or Shift + drag to move', 'Scroll to raise and zoom. Switch to aerial imagery at the bottom right of the map', 'Press ▶ to follow the route from behind with Flyover'],
       waypointsAndTimes: 'Waypoints and times',

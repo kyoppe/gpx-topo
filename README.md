@@ -14,7 +14,7 @@
 
 Open the app in desktop Chrome 157+ or Edge 157+. Other browsers get a short notice, because HTML-in-Canvas is not available in Safari, iOS browsers, or Firefox.
 
-The bundled `SFMT2026-110km.gpx` fixture loads first, on the flat map. `GPX を開く` loads a local file.
+The app opens on the map, centered on Mt. Fuji. `GPX を開く` loads a local file.
 
 | Action | Result |
 | --- | --- |
