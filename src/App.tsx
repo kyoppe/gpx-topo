@@ -1506,8 +1506,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', onEscape, true);
   }, [mapPinSelecting]);
 
+  // Both render paths need a second measurement after text and layout resources settle.
   useEffect(() => {
-    if (!native) return;
     let cancelled = false;
     let firstFrame = 0;
     let secondFrame = 0;
