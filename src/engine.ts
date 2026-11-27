@@ -2893,30 +2893,46 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     return [x, y];
   }
-  function measure() {
-    for (const p of pieces) {
-      if (p.kind === 'bar' || p.kind === 'key') continue;
-      if (p.kind === 'pin') {
-        p.w = p.el.offsetWidth;
-        p.h = p.el.offsetHeight;
-        continue;
-      }
-      const o = offsetIn(p.el);
-      p.x = o[0];
-      p.y = o[1];
+  function measurePiece(p: Piece) {
+    const previousW = p.w;
+    const previousH = p.h;
+    if (p.kind === 'bar' || p.kind === 'key') return false;
+    if (p.kind === 'pin') {
       p.w = p.el.offsetWidth;
       p.h = p.el.offsetHeight;
+      return p.w !== previousW || p.h !== previousH;
     }
+    const o = offsetIn(p.el);
+    p.x = o[0];
+    p.y = o[1];
+    p.w = p.el.offsetWidth;
+    p.h = p.el.offsetHeight;
+    return p.w !== previousW || p.h !== previousH;
+  }
+
+  function measure() {
+    for (const p of pieces) measurePiece(p);
+  }
+
+  function measurePins() {
+    let changed = false;
+    for (const p of pieces) {
+      if (p.kind === 'pin' && measurePiece(p)) changed = true;
+    }
+    return changed;
   }
 
   function syncPinEngineStem() {
+    let changed = false;
     for (const p of pins) {
       const hasStem = p.el.hasAttribute('data-pin-engine-stem');
       if (hasStem !== pinEngineStem) {
         p.el.toggleAttribute('data-pin-engine-stem', pinEngineStem);
         p.stale = true;
+        changed = true;
       }
     }
+    return changed;
   }
 
   function setModel(next: EngineModel) {
@@ -4412,6 +4428,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     for (const p of pieces) p.stale = true;
     need();
   }
+  /** Fallback: remeasure only pin labels after delayed text or layout resources settle. */
+  function refreshFallbackLayout() {
+    if (!fallback) return;
+    collect();
+    const stemChanged = syncPinEngineStem();
+    const sizeChanged = measurePins();
+    if (!stemChanged && !sizeChanged) return;
+    for (const p of pieces) if (p.kind === 'pin') p.stale = true;
+    need();
+  }
   /** Move the side cards out of the way before replacing their HTML, then bring the new set back. */
   function transitionPanels(show: boolean) {
     panelAlphaT = show ? 1 : 0;
@@ -5688,6 +5714,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     capture,
     captureFrame,
     refreshHud,
+    refreshFallbackLayout,
     refreshUi,
     transitionPanels,
     dispose,
