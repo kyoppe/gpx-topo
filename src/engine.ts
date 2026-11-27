@@ -416,6 +416,11 @@ export type EngineOptions = {
   maxPixelRatio?: number;
   /** Fallback only: the most frames per second while moving (default and ceiling: 60). It still drops to 30 when frames run long. */
   maxFps?: number;
+  /**
+   * A manual turn pivots on the middle of the model as it is drawn now, rather than on the ground point that lies under where
+   * the flat map's centre would be. Used by the tutorial, whose small frame makes the difference plain.
+   */
+  rotateAboutModelCenter?: boolean;
 };
 
 export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks, options: EngineOptions = {}) {
@@ -4862,7 +4867,14 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (P) panFrom = { cam, P, pan: [...st.pan] };
       else drag = 'turn';
     }
-    const pivot = drag === 'turn'
+    const pivot = drag === 'turn' && options.rotateAboutModelCenter
+      ? (() => {
+          const point: Vec3 = [MAPX + MW / 2, MAPY + MH / 2, liftOf(st.e)];
+          const c = mulBy(cam.vp, [point[0], point[1], point[2], 1]);
+          if (!(c[3] > 0)) return null;
+          return { point, sx: (c[0] / c[3] * 0.5 + 0.5) * vw, sy: (-c[1] / c[3] * 0.5 + 0.5) * vh };
+        })()
+      : drag === 'turn'
       ? (() => {
           const [sx, sy] = mapDisplayCenter();
           const point = pick(cam, sx, sy, liftOf(st.e));

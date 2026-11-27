@@ -105,6 +105,21 @@ describe('startObservability', () => {
     expect(vi.mocked(startViewEngagement).mock.invocationCallOrder[0]).toBeGreaterThan(setOrder);
   });
 
+  it('marks the events of the tutorial page\'s frame, and only those', async () => {
+    window.history.replaceState(null, '', '/?tutorial=map&step=0');
+    const { startObservability } = await import('./observability');
+    startObservability();
+    expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledWith('tutorial', true);
+    expect(datadogLogs.setGlobalContextProperty).toHaveBeenCalledWith('tutorial', true);
+
+    vi.resetModules();
+    vi.mocked(datadogRum.setGlobalContextProperty).mockClear();
+    window.history.replaceState(null, '', '/');
+    const again = await import('./observability');
+    again.startObservability();
+    expect(vi.mocked(datadogRum.setGlobalContextProperty).mock.calls.map(([name]) => name)).not.toContain('tutorial');
+  });
+
   it('starts view engagement once, after RUM initialization', async () => {
     const { startObservability } = await import('./observability');
     vi.mocked(datadogRum.init).mockImplementationOnce(() => {

@@ -41,6 +41,8 @@ export function startObservability(): void {
   started = true;
   const supported = supportsHtmlInCanvas();
   const renderPath = resolveRenderPath(supported, fallbackEnabled());
+  // the tutorial page runs the real app in a frame, told apart by its address
+  const tutorialFrame = new URLSearchParams(window.location.search).has('tutorial');
   const shared = {
     clientToken: CLIENT_TOKEN,
     site: SITE,
@@ -63,6 +65,7 @@ export function startObservability(): void {
     // Set once, here, so every session, view, action, error, resource and long task carries the path.
     datadogRum.setGlobalContextProperty('html_in_canvas_supported', supported);
     datadogRum.setGlobalContextProperty('render_path', renderPath);
+    if (tutorialFrame) datadogRum.setGlobalContextProperty('tutorial', true);
     startViewEngagement();
   } catch (error) {
     console.error('gpx_topo_rum_init_failed', error);
@@ -80,6 +83,7 @@ export function startObservability(): void {
     });
     datadogLogs.setGlobalContextProperty('html_in_canvas_supported', supported);
     datadogLogs.setGlobalContextProperty('render_path', renderPath);
+    if (tutorialFrame) datadogLogs.setGlobalContextProperty('tutorial', true);
   } catch (error) {
     console.error('gpx_topo_logs_init_failed', error);
   }

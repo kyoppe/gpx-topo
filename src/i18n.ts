@@ -185,15 +185,8 @@ export type Copy = {
   };
   flag: {
     lead: string;
-    modes: string;
-    gpxModeDescription: string;
-    mapModeDescription: string;
-    loadRoute: string;
-    loadRouteItems: readonly [string, string];
-    viewMap: string;
-    viewMapItems: readonly [string, string, string, string];
-    waypointsAndTimes: string;
-    waypointsAndTimesItems: readonly [string, string, string, string, string];
+    about: string;
+    tutorial: string;
     madeBy: string;
     otherApps: string;
     wishlist: string;
@@ -373,22 +366,9 @@ function makeCopy(language: Language): Copy {
         closeDialog: '閉じる',
       },
       flag: {
-        lead: 'GPX のルートを、国土地理院の地図と標高から作った立体模型の上で見るアプリです。',
-        modes: 'モード',
-        gpxModeDescription: 'GPXを開き、ルート・ウェイポイント・経過時間を扱います。',
-        mapModeDescription: '地図を検索・ドラッグし、選んだ範囲を立体化します。',
-        loadRoute: 'ルートを読み込む',
-        loadRouteItems: ['「GPX を開く」で手元の GPX ファイルを読み込む', 'カメラのボタンで、今の画面を PNG で保存'],
-        viewMap: '地図を見る',
-        viewMapItems: ['「起こす」で立体に、「寝かす」で平面に。Esc でも平面に戻る', 'ドラッグで回転、右ドラッグか Shift + ドラッグで移動', 'ホイールで立ち上げてズーム。地図の右下で航空写真に切り替え', '▶ でコースを後ろから追いかける Flyover'],
-        waypointsAndTimes: 'ウェイポイントと時刻',
-        waypointsAndTimesItems: [
-          '「ウェイポイント追加」を押してルートをクリック、またはパネルに km を入れて「追加」',
-          'パネルで名前と km を書き換え、× で削除',
-          'スタート時刻、日付、各地点の目標時刻を押して変更',
-          '「日照」のスライダーで時刻を動かし、日の当たり方を見る',
-          '番号を押すと、その地点の時刻の日照になる',
-        ],
+        lead: '好きな場所で地形を起こし、起伏やルート、光の変化を様々な角度から眺めるための地図です。',
+        about: 'このアプリについて',
+        tutorial: '使い方を見る',
         madeBy: '作った人：キョウヘイ',
         otherApps: 'その他のアプリ',
         wishlist: 'Amazonほしい物リスト',
@@ -566,22 +546,9 @@ function makeCopy(language: Language): Copy {
       closeDialog: 'Close',
     },
     flag: {
-      lead: 'View GPX routes on a 3D model built from Geospatial Information Authority of Japan maps and elevation data.',
-      modes: 'Modes',
-      gpxModeDescription: 'Open a GPX and work with routes, waypoints, and elapsed time.',
-      mapModeDescription: 'Search and drag the map, then raise the chosen area into 3D.',
-      loadRoute: 'Load a route',
-      loadRouteItems: ['Open a GPX file with “Open GPX”', 'Use the camera button to save the current view as a PNG'],
-      viewMap: 'View the map',
-      viewMapItems: ['Use “Raise” for 3D and “Lay flat” for 2D. Esc also lays it flat.', 'Drag to rotate; right-drag or Shift + drag to move', 'Scroll to raise and zoom. Switch to aerial imagery at the bottom right of the map', 'Press ▶ to follow the route from behind with Flyover'],
-      waypointsAndTimes: 'Waypoints and times',
-      waypointsAndTimesItems: [
-        'Press “Add waypoint” and click the route, or enter km in the panel and press “Add”',
-        'Edit the name and km in the panel, or delete a waypoint with ×',
-        'Select the start time, date, or a waypoint time to edit it',
-        'Move the sunlight slider to see how the light changes',
-        "Select a number to see the sunlight at that waypoint's time",
-      ],
+      lead: 'A map for raising the terrain of any place and looking over its relief, routes, and changing light from every angle.',
+      about: 'About this app',
+      tutorial: 'View the tutorial',
       madeBy: 'Made by Kyouhei',
       otherApps: 'Other apps',
       wishlist: 'Amazon Wishlist',

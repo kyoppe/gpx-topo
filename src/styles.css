@@ -2283,7 +2283,7 @@ main[lang='en'] .bar-hint {
   user-select: text;
   background: #121417;
   color: #f2efe6;
-  font: 500 12px var(--sans);
+  font: 500 17px var(--sans);
 }
 
 /* only while it flies does it take clicks; the engine keeps its hit area off the canvas until then */
@@ -2317,14 +2317,24 @@ main[lang='en'] .bar-hint {
 }
 
 .flag h2 {
-  margin: 0 0 4px;
-  font: 800 24px var(--sans);
+  margin: 0 0 10px;
+  font: 800 38px var(--sans);
   letter-spacing: 0.02em;
 }
 
 .flag-lead {
-  margin: 0 0 12px;
-  opacity: 0.85;
+  margin: 0 0 20px;
+  font-size: 19px;
+  line-height: 1.6;
+  opacity: 0.92;
+}
+
+.flag-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+  margin: 0 0 20px;
+  font-size: 19px;
 }
 
 .flag-cols {
@@ -2334,16 +2344,17 @@ main[lang='en'] .bar-hint {
 }
 
 .flag h3 {
-  margin: 10px 0 3px;
-  font: 700 12.5px var(--sans);
+  margin: 10px 0 4px;
+  font: 700 16px var(--sans);
   color: #ffd27a;
   opacity: 0.9;
 }
 
 .flag ul {
   margin: 0;
-  padding: 0 0 0 16px;
-  line-height: 1.45;
+  padding: 0 0 0 22px;
+  font-size: 18px;
+  line-height: 1.6;
 }
 
 .flag ul.flag-continuation {
@@ -2356,26 +2367,27 @@ main[lang='en'] .bar-hint {
 
 .flag-foot {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  margin-top: 12px;
-  padding-top: 8px;
+  gap: 14px;
+  margin-top: 20px;
+  padding-top: 16px;
   border-top: 1px solid rgba(242, 239, 230, 0.22);
 }
 
 .flag-author {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  font-size: 19px;
 }
 
 .flag a.flag-icon {
   /* a bigger target than the icon, for a cloth that is never quite still */
   display: inline-flex;
   box-sizing: content-box;
-  width: 18px;
-  height: 18px;
+  width: 26px;
+  height: 26px;
   margin: -5px -3px;
   padding: 5px;
   color: #f2efe6;
@@ -3406,7 +3418,7 @@ html[data-fb-drag] .fb-panel-body {
 .flag-static .flag-text {
   height: auto;
   overflow: visible;
-  padding: 24px 28px 20px;
+  padding: 28px 36px 24px;
 }
 
 .flag-static .flag-art {
@@ -3499,4 +3511,838 @@ html[data-fb-drag] .fb-panel-body {
     animation-duration: 1ms;
     transition-duration: 1ms;
   }
+}
+
+/* ---------------------------------------------------------------- standalone About and tutorial pages */
+/* The application shell fixes the body height and hides its overflow, so these pages own their scroll container. */
+.site-page {
+  --site-paper: #f1eee4;
+  --site-ink: #1d1b17;
+  --site-ink2: #4a463c;
+  --site-rule: rgba(29, 27, 23, 0.26);
+  --site-mark: #b83a22;
+  --site-serif: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  position: fixed;
+  inset: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  background: var(--site-paper);
+  color: var(--site-ink);
+  font-family: var(--sans);
+}
+
+.site-page a {
+  color: inherit;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.site-header,
+.site-section,
+.site-closing,
+.site-footer,
+.tutorial-intro,
+.tutorial-stage,
+.tutorial-index,
+.about-plain {
+  width: min(1120px, calc(100% - 48px));
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 72px;
+  gap: 8px 28px;
+  border-bottom: 1px solid var(--site-rule);
+}
+
+.site-brand {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 14px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-decoration: none;
+}
+
+.site-brand img {
+  display: block;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 28px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.site-nav a {
+  padding: 10px 0;
+  text-decoration: none;
+}
+
+.site-nav a[aria-current='page'] {
+  box-shadow: inset 0 -1px 0 var(--site-ink);
+}
+
+.site-nav a:hover {
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+
+/* the header's "open the map" is the same filled primary button as everywhere else on the page */
+.site-nav .site-nav-map {
+  padding: 9px 18px;
+  border: 1px solid var(--site-ink);
+  background: var(--site-ink);
+  color: var(--site-paper);
+  font-weight: 600;
+}
+
+.site-nav .site-nav-map:hover {
+  background: #3a362d;
+}
+
+.site-rule {
+  display: block;
+  width: 56px;
+  height: 3px;
+  margin-bottom: 22px;
+  background: var(--site-mark);
+}
+
+.site-lead {
+  max-width: 33em;
+  margin: 26px 0 0;
+  font-size: 17px;
+  line-height: 1.95;
+  color: var(--site-ink2);
+}
+
+.site-actions,
+.site-closing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.site-button {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 26px;
+  border: 1px solid var(--site-ink);
+  background: transparent;
+  color: var(--site-ink);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.site-button:hover {
+  background: rgba(29, 27, 23, 0.08);
+}
+
+.site-button-primary {
+  background: var(--site-ink);
+  color: var(--site-paper) !important;
+}
+
+.site-button-primary:hover {
+  background: #3a362d;
+}
+
+.site-page :focus-visible {
+  outline: 3px solid var(--site-mark);
+  outline-offset: 3px;
+}
+
+/* ---- the page on the terrain model (HTML-in-Canvas): the whole window is the canvas */
+.about-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #ece8dc;
+}
+
+.about-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.about-map-sheet {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  background: #fff;
+  pointer-events: none;
+}
+
+.site-page.about-doc {
+  position: absolute;
+  inset: auto;
+  top: 0;
+  left: 0;
+  background: transparent;
+  scrollbar-width: none;
+}
+
+.site-page.about-doc::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---- hero: plain page, the GSI blank map behind it */
+.about-plain {
+  position: relative;
+  min-height: min(640px, calc(100svh - 66px));
+  padding: 96px 0 72px;
+}
+
+/* the GSI pale map is the page's background, and scrolls with the page */
+.about-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  z-index: -1;
+}
+
+/* one even veil over the pale map, so the page's text always reads over it */
+.about-bg::after {
+  position: absolute;
+  inset: 0;
+  background: rgba(241, 238, 228, 0.62);
+  content: '';
+}
+
+.scene-map {
+  position: relative;
+  overflow: hidden;
+}
+
+/* each tile lies where sceneTiles() puts it, so a missing or late tile never shifts the others */
+.scene-map img {
+  position: absolute;
+  display: block;
+  max-width: none;
+}
+
+.about-bg .scene-map {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.about-plain-copy h1,
+.tutorial-intro h1 {
+  max-width: 11em;
+  margin: 0;
+  font-family: var(--site-serif);
+  font-size: clamp(34px, 5.4vw, 58px);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+}
+
+.about-plain-copy .site-actions {
+  margin-top: 36px;
+}
+
+.about-plain-credit {
+  position: absolute;
+  bottom: 22px;
+  left: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--site-ink2);
+}
+
+/* the top bar and the bottom buttons stay put while the page scrolls under them */
+.site-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #f1eee4;
+}
+
+.about-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 10px;
+  /* the same left edge as the page's text and its first buttons */
+  padding: 12px max(24px, calc((100% - 1120px) / 2)) calc(12px + env(safe-area-inset-bottom));
+  background: #f1eee4;
+  border-top: 1px solid var(--site-rule);
+}
+
+.about-dock .site-button {
+  min-height: 40px;
+  padding: 0 18px;
+  font-size: 14px;
+  background: var(--site-paper);
+}
+
+.about-dock .site-button-primary {
+  background: var(--site-ink);
+}
+
+/* ---- sections */
+.site-section {
+  padding: 72px 0 8px;
+}
+
+.site-section h2 {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 2px solid var(--site-ink);
+  font-family: var(--site-serif);
+  font-size: 28px;
+  line-height: 1.4;
+}
+
+.site-ledger,
+.site-notes {
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-ledger li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 28px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--site-rule);
+}
+
+.site-index {
+  flex: 0 0 36px;
+  color: var(--site-mark);
+  font: 700 14px var(--mono);
+}
+
+.site-ledger p {
+  flex: 1 1 360px;
+  margin: 0;
+  font-family: var(--site-serif);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.site-notes {
+  columns: 2 360px;
+  column-gap: 64px;
+}
+
+.site-notes li {
+  break-inside: avoid;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--site-rule);
+  font-size: 16px;
+  line-height: 1.85;
+  color: var(--site-ink2);
+}
+
+.site-controls {
+  max-width: 720px;
+  margin-top: 20px;
+}
+
+.site-controls h3 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  color: var(--site-mark);
+}
+
+.site-controls ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-controls li {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--site-rule);
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.site-faq-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 0 56px;
+}
+
+@media (max-width: 760px) {
+  .site-faq-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.site-faq-item {
+  margin-top: 20px;
+  border-bottom: 1px solid var(--site-rule);
+}
+
+.site-faq-item h3 {
+  margin: 0;
+  padding: 18px 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.site-faq-item p {
+  margin: 0 0 16px;
+  line-height: 1.9;
+  color: var(--site-ink2);
+}
+
+.site-faq-item a {
+  color: var(--site-mark);
+  overflow-wrap: anywhere;
+}
+
+.site-closing {
+  padding: 72px 0 56px;
+}
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px 24px;
+  padding: 22px 0 36px;
+  border-top: 1px solid var(--site-rule);
+  color: var(--site-ink2);
+  font-size: 13px;
+}
+
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+}
+
+/* ---- tutorial */
+.tutorial-intro {
+  padding: 64px 0 32px;
+}
+
+.tutorial-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.7fr);
+  gap: 32px;
+  align-items: stretch;
+}
+
+/* The frame has the shape the application's page is made for: a wide sheet (map and panel) plus the frame the engine keeps round it. */
+.tutorial-app-frame {
+  position: relative;
+  aspect-ratio: 1120 / 760;
+  overflow: hidden;
+  border: 1px solid var(--site-ink);
+  background: #d5d7d9;
+}
+
+.tutorial-app-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* The tutorial highlight belongs to the real application frame, not to the tutorial page shell. */
+.app[data-tutorial-target='search'] .in-map-search,
+.app[data-tutorial-target='raise'] .key-flip,
+.app[data-tutorial-target='sun'] .in-sun,
+.app[data-tutorial-target='permalink'] .key-permalink,
+.app[data-tutorial-target='open'] .key-open,
+.app[data-tutorial-target='return'] .key-mode,
+.app[data-tutorial-target='open-map'] .key-mode,
+.app[data-tutorial-target='pin'] .key-pin,
+.app[data-tutorial-target='camera'] .key-camera,
+.app[data-tutorial-target='video'] .key-video,
+.app[data-tutorial-target='share'] .key-x,
+.app[data-tutorial-target='location'] .map-location-button,
+.app[data-tutorial-target='maneuver'] .key-maneuver,
+.app[data-tutorial-target='maneuver'] .key-moves,
+.app[data-tutorial-target='flyover'] .key-fly,
+.app[data-tutorial-target='progress'] .in-stats,
+.app[data-tutorial-target='progress'] .profile-box {
+  outline: 3px solid #f15c3a;
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 7px rgba(241, 92, 58, 0.2);
+}
+
+.app[data-tutorial-target='terrain'] .terrain,
+.app[data-tutorial-target='route'] .terrain {
+  outline: 4px solid #f15c3a;
+  outline-offset: -4px;
+  filter: drop-shadow(0 0 12px rgba(241, 92, 58, 0.58));
+}
+
+.app[data-tutorial-target='waypoints'] [data-way] {
+  outline: 3px solid #f15c3a;
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 7px rgba(241, 92, 58, 0.2);
+}
+
+.tutorial-caption {
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+}
+
+.tutorial-caption-meta {
+  display: flex;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--site-ink);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.tutorial-copy {
+  display: grid;
+}
+
+.tutorial-copy-item {
+  grid-area: 1 / 1;
+}
+
+.tutorial-copy-item:not([data-current]) {
+  visibility: hidden;
+}
+
+.tutorial-caption h2,
+.tutorial-copy-title {
+  margin: 28px 0 12px;
+  font-family: var(--site-serif);
+  font-size: 30px;
+  line-height: 1.4;
+}
+
+.tutorial-caption p {
+  margin: 0;
+  line-height: 1.9;
+  color: var(--site-ink2);
+}
+
+.tutorial-caption .tutorial-gesture {
+  margin-top: 20px;
+  padding: 12px 0;
+  border-top: 1px solid var(--site-rule);
+  border-bottom: 1px solid var(--site-rule);
+  color: var(--site-ink);
+  font-weight: 700;
+}
+
+.tutorial-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.tutorial-controls button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--site-ink);
+  background: transparent;
+  color: var(--site-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tutorial-controls button:hover:not(:disabled) {
+  background: rgba(29, 27, 23, 0.08);
+}
+
+.tutorial-controls button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.tutorial-controls .tutorial-restart {
+  margin-left: auto;
+  border-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.tutorial-open {
+  margin-top: 22px;
+}
+
+.tutorial-index {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 64px;
+  padding: 56px 0 0;
+}
+
+.tutorial-index h2 {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 2px solid var(--site-ink);
+  font-family: var(--site-serif);
+  font-size: 20px;
+}
+
+.tutorial-index ol {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tutorial-index button {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: baseline;
+  gap: 18px;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--site-rule);
+  background: transparent;
+  color: var(--site-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tutorial-index button:hover {
+  background: rgba(29, 27, 23, 0.05);
+}
+
+.tutorial-index button.is-current {
+  font-weight: 700;
+  box-shadow: inset 0 -2px 0 var(--site-mark);
+}
+
+@media (max-width: 860px) {
+  .tutorial-stage {
+    grid-template-columns: 1fr;
+  }
+
+  /* One screen: the real app on top, the step and its buttons right under it, without scrolling to find "Next". */
+  .tutorial-intro {
+    padding: 20px 0 14px;
+  }
+
+  .tutorial-intro .site-rule,
+  .tutorial-intro .site-lead {
+    display: none;
+  }
+
+  .tutorial-intro h1 {
+    font-size: 26px;
+  }
+
+  .tutorial-stage {
+    gap: 12px;
+  }
+
+  /* a phone held upright: a tall frame, so the map (which follows the window's shape) can use the whole width */
+  .tutorial-app-frame {
+    aspect-ratio: auto;
+    height: 62vh;
+    height: 62svh;
+    min-height: 360px;
+  }
+
+  .tutorial-caption h2,
+  .tutorial-copy-title {
+    margin: 14px 0 6px;
+    font-size: 22px;
+  }
+
+  .tutorial-caption p {
+    line-height: 1.7;
+  }
+
+  .tutorial-caption .tutorial-gesture {
+    margin-top: 12px;
+  }
+
+  .tutorial-controls {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: 14px;
+    padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--site-rule);
+    background: var(--site-paper);
+  }
+
+  .tutorial-controls button {
+    flex: 1 1 0;
+  }
+
+  .tutorial-controls .tutorial-restart {
+    flex: 0 0 auto;
+    margin-left: 0;
+  }
+
+  .tutorial-index {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .site-brand {
+    gap: 10px;
+    font-size: 17px;
+  }
+
+  .site-brand img {
+    width: 38px;
+    height: 38px;
+  }
+
+  .site-header,
+  .site-section,
+  .site-closing,
+  .site-footer,
+  .tutorial-intro,
+  .tutorial-stage,
+  .tutorial-index,
+  .about-plain {
+    width: calc(100% - 32px);
+  }
+
+  .about-plain {
+    padding-top: 64px;
+  }
+
+  .site-nav {
+    gap: 0 18px;
+    font-size: 13px;
+  }
+
+  .site-ledger p {
+    font-size: 19px;
+  }
+
+  .about-dock {
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-page * {
+    scroll-behavior: auto;
+  }
+}
+
+/* On the terrain model each block of text lies on a soft sheet of paper, so the relief under it never competes with it */
+.about-page[data-hero='native'] .about-plain-copy,
+.about-page[data-hero='native'] .site-section,
+.about-page[data-hero='native'] .site-closing {
+  background: rgba(241, 238, 228, 0.9);
+  /* a sharp-edged plate: the paper extends 18px past the text on every side, with a hairline round it */
+  box-shadow: 0 0 0 18px rgba(241, 238, 228, 0.9);
+  outline: 1px solid var(--site-rule);
+  outline-offset: 18px;
+}
+
+.about-page .about-plain-copy {
+  max-width: 660px;
+}
+
+/* the selection is drawn as brush strokes (BrushSelection), so the browser's own highlight is left clear */
+.site-page ::selection {
+  background: transparent;
+  color: var(--site-ink);
+}
+
+.brush-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  overflow: visible;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+
+/* the paper plates reach 18px past each block, so the blocks are kept further apart than that and never overlap */
+.about-page[data-hero='native'] .site-section {
+  margin-top: 52px;
+  padding-top: 24px;
+}
+
+.about-page[data-hero='native'] .site-closing {
+  margin-top: 52px;
+}
+
+/* the maker: a name and three small icons, in ink like the rest of the page */
+.site-creator-line {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin: 22px 0 0;
+}
+
+.site-creator-name {
+  font-family: var(--site-serif);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.site-creator-icon {
+  display: inline-flex;
+  box-sizing: content-box;
+  width: 24px;
+  height: 24px;
+  padding: 6px;
+  color: var(--site-ink);
+}
+
+.site-creator-icon:hover {
+  color: var(--site-mark);
+}
+
+.site-creator-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
 }

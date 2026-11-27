@@ -49,44 +49,24 @@ export function FlagContent({ brushes, copy, twin = false }: { brushes: Brush[];
         </div>
         <h2>{copy.appName}</h2>
         <p className="flag-lead">{copy.flag.lead}</p>
-        <div className="flag-cols">
-          <section>
-            <h3>{copy.flag.modes}</h3>
-            <ul>
-              <li>
-                <strong>{copy.ui.gpxMode}</strong> - {copy.flag.gpxModeDescription}
-              </li>
-              <li>
-                <strong>{copy.ui.mapMode}</strong> - {copy.flag.mapModeDescription}
-              </li>
-            </ul>
-            <h3>{copy.flag.loadRoute}</h3>
-            <ul>
-              {copy.flag.loadRouteItems.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-            <h3>{copy.flag.viewMap}</h3>
-            <ul>
-              {copy.flag.viewMapItems.slice(0, 2).map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </section>
-          <section>
-            <ul className="flag-continuation">
-              {copy.flag.viewMapItems.slice(2).map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-            <h3>{copy.flag.waypointsAndTimes}</h3>
-            <ul>
-              {copy.flag.waypointsAndTimesItems.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </section>
-        </div>
+        <nav className="flag-nav" aria-label={copy.about}>
+          <a
+            href="/about"
+            onClick={() => {
+              if (!twin) addAction('info_link_clicked', { destination: 'about' });
+            }}
+          >
+            {copy.flag.about}
+          </a>
+          <a
+            href="/tutorial"
+            onClick={() => {
+              if (!twin) addAction('info_link_clicked', { destination: 'tutorial' });
+            }}
+          >
+            {copy.flag.tutorial}
+          </a>
+        </nav>
         <div className="flag-foot">
           <p className="flag-author">
             {copy.flag.madeBy}

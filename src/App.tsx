@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom';
 
 import { renderBasemaps, streamNames, streamRelief, type MapStyle } from './basemap';
-import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
+import { cropElevationGrid, gpxElevationGrid, loadDemGrid, tutorialElevationGrid, type ElevationGrid } from './dem';
 import {
   createEngine,
   FRAME_X,
@@ -49,6 +49,11 @@ import { MAX_VIDEO_RECORDING_MS, VIDEO_RECORDING_FRAME_RATE, supportedVideoMimeT
 
 /** Where the map opens when there is no permalink, saved view, or restored GPX: Mt. Fuji, the whole cone in frame. */
 const DEFAULT_MAP_VIEWPORT: MapViewport = { lat: 35.3606, lon: 138.7274, scale: 5000 };
+/** The tutorial's GPX steps use a real route, the SFMT 110 km, loaded only when the tutorial needs it. */
+async function loadTutorialRoute() {
+  const { default: text } = await import('./tutorialRoute.gpx?raw');
+  return ensureWaypoints(parseGpx(text));
+}
 const PANEL_WIDTH = 400;
 const PAD = 20;
 const MIN_PAGE_WIDTH = 1080;
@@ -295,7 +300,7 @@ function Fallback({ copy }: { copy: Copy }) {
   return (
     <main lang={copy.language} className="unsupported">
       <div className="unsupported-card">
-        <p className="unsupported-mark">gpx-topo</p>
+        <p className="unsupported-mark">{copy.appName}</p>
         <h1>{copy.fallbackTitle}</h1>
         <p>{copy.fallbackBody}</p>
       </div>
@@ -306,6 +311,18 @@ function Fallback({ copy }: { copy: Copy }) {
 export default function App() {
   const [renderPath] = useState(() => resolveRenderPath(supportsHtmlInCanvas(), fallbackEnabled()));
   const native = renderPath === 'native';
+  const tutorialParams = new URLSearchParams(window.location.search);
+  const tutorialMode = tutorialParams.get('tutorial');
+  const tutorialGpx = tutorialMode === 'gpx';
+  // The tutorial page keeps one frame open and moves it from step to step with messages, so the screen
+  // changes in place instead of reloading. The query only says where the first step starts.
+  const [tutorial, setTutorial] = useState(() => ({
+    mode: tutorialGpx ? ('gpx' as ViewMode) : ('map' as ViewMode),
+    step: Math.max(0, Number(tutorialParams.get('step') ?? 0) || 0),
+    target: tutorialParams.get('target') ?? '',
+  }));
+  const tutorialStep = tutorial.step;
+  const tutorialTarget = tutorial.target;
   // The fallback renders the page into an ordinary element beside the canvas; null on the native path.
   // It exists from the first render, so every ref in the page is set in the same commit as on the native path.
   const [fallbackHost] = useState<HTMLDivElement | null>(() => (renderPath === 'fallback' ? document.createElement('div') : null));
@@ -339,11 +356,11 @@ export default function App() {
     document.title = copy.appName;
   }, [copy.appName, language]);
   const [permalink] = useState(() => parseMapPermalink(window.location.search));
-  const [savedView] = useState(() => loadView());
+  const [savedView] = useState(() => (tutorialMode ? null : loadView()));
   const [route, setRoute] = useState<GpxRoute | null>(null);
   const [fileName, setFileName] = useState('');
   const [gpxSource, setGpxSource] = useState<GpxSource | null>(null);
-  const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>('pending');
+  const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>(() => (tutorialMode ? 'ready' : 'pending'));
   const [gpxDirty, setGpxDirty] = useState(false);
   const [pendingGpxFile, setPendingGpxFile] = useState<PendingGpxFile | null>(null);
   // the start set last time carries over; a GPX opened afresh starts now (see onFile)
@@ -363,8 +380,9 @@ export default function App() {
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => (permalink ? 'map' : 'map'));
+  const [viewMode, setViewMode] = useState<ViewMode>('map');
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
+    if (tutorialMode === 'map') return DEFAULT_MAP_VIEWPORT;
     // a permalink with its display area sets the scale itself (below), from the frame this window has
     if (permalink?.center && savedView?.mapViewport && !permalink.area) return { ...savedView.mapViewport, ...permalink.center };
     if (permalink?.center) return null;
@@ -672,6 +690,8 @@ export default function App() {
     }
     if (gpxRestoreState === 'pending') return;
     if (gpxSource === 'user' && route) requestViewMode('gpx');
+    // the tutorial has no file picker: the button brings up its sample route instead
+    else if (tutorialMode) setTutorial((current) => ({ ...current, mode: 'gpx' }));
     else openGpxPicker();
   };
 
@@ -936,6 +956,10 @@ export default function App() {
   // Restore a user-opened GPX from the previous session, if one was saved. With no saved GPX the app
   // simply opens on the map; no sample route is loaded.
   useEffect(() => {
+    if (tutorialMode) {
+      planReadyRef.current = true;
+      return;
+    }
     let cancelled = false;
     const initialRequest = fileRequestRef.current;
     const isCurrent = () => !cancelled && fileRequestRef.current === initialRequest && !touchedRef.current;
@@ -984,7 +1008,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tutorialMode]);
 
   useEffect(() => {
     if (!enterGpxAfterLoadRef.current) return;
@@ -1237,7 +1261,7 @@ export default function App() {
             grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
           });
         } else if (!demGrid) {
-          setDemGrid({ projection: sourceProjection, grid: flatElevationGrid(cx, cy) });
+          setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
         }
         return;
       }
@@ -1471,7 +1495,10 @@ export default function App() {
           }
         },
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
-      }, native ? undefined : { renderPath: 'fallback', uiRoot: fb?.root ?? null, ...fallbackPerformanceFor(window) });
+      }, {
+        ...(native ? {} : { renderPath: 'fallback' as const, uiRoot: fb?.root ?? null, ...fallbackPerformanceFor(window) }),
+        ...(tutorialMode ? { rotateAboutModelCenter: true } : {}),
+      });
     } catch (error) {
       stopEngineStart('error');
       fallbackPaint?.dispose();
@@ -1637,6 +1664,75 @@ export default function App() {
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
   }, [model]);
+
+  useLayoutEffect(() => {
+    if (!tutorialMode || !model || !engineRef.current) return;
+    // raised only on the steps that look at terrain, and only once the screen is in that step's mode
+    const raised =
+      !modeTransition &&
+      ((['terrain', 'sun', 'maneuver'].includes(tutorialTarget) && viewMode === 'map') ||
+        (['route', 'waypoints', 'progress', 'flyover'].includes(tutorialTarget) && viewMode === 'gpx'));
+    // laying it down is the same as the Lay flat key: the turn, the zoom and the move go with it, so it settles exactly in the frame
+    if (raised) engineRef.current.setViewState({ raised });
+    else engineRef.current.together();
+  }, [model, modeTransition, tutorialMode, tutorialTarget, viewMode]);
+
+  // The tutorial page asks for the next step by message; follow it without reloading.
+  useEffect(() => {
+    if (!tutorialMode) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== window.parent) return;
+      const data = event.data as { type?: string; step?: number; target?: string; mode?: string } | null;
+      if (data?.type !== 'gpx-topo-tutorial' || typeof data.step !== 'number') return;
+      setTutorial({ mode: data.mode === 'gpx' ? 'gpx' : 'map', step: Math.max(0, data.step), target: String(data.target ?? '') });
+    };
+    window.addEventListener('message', onMessage);
+    window.parent.postMessage({ type: 'gpx-topo-tutorial-ready' }, window.location.origin);
+    return () => window.removeEventListener('message', onMessage);
+  }, [tutorialMode]);
+
+  // tell the tutorial page whether the settings panel is a bottom sheet with a handle right now
+  const sheetShown = fb !== null && !docked;
+  useEffect(() => {
+    if (!tutorialMode) return;
+    window.parent.postMessage({ type: 'gpx-topo-tutorial-sheet', sheet: sheetShown }, window.location.origin);
+  }, [sheetShown, tutorialMode]);
+
+  const tutorialRouteLoadingRef = useRef(false);
+  const tutorialFollowedRef = useRef('');
+  // Bring the screen to the step's mode: load the sample route for GPX steps, go back to the map for the others.
+  // This only follows a step change. Once the screen has got there, a visitor pressing the GPX button on the
+  // "open a GPX" steps is left in the mode they chose instead of being pulled back.
+  useEffect(() => {
+    if (!tutorialMode) return;
+    const followKey = `${tutorial.step}:${tutorial.mode}`;
+    if (tutorialFollowedRef.current === followKey) return;
+    if (viewMode === tutorial.mode && !modeTransition && (tutorial.mode === 'map' || route)) {
+      tutorialFollowedRef.current = followKey;
+      return;
+    }
+    if (tutorial.mode === 'gpx') {
+      if (!route) {
+        if (tutorialRouteLoadingRef.current) return;
+        tutorialRouteLoadingRef.current = true;
+        loadTutorialRoute()
+          .then((loaded) => {
+            setRoute(loaded);
+            setFileName('sfmt-110km.gpx');
+            setGpxSource('user');
+            setGpxRestoreState('ready');
+          })
+          .catch((error) => {
+            tutorialRouteLoadingRef.current = false;
+            reportError('load_tutorial_route', error);
+          });
+        return;
+      }
+      if (viewMode !== 'gpx') requestViewMode('gpx');
+    } else if (viewMode !== 'map') {
+      requestViewMode('map');
+    }
+  }, [modeTransition, requestViewMode, route, tutorial.mode, tutorial.step, tutorialMode, viewMode]);
 
   useLayoutEffect(() => {
     const location = model?.currentLocation;
@@ -2564,6 +2660,8 @@ export default function App() {
     <main
       lang={language}
       className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}${fb ? ' fallback-ui' : ''}${docked ? ' fb-docked' : ''}`}
+      // the "raise" prompt is dropped once the map is up; it comes back if the map is laid flat again
+      data-tutorial-target={(tutorialTarget === 'raise' && apart ? '' : tutorialTarget) || undefined}
     >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <StageHost host={fallbackHost}>
@@ -3499,6 +3597,7 @@ export default function App() {
             )}
             {viewMode === 'gpx' && (
               <>
+            {!tutorialMode && (
             <button
               type="button"
               className="key key-open"
@@ -3509,6 +3608,7 @@ export default function App() {
             >
               {fb ? <KeyFace icon="open" label={copy.ui.openGpx} /> : copy.ui.openGpx}
             </button>
+            )}
             <button
               type="button"
               className="key key-place"
@@ -3857,12 +3957,14 @@ export default function App() {
             )}
             {viewMode === 'gpx' && (
               <>
-                <button
-                  type="button"
-                  data-hud-hit="open"
-                  tabIndex={-1}
-                  onClick={openGpxPicker}
-                />
+                {!tutorialMode && (
+                  <button
+                    type="button"
+                    data-hud-hit="open"
+                    tabIndex={-1}
+                    onClick={openGpxPicker}
+                  />
+                )}
                 <button
                   type="button"
                   data-hud-hit="place"
