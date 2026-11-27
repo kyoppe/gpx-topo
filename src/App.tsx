@@ -1514,7 +1514,9 @@ export default function App() {
     let lateRefresh = 0;
     let finalRefresh = 0;
     const refreshHud = () => {
-      if (!cancelled) engineRef.current?.refreshHud();
+      if (cancelled) return;
+      if (native) engineRef.current?.refreshHud();
+      else engineRef.current?.refreshFallbackLayout();
     };
     firstFrame = requestAnimationFrame(() => {
       refreshHud();

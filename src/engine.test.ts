@@ -866,6 +866,33 @@ describe('render path', () => {
     }
     expect(vi.mocked(scene.renderer.layer).mock.calls.length).toBe(callsBefore);
   });
+
+  it('fallback: refreshes only pin textures when delayed layout changes their size', () => {
+    const scene = setup(100, { renderPath: 'fallback' });
+    const pin = document.createElement('button');
+    pin.dataset.piece = 'pin';
+    let width = 80;
+    let height = 30;
+    Object.defineProperties(pin, {
+      offsetWidth: { configurable: true, get: () => width },
+      offsetHeight: { configurable: true, get: () => height },
+    });
+    scene.page.append(pin);
+    scene.engine.setModel(model);
+    scene.paint();
+    vi.mocked(scene.renderer.upload).mockClear();
+    vi.mocked(scene.canvas.requestPaint).mockClear();
+
+    scene.engine.refreshFallbackLayout();
+    expect(scene.canvas.requestPaint).not.toHaveBeenCalled();
+
+    width = 100;
+    height = 32;
+    scene.engine.refreshFallbackLayout();
+    scene.canvas.dispatchEvent(Object.assign(new Event('paint'), { changedElements: [] }));
+    const uploaded = vi.mocked(scene.renderer.upload).mock.calls.map((call) => call[1]);
+    expect(uploaded).toEqual([pin]);
+  });
 });
 
 describe('fallback controls outside the stage', () => {
