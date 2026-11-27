@@ -2283,7 +2283,7 @@ main[lang='en'] .bar-hint {
   user-select: text;
   background: #121417;
   color: #f2efe6;
-  font: 500 12px var(--sans);
+  font: 500 17px var(--sans);
 }
 
 /* only while it flies does it take clicks; the engine keeps its hit area off the canvas until then */
@@ -2317,21 +2317,24 @@ main[lang='en'] .bar-hint {
 }
 
 .flag h2 {
-  margin: 0 0 4px;
-  font: 800 24px var(--sans);
+  margin: 0 0 10px;
+  font: 800 38px var(--sans);
   letter-spacing: 0.02em;
 }
 
 .flag-lead {
-  margin: 0 0 12px;
-  opacity: 0.85;
+  margin: 0 0 20px;
+  font-size: 19px;
+  line-height: 1.6;
+  opacity: 0.92;
 }
 
 .flag-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 18px;
-  margin: 0 0 12px;
+  gap: 10px 26px;
+  margin: 0 0 20px;
+  font-size: 19px;
 }
 
 .flag-cols {
@@ -2341,16 +2344,17 @@ main[lang='en'] .bar-hint {
 }
 
 .flag h3 {
-  margin: 10px 0 3px;
-  font: 700 12.5px var(--sans);
+  margin: 10px 0 4px;
+  font: 700 16px var(--sans);
   color: #ffd27a;
   opacity: 0.9;
 }
 
 .flag ul {
   margin: 0;
-  padding: 0 0 0 16px;
-  line-height: 1.45;
+  padding: 0 0 0 22px;
+  font-size: 18px;
+  line-height: 1.6;
 }
 
 .flag ul.flag-continuation {
@@ -2363,26 +2367,27 @@ main[lang='en'] .bar-hint {
 
 .flag-foot {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  margin-top: 12px;
-  padding-top: 8px;
+  gap: 14px;
+  margin-top: 20px;
+  padding-top: 16px;
   border-top: 1px solid rgba(242, 239, 230, 0.22);
 }
 
 .flag-author {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  font-size: 19px;
 }
 
 .flag a.flag-icon {
   /* a bigger target than the icon, for a cloth that is never quite still */
   display: inline-flex;
   box-sizing: content-box;
-  width: 18px;
-  height: 18px;
+  width: 26px;
+  height: 26px;
   margin: -5px -3px;
   padding: 5px;
   color: #f2efe6;
@@ -3413,7 +3418,7 @@ html[data-fb-drag] .fb-panel-body {
 .flag-static .flag-text {
   height: auto;
   overflow: visible;
-  padding: 24px 28px 20px;
+  padding: 28px 36px 24px;
 }
 
 .flag-static .flag-art {

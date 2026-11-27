@@ -366,7 +366,7 @@ function makeCopy(language: Language): Copy {
         closeDialog: '閉じる',
       },
       flag: {
-        lead: 'GPX のルートを、国土地理院の地図と標高から作った立体模型の上で見るアプリです。',
+        lead: '好きな場所で地形を起こし、起伏やルート、光の変化を様々な角度から眺めるための地図です。',
         about: 'このアプリについて',
         tutorial: '使い方を見る',
         madeBy: '作った人：キョウヘイ',
@@ -546,7 +546,7 @@ function makeCopy(language: Language): Copy {
       closeDialog: 'Close',
     },
     flag: {
-      lead: 'View GPX routes on a 3D model built from Geospatial Information Authority of Japan maps and elevation data.',
+      lead: 'A map for raising the terrain of any place and looking over its relief, routes, and changing light from every angle.',
       about: 'About this app',
       tutorial: 'View the tutorial',
       madeBy: 'Made by Kyouhei',
