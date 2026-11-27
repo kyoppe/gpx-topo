@@ -54,6 +54,7 @@ jobs:
           npx --yes @datadog/datadog-ci@latest junit upload \
             --service "$DD_SERVICE" \
             --env "$DD_ENV" \
+            --tags "version:${GITHUB_SHA:0:7}" \
             --git-repository-url "$DD_GIT_REPOSITORY_URL" \
             test-results/junit.xml
 
