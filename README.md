@@ -79,15 +79,39 @@ Clock times are Japan Standard Time.
 - Output directory: `dist`
 - `functions/api/gsi/[[path]].ts` proxies allowed GSI layers with a one-day edge cache.
 
-The `gpx-topo` Pages project is not connected to a Git provider. A push to
-GitHub does not deploy it automatically. Deploy the built directory with
-Wrangler:
+Pull requests targeting `main` run the test suite, typecheck, and build without
+access to deployment secrets. Pushing to `main` runs the same validation, then
+uploads the JUnit report to Datadog CI Visibility and deploys the validated
+`dist` artifact to the `gpx-topo` Pages project.
+The typecheck includes the Pages Functions under `functions/` with
+Cloudflare Workers runtime types.
+
+The Datadog upload is a deployment gate on `main`: if the upload fails, the
+Cloudflare deployment does not start. The workflow uses pinned action and CLI
+versions, and the deploy job does not rerun the test or build code.
+
+Before the first push to `main`, configure these GitHub Actions secrets:
+
+- `CLOUDFLARE_API_TOKEN`: an API token that can deploy to Cloudflare Pages
+- `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account containing the Pages project
+- `DD_API_KEY`: a Datadog API key that can submit CI Visibility test results
+
+Enable GitHub Actions pipeline collection in the Datadog GitHub integration to
+see workflow, job, and deployment pipeline data in CI Visibility. The workflow
+uses `gpx-topo-web` as the Datadog service and `ci` as the environment.
+
+The workflow does not configure GitHub branch protection. To make validation a
+merge gate, require the `Validate and deploy / validate` check in the
+repository ruleset or branch protection settings for `main`.
+
+For manual recovery, deploy the built directory with Wrangler:
 
 ```bash
 npx wrangler login
 npx wrangler whoami
 export CF_PAGES_COMMIT_SHA="$(git rev-parse --short=7 HEAD)"
 npm ci
+npm test
 npm run build
 npx wrangler pages deploy dist \
   --project-name gpx-topo \

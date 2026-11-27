@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && npm run typecheck:functions",
+    "typecheck:functions": "tsc -p tsconfig.functions.json --noEmit"
   },
   "dependencies": {
     "@datadog/browser-logs": "^7.18.0",
@@ -19,6 +20,8 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261127.1",
+    "@datadog/datadog-ci": "5.29.0",
     "@types/node": "^26.6.6",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.7",
@@ -26,6 +29,7 @@
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "wrangler": "4.168.0"
   }
 }

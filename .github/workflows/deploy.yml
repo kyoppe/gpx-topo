@@ -1,0 +1,155 @@
+name: Validate and deploy
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: gpx-topo-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DD_SITE: datadoghq.com
+  DD_SERVICE: gpx-topo-web
+  DD_ENV: ci
+  CF_PAGES_COMMIT_SHA: ${{ github.sha }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      junit_available: ${{ steps.test_report.outputs.available }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run tests
+        run: |
+          mkdir -p test-results
+          npm test -- --reporter=default --reporter=junit --outputFile=test-results/junit.xml
+
+      - name: Record test report availability
+        id: test_report
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          if [ -s test-results/junit.xml ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload JUnit report artifact
+        if: ${{ always() && !cancelled() && steps.test_report.outputs.available == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: junit-${{ github.sha }}
+          path: test-results/junit.xml
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-${{ github.sha }}
+          path: dist
+          if-no-files-found: error
+          overwrite: true
+
+  upload-test-results:
+    needs: validate
+    if: ${{ always() && !cancelled() && github.event_name == 'push' && needs.validate.outputs.junit_available == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download JUnit report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: junit-${{ github.sha }}
+          path: test-results
+
+      - name: Upload test results to Datadog
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_GIT_COMMIT_SHA: ${{ github.sha }}
+          DD_GIT_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          npx --no-install datadog-ci junit upload \
+            --service "$DD_SERVICE" \
+            --env "$DD_ENV" \
+            --tags "version:${GITHUB_SHA:0:7}" \
+            --git-repository-url "$DD_GIT_REPOSITORY_URL" \
+            test-results/junit.xml
+
+  deploy:
+    needs:
+      - validate
+      - upload-test-results
+    if: ${{ github.event_name == 'push' && needs.validate.result == 'success' && needs.upload-test-results.result == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist-${{ github.sha }}
+          path: dist
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_PAGES_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          npx --no-install wrangler pages deploy dist \
+            --project-name gpx-topo \
+            --branch main \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-message "$CF_PAGES_COMMIT_MESSAGE"
