@@ -2,6 +2,8 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { shareFile } from './mediaShare';
+
 ((globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true);
 
 const harness = vi.hoisted(() => ({
@@ -98,7 +100,7 @@ vi.mock('./mapPermalink', async () => {
   };
 });
 
-const { default: App } = await import('./App');
+const { default: App, shareFallbackMedia } = await import('./App');
 const { legacyFixtureProjectionScale } = await import('./initialMapViewport');
 
 const DEFAULT_VIEWPORT = { lat: 35.3606, lon: 138.7274, scale: 5000 };
@@ -138,6 +140,21 @@ function lastSavedViewport() {
   return calls.at(-1)?.[0]?.mapViewport;
 }
 
+const SHARE_TEXT = 'Made with gpx-topo.\nhttps://gpx-topo.pages.dev/\n#GPX';
+const CURRENT_PERMALINK = 'https://gpx-topo.pages.dev/?mode=map&lat=35';
+
+function stubShare(share: unknown, canShare: unknown) {
+  Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+  Object.defineProperty(navigator, 'canShare', { value: canShare, configurable: true });
+}
+
+function media(kind: 'photo' | 'video', actions: 'split' | 'both' = 'split') {
+  const file = new File(['x'], `gpx-topo.${kind === 'photo' ? 'png' : 'mp4'}`, {
+    type: kind === 'photo' ? 'image/png' : 'video/mp4',
+  });
+  return { file, actions };
+}
+
 beforeEach(() => {
   harness.savedGpx = null;
   harness.savedView = null;
@@ -148,7 +165,121 @@ beforeEach(() => {
 afterEach(async () => {
   for (const root of mountedRoots.splice(0)) await act(async () => root.unmount());
   document.body.replaceChildren();
+  delete (navigator as unknown as Record<string, unknown>).share;
+  delete (navigator as unknown as Record<string, unknown>).canShare;
   vi.clearAllMocks();
+});
+
+describe.each(['photo', 'video'] as const)('shareFallbackMedia (%s)', (kind) => {
+  it('passes the current permalink to the share sheet', async () => {
+    const item = media(kind);
+    const share = vi.fn(async () => undefined);
+    const currentPermalink = vi.fn(() => CURRENT_PERMALINK);
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+    stubShare(share, vi.fn(() => true));
+
+    await shareFallbackMedia(item, SHARE_TEXT, currentPermalink, { share: shareFile, onShared, save, warn });
+
+    expect(currentPermalink).toHaveBeenCalledTimes(1);
+    expect(share).toHaveBeenCalledWith({
+      files: [item.file],
+      text: 'Made with gpx-topo.\nhttps://gpx-topo.pages.dev/?mode=map&lat=35\n#GPX',
+    });
+    expect(onShared).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('keeps the static share text when the current permalink cannot be built', async () => {
+    const item = media(kind);
+    const share = vi.fn(async () => undefined);
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+    stubShare(share, vi.fn(() => true));
+
+    await shareFallbackMedia(item, SHARE_TEXT, vi.fn(() => null), { share: shareFile, onShared, save, warn });
+
+    expect(share).toHaveBeenCalledWith({ files: [item.file], text: SHARE_TEXT });
+    expect(onShared).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not save when sharing is cancelled', async () => {
+    const item = media(kind);
+    stubShare(
+      vi.fn(async () => {
+        throw new DOMException('cancelled', 'AbortError');
+      }),
+      vi.fn(() => true),
+    );
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('saves when the share sheet does not support the file', async () => {
+    const item = media(kind);
+    const share = vi.fn();
+    stubShare(share, vi.fn(() => false));
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(share).not.toHaveBeenCalled();
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('leaves a separate Save action available after an unexpected share error', async () => {
+    const item = media(kind);
+    stubShare(
+      vi.fn(async () => {
+        throw new DOMException('not allowed', 'NotAllowedError');
+      }),
+      vi.fn(() => true),
+    );
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves after an unexpected error when the share button also saves', async () => {
+    const item = media(kind, 'both');
+    stubShare(
+      vi.fn(async () => {
+        throw new DOMException('not allowed', 'NotAllowedError');
+      }),
+      vi.fn(() => true),
+    );
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('App initial restore lifecycle', () => {
