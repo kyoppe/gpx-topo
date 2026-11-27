@@ -1670,7 +1670,9 @@ export default function App() {
       !modeTransition &&
       ((['terrain', 'sun', 'maneuver'].includes(tutorialTarget) && viewMode === 'map') ||
         (['route', 'waypoints', 'progress', 'flyover'].includes(tutorialTarget) && viewMode === 'gpx'));
-    engineRef.current.setViewState({ raised });
+    // laying it down is the same as the Lay flat key: the turn, the zoom and the move go with it, so it settles exactly in the frame
+    if (raised) engineRef.current.setViewState({ raised });
+    else engineRef.current.together();
   }, [model, modeTransition, tutorialMode, tutorialTarget, viewMode]);
 
   // The tutorial page asks for the next step by message; follow it without reloading.
