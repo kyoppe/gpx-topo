@@ -79,15 +79,28 @@ Clock times are Japan Standard Time.
 - Output directory: `dist`
 - `functions/api/gsi/[[path]].ts` proxies allowed GSI layers with a one-day edge cache.
 
-The `gpx-topo` Pages project is not connected to a Git provider. A push to
-GitHub does not deploy it automatically. Deploy the built directory with
-Wrangler:
+Pushing to `main` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+The workflow runs the test suite, uploads the JUnit report to Datadog CI
+Visibility, builds the app, and deploys `dist` to the `gpx-topo` Pages project.
+
+Before the first push to `main`, configure these GitHub Actions secrets:
+
+- `CLOUDFLARE_API_TOKEN`: an API token that can deploy to Cloudflare Pages
+- `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account containing the Pages project
+- `DD_API_KEY`: a Datadog API key that can submit CI Visibility test results
+
+Enable GitHub Actions pipeline collection in the Datadog GitHub integration to
+see workflow, job, and deployment pipeline data in CI Visibility. The workflow
+uses `gpx-topo-web` as the Datadog service and `ci` as the environment.
+
+For manual recovery, deploy the built directory with Wrangler:
 
 ```bash
 npx wrangler login
 npx wrangler whoami
 export CF_PAGES_COMMIT_SHA="$(git rev-parse --short=7 HEAD)"
 npm ci
+npm test
 npm run build
 npx wrangler pages deploy dist \
   --project-name gpx-topo \
