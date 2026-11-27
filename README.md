@@ -83,6 +83,8 @@ Pull requests targeting `main` run the test suite, typecheck, and build without
 access to deployment secrets. Pushing to `main` runs the same validation, then
 uploads the JUnit report to Datadog CI Visibility and deploys the validated
 `dist` artifact to the `gpx-topo` Pages project.
+The typecheck includes the Pages Functions under `functions/` with
+Cloudflare Workers runtime types.
 
 The Datadog upload is a deployment gate on `main`: if the upload fails, the
 Cloudflare deployment does not start. The workflow uses pinned action and CLI
