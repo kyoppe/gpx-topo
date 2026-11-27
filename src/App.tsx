@@ -372,7 +372,7 @@ export default function App() {
   const [mapSearchBusy, setMapSearchBusy] = useState(false);
   const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [mapPin, setMapPin] = useState<MapPermalinkPin | null>(() => permalink?.pin ?? null);
-  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(() => permalink?.currentPin ?? null);
   const [currentLocationBusy, setCurrentLocationBusy] = useState(false);
   const [mapPinRemoving, setMapPinRemoving] = useState(false);
   const [mapPinSelecting, setMapPinSelecting] = useState(false);
@@ -2349,6 +2349,7 @@ export default function App() {
         mapStyle: baseMapStyle,
         hillshade,
         pin: mapPin,
+        currentPin: currentLocation,
         fpv:
           currentFpv && fpvLocation
             ? {
@@ -2488,6 +2489,7 @@ export default function App() {
   };
   const clearCurrentLocation = () => {
     if (!currentLocation) return;
+    detachPermalink('current_location_clear');
     currentLocationRequestRef.current += 1;
     pendingCurrentLocationRef.current = null;
     currentLocationRecenterRef.current = false;

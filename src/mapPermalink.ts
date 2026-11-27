@@ -3,6 +3,7 @@ import type { MapStyle } from './basemap';
 export type MapPermalinkView = 'flat' | '3d' | 'fpv';
 export type MapPermalinkSun = 'auto' | 'off' | 'time' | null;
 export type MapPermalinkSunSpeed = 'slow' | 'normal' | 'fast';
+export type MapPermalinkCoordinate = { lat: number; lon: number };
 export type MapPermalinkPin = { lat: number; lon: number; label: string };
 export type MapPermalinkPan = { x: number; y: number; z: number };
 
@@ -10,7 +11,7 @@ export type MapPermalinkPan = { x: number; y: number; z: number };
 export function normalizeMapPinLabel(label: string) {
   return label.replace(/\r\n/g, '\n').split('\n').slice(0, 2).join('\n').slice(0, 40);
 }
-export type MapPermalinkFocus = { lat: number; lon: number };
+export type MapPermalinkFocus = MapPermalinkCoordinate;
 /**
  * The display area the permalink was made in, in screen px at zoom 1: the map frame's size and its ground scale
  * (px per world unit). When it is there, `pan` is also in those units, taken from the map centre (see `permalinkView`).
@@ -30,6 +31,7 @@ export type MapPermalink = {
   mapStyle: MapStyle | null;
   hillshade: boolean | null;
   pin: MapPermalinkPin | null;
+  currentPin: MapPermalinkCoordinate | null;
   fpv: MapPermalinkFpv | null;
   area: MapPermalinkArea | null;
   sun: MapPermalinkSun;
@@ -51,6 +53,7 @@ export type MapPermalinkBuildState = {
   mapStyle: MapStyle;
   hillshade: boolean;
   pin: MapPermalinkPin | null;
+  currentPin: MapPermalinkCoordinate | null;
   fpv?: MapPermalinkFpv | null;
   area?: MapPermalinkArea | null;
   sunlight: boolean;
@@ -86,6 +89,8 @@ export const MAP_PERMALINK_PARAMETERS = [
   'pin_lat',
   'pin_lon',
   'pin_label',
+  'current_pin_lat',
+  'current_pin_lon',
   'fpv_lat',
   'fpv_lon',
   'fpv_bearing',
@@ -296,6 +301,19 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     if (params.has('pin_label')) ignoredParameters.push('pin_label');
   }
 
+  const currentPinLat = numberParameter(params, 'current_pin_lat', -85.05112878, 85.05112878);
+  const currentPinLon = numberParameter(params, 'current_pin_lon', -180, 180);
+  const currentPin =
+    currentPinLat !== null &&
+    currentPinLat !== undefined &&
+    currentPinLon !== null &&
+    currentPinLon !== undefined
+      ? { lat: currentPinLat, lon: currentPinLon }
+      : null;
+  const currentPinParameters = ['current_pin_lat', 'current_pin_lon'];
+  if (currentPin) usedParameters.push(...currentPinParameters);
+  else for (const name of currentPinParameters) if (params.has(name)) ignoredParameters.push(name);
+
   const areaWidth = numberParameter(params, 'area_w', AREA_MIN_SIZE, AREA_MAX_SIZE);
   const areaHeight = numberParameter(params, 'area_h', AREA_MIN_SIZE, AREA_MAX_SIZE);
   const areaScale = numberParameter(params, 'area_scale', AREA_MIN_SCALE, AREA_MAX_SCALE);
@@ -354,6 +372,7 @@ export function parseMapPermalink(search: string): MapPermalink | null {
     mapStyle,
     hillshade,
     pin,
+    currentPin,
     fpv,
     area,
     sun,
@@ -381,6 +400,10 @@ export function buildMapPermalink(state: MapPermalinkBuildState, baseUrl: string
     params.set('pin_lat', state.pin.lat.toFixed(6));
     params.set('pin_lon', state.pin.lon.toFixed(6));
     if (state.pin.label.trim()) params.set('pin_label', state.pin.label.trim());
+  }
+  if (state.currentPin) {
+    params.set('current_pin_lat', state.currentPin.lat.toFixed(6));
+    params.set('current_pin_lon', state.currentPin.lon.toFixed(6));
   }
   if (state.view === '3d' || state.view === 'fpv') {
     params.set('bearing', fixed(degrees(state.bearing), 2).toFixed(2));
