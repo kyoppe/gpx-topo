@@ -161,6 +161,60 @@ function media(kind: 'photo' | 'video', actions: 'save' | 'split' | 'both' = 'sp
   return { file, actions };
 }
 
+function installFakeVideoRecorder() {
+  const track = { requestFrame: vi.fn(), stop: vi.fn() };
+  const stream = {
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+  } as unknown as MediaStream;
+  const originalCaptureStream = HTMLCanvasElement.prototype.captureStream;
+  Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: () => stream });
+  class FakeMediaRecorder {
+    static isTypeSupported() {
+      return true;
+    }
+    state: RecordingState = 'inactive';
+    mimeType = 'video/webm';
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    onstop: (() => void) | null = null;
+    constructor(_stream: MediaStream) {}
+    start() {
+      this.state = 'recording';
+      this.ondataavailable?.({ data: new Blob(['video'], { type: this.mimeType }) });
+    }
+    stop() {
+      this.state = 'inactive';
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+  return () => {
+    if (originalCaptureStream) Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: originalCaptureStream });
+    else Reflect.deleteProperty(HTMLCanvasElement.prototype, 'captureStream');
+  };
+}
+
+function stubDownload() {
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  const createObjectURL = vi.fn(() => 'blob:test');
+  const revokeObjectURL = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  return {
+    click,
+    restore() {
+      click.mockRestore();
+      if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectURL });
+      else Reflect.deleteProperty(URL, 'createObjectURL');
+      if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectURL });
+      else Reflect.deleteProperty(URL, 'revokeObjectURL');
+    },
+  };
+}
+
 beforeEach(() => {
   harness.savedGpx = null;
   harness.savedView = null;
@@ -337,34 +391,7 @@ it('passes a permalink from the fallback video dialog through the real App handl
   harness.savedView = SAVED_VIEW;
   const share = vi.fn<(data: { files: File[]; text: string }) => Promise<void>>(async () => undefined);
   stubShare(share, vi.fn(() => true));
-
-  const track = { requestFrame: vi.fn(), stop: vi.fn() };
-  const stream = {
-    getTracks: () => [track],
-    getVideoTracks: () => [track],
-  } as unknown as MediaStream;
-  const originalCaptureStream = HTMLCanvasElement.prototype.captureStream;
-  Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: () => stream });
-  class FakeMediaRecorder {
-    static isTypeSupported() {
-      return true;
-    }
-    state: RecordingState = 'inactive';
-    mimeType = 'video/webm';
-    ondataavailable: ((event: { data: Blob }) => void) | null = null;
-    onerror: (() => void) | null = null;
-    onstop: (() => void) | null = null;
-    constructor(_stream: MediaStream) {}
-    start() {
-      this.state = 'recording';
-      this.ondataavailable?.({ data: new Blob(['video'], { type: this.mimeType }) });
-    }
-    stop() {
-      this.state = 'inactive';
-      this.onstop?.();
-    }
-  }
-  vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+  const restoreVideoRecorder = installFakeVideoRecorder();
 
   try {
     const { container } = await renderApp();
@@ -386,9 +413,46 @@ it('passes a permalink from the fallback video dialog through the real App handl
     expect(call?.text).toContain('lat=40.000000');
     expect(addAction).toHaveBeenCalledWith('media_shared', { route_name: 'gpx-topo', kind: 'video' });
   } finally {
-    if (originalCaptureStream) Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: originalCaptureStream });
-    else Reflect.deleteProperty(HTMLCanvasElement.prototype, 'captureStream');
+    restoreVideoRecorder();
   }
+});
+
+describe.each(['photo', 'video'] as const)('save-only fallback media (%s)', (kind) => {
+  it('saves from the real dialog without sharing or building a permalink', async () => {
+    harness.fallback = true;
+    harness.savedView = SAVED_VIEW;
+    delete (navigator as unknown as Record<string, unknown>).share;
+    delete (navigator as unknown as Record<string, unknown>).canShare;
+    const download = stubDownload();
+    const restoreVideoRecorder = kind === 'video' ? installFakeVideoRecorder() : () => {};
+
+    try {
+      const { container } = await renderApp();
+      await act(async () => {
+        if (kind === 'photo') {
+          container.querySelector<HTMLButtonElement>('.key-camera')!.click();
+        } else {
+          container.querySelector<HTMLButtonElement>('.key-video')!.click();
+          container.querySelector<HTMLButtonElement>('.key-video')!.click();
+        }
+      });
+
+      const dialog = container.querySelector<HTMLElement>('.fb-media-dialog');
+      expect(dialog).not.toBeNull();
+      expect(dialog!.querySelector<HTMLButtonElement>('.pop-ok')?.textContent).toBe('Save');
+      engine.getViewState.mockClear();
+      await act(async () => {
+        dialog!.querySelector<HTMLButtonElement>('.pop-ok')!.click();
+      });
+
+      expect(download.click).toHaveBeenCalledTimes(1);
+      expect(engine.getViewState).not.toHaveBeenCalled();
+      expect(addAction).toHaveBeenCalledWith('media_saved', { route_name: 'gpx-topo', kind });
+    } finally {
+      restoreVideoRecorder();
+      download.restore();
+    }
+  });
 });
 
 describe('App initial restore lifecycle', () => {
