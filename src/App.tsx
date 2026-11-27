@@ -202,6 +202,33 @@ function downloadBlob(blob: Blob, filename: string) {
 /** Fallback: a photo or a video made here, with the file the share sheet takes. */
 type FallbackMedia = { kind: 'photo' | 'video'; url: string; blob: Blob; file: File; actions: MediaActions };
 
+export async function shareFallbackMedia(
+  media: Pick<FallbackMedia, 'file' | 'actions'>,
+  shareText: string,
+  currentPermalink: () => string | null,
+  dependencies: {
+    share: typeof shareFile;
+    onShared: () => void;
+    save: () => void;
+    warn: (error: unknown) => void;
+  },
+) {
+  if (media.actions !== 'save') {
+    try {
+      const permalink = currentPermalink();
+      const text = permalink ? shareTextWithPermalink(shareText, permalink) : shareText;
+      const result = await dependencies.share(media.file, text);
+      if (result === 'shared') dependencies.onShared();
+      if (result !== 'unsupported') return;
+    } catch (error) {
+      dependencies.warn(error);
+      // with a Save key of its own beside it, a sheet that is busy or refused is left alone
+      if (media.actions === 'split') return;
+    }
+  }
+  dependencies.save();
+}
+
 /** A waypoint's km: typing a new one moves it along the route once Enter is pressed or the field is left; Esc puts it back. */
 function KmField({ km, label, onCommit }: { km: number; label: string; onCommit: (km: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -2154,18 +2181,12 @@ export default function App() {
   const shareFbMedia = async () => {
     const media = fbMedia;
     if (!media) return;
-    if (media.actions !== 'save') {
-      try {
-        const result = await shareFile(media.file, copy.shareText);
-        if (result === 'shared') addAction('media_shared', { route_name: route?.name || 'gpx-topo', kind: media.kind });
-        if (result !== 'unsupported') return;
-      } catch (error) {
-        reportWarning('share_media', error);
-        // with a Save key of its own beside it, a sheet that is busy or refused is left alone
-        if (media.actions === 'split') return;
-      }
-    }
-    saveFbMedia();
+    await shareFallbackMedia(media, copy.shareText, () => buildCurrentMapPermalink()?.url ?? null, {
+      share: shareFile,
+      onShared: () => addAction('media_shared', { route_name: route?.name || 'gpx-topo', kind: media.kind }),
+      save: saveFbMedia,
+      warn: (error) => reportWarning('share_media', error),
+    });
   };
 
   const exportPng = async () => {

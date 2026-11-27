@@ -2,6 +2,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { shareFile } from './mediaShare';
+import { addAction } from './observability';
+
 ((globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true);
 
 const harness = vi.hoisted(() => ({
@@ -15,6 +18,7 @@ const harness = vi.hoisted(() => ({
   } | null,
   permalink: null as Record<string, unknown> | null,
   saveView: vi.fn(),
+  fallback: false,
 }));
 
 const engine = new Proxy(
@@ -28,6 +32,10 @@ const engine = new Proxy(
     setModel: vi.fn(),
     setPlacing: vi.fn(),
     setViewState: vi.fn(),
+    capture: vi.fn(async () => new Blob(['photo'], { type: 'image/png' })),
+    getViewState: vi.fn(() => ({ raised: false, bearing: 0, pitch: 0, zoom: 1, pan: { x: 0, y: 0, z: 0 } })),
+    getFpvState: vi.fn(() => null),
+    getViewFocus: vi.fn(() => null),
   },
   {
     get(target, property: string | symbol) {
@@ -62,7 +70,7 @@ vi.mock('./terrain', () => ({ buildTerrain: vi.fn() }));
 
 vi.mock('./htmlInCanvas', () => ({
   getHtmlInCanvasContext: vi.fn(() => ({ is_webview: false })),
-  supportsHtmlInCanvas: vi.fn(() => true),
+  supportsHtmlInCanvas: vi.fn(() => !harness.fallback),
 }));
 
 vi.mock('./Flag', () => ({
@@ -98,7 +106,7 @@ vi.mock('./mapPermalink', async () => {
   };
 });
 
-const { default: App } = await import('./App');
+const { default: App, shareFallbackMedia } = await import('./App');
 const { legacyFixtureProjectionScale } = await import('./initialMapViewport');
 
 const DEFAULT_VIEWPORT = { lat: 35.3606, lon: 138.7274, scale: 5000 };
@@ -138,17 +146,313 @@ function lastSavedViewport() {
   return calls.at(-1)?.[0]?.mapViewport;
 }
 
+const SHARE_TEXT = 'Made with gpx-topo.\nhttps://gpx-topo.pages.dev/\n#GPX';
+const CURRENT_PERMALINK = 'https://gpx-topo.pages.dev/?mode=map&lat=35';
+
+function stubShare(share: unknown, canShare: unknown) {
+  Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+  Object.defineProperty(navigator, 'canShare', { value: canShare, configurable: true });
+}
+
+function media(kind: 'photo' | 'video', actions: 'save' | 'split' | 'both' = 'split') {
+  const file = new File(['x'], `gpx-topo.${kind === 'photo' ? 'png' : 'mp4'}`, {
+    type: kind === 'photo' ? 'image/png' : 'video/mp4',
+  });
+  return { file, actions };
+}
+
+function installFakeVideoRecorder() {
+  const track = { requestFrame: vi.fn(), stop: vi.fn() };
+  const stream = {
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+  } as unknown as MediaStream;
+  const originalCaptureStream = HTMLCanvasElement.prototype.captureStream;
+  Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: () => stream });
+  class FakeMediaRecorder {
+    static isTypeSupported() {
+      return true;
+    }
+    state: RecordingState = 'inactive';
+    mimeType = 'video/webm';
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    onstop: (() => void) | null = null;
+    constructor(_stream: MediaStream) {}
+    start() {
+      this.state = 'recording';
+      this.ondataavailable?.({ data: new Blob(['video'], { type: this.mimeType }) });
+    }
+    stop() {
+      this.state = 'inactive';
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+  return () => {
+    if (originalCaptureStream) Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: originalCaptureStream });
+    else Reflect.deleteProperty(HTMLCanvasElement.prototype, 'captureStream');
+  };
+}
+
+function stubDownload() {
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  const createObjectURL = vi.fn(() => 'blob:test');
+  const revokeObjectURL = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  return {
+    click,
+    restore() {
+      click.mockRestore();
+      if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectURL });
+      else Reflect.deleteProperty(URL, 'createObjectURL');
+      if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectURL });
+      else Reflect.deleteProperty(URL, 'revokeObjectURL');
+    },
+  };
+}
+
 beforeEach(() => {
   harness.savedGpx = null;
   harness.savedView = null;
   harness.permalink = null;
+  harness.fallback = false;
   harness.saveView.mockClear();
 });
 
 afterEach(async () => {
   for (const root of mountedRoots.splice(0)) await act(async () => root.unmount());
   document.body.replaceChildren();
+  delete (navigator as unknown as Record<string, unknown>).share;
+  delete (navigator as unknown as Record<string, unknown>).canShare;
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+describe.each(['photo', 'video'] as const)('shareFallbackMedia (%s)', (kind) => {
+  it('passes the current permalink to the share sheet', async () => {
+    const item = media(kind);
+    const share = vi.fn(async () => undefined);
+    const currentPermalink = vi.fn(() => CURRENT_PERMALINK);
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+    stubShare(share, vi.fn(() => true));
+
+    await shareFallbackMedia(item, SHARE_TEXT, currentPermalink, { share: shareFile, onShared, save, warn });
+
+    expect(currentPermalink).toHaveBeenCalledTimes(1);
+    expect(share).toHaveBeenCalledWith({
+      files: [item.file],
+      text: 'Made with gpx-topo.\nhttps://gpx-topo.pages.dev/?mode=map&lat=35\n#GPX',
+    });
+    expect(onShared).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('keeps the static share text when the current permalink cannot be built', async () => {
+    const item = media(kind);
+    const share = vi.fn(async () => undefined);
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+    stubShare(share, vi.fn(() => true));
+
+    await shareFallbackMedia(item, SHARE_TEXT, vi.fn(() => null), { share: shareFile, onShared, save, warn });
+
+    expect(share).toHaveBeenCalledWith({ files: [item.file], text: SHARE_TEXT });
+    expect(onShared).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not save when sharing is cancelled', async () => {
+    const item = media(kind);
+    stubShare(
+      vi.fn(async () => {
+        throw new DOMException('cancelled', 'AbortError');
+      }),
+      vi.fn(() => true),
+    );
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('saves when the share sheet does not support the file', async () => {
+    const item = media(kind);
+    const share = vi.fn();
+    stubShare(share, vi.fn(() => false));
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(share).not.toHaveBeenCalled();
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('leaves a separate Save action available after an unexpected share error', async () => {
+    const item = media(kind);
+    stubShare(
+      vi.fn(async () => {
+        throw new DOMException('not allowed', 'NotAllowedError');
+      }),
+      vi.fn(() => true),
+    );
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves after an unexpected error when the share button also saves', async () => {
+    const item = media(kind, 'both');
+    stubShare(
+      vi.fn(async () => {
+        throw new DOMException('not allowed', 'NotAllowedError');
+      }),
+      vi.fn(() => true),
+    );
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+
+    await shareFallbackMedia(item, SHARE_TEXT, () => CURRENT_PERMALINK, { share: shareFile, onShared, save, warn });
+
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves directly without building a permalink when sharing is unavailable', async () => {
+    const item = media(kind, 'save');
+    const share = vi.fn();
+    const currentPermalink = vi.fn(() => CURRENT_PERMALINK);
+    const onShared = vi.fn();
+    const save = vi.fn();
+    const warn = vi.fn();
+    stubShare(share, vi.fn(() => true));
+
+    await shareFallbackMedia(item, SHARE_TEXT, currentPermalink, { share: shareFile, onShared, save, warn });
+
+    expect(currentPermalink).not.toHaveBeenCalled();
+    expect(share).not.toHaveBeenCalled();
+    expect(onShared).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+it('passes a permalink from the fallback photo dialog through the real App handler', async () => {
+  harness.fallback = true;
+  harness.savedView = SAVED_VIEW;
+  const share = vi.fn<(data: { files: File[]; text: string }) => Promise<void>>(async () => undefined);
+  stubShare(share, vi.fn(() => true));
+
+  const { container } = await renderApp();
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>('.key-camera')!.click();
+  });
+
+  const dialog = container.querySelector<HTMLElement>('.fb-media-dialog');
+  expect(dialog).not.toBeNull();
+  await act(async () => {
+    dialog!.querySelector<HTMLButtonElement>('.pop-ok')!.click();
+  });
+
+  const call = share.mock.calls[0]?.[0] as { files: File[]; text: string } | undefined;
+  expect(call?.files[0]).toBeInstanceOf(File);
+  expect(call?.text).toContain('mode=map');
+  expect(call?.text).toContain('lat=40.000000');
+  expect(addAction).toHaveBeenCalledWith('media_shared', { route_name: 'gpx-topo', kind: 'photo' });
+});
+
+it('passes a permalink from the fallback video dialog through the real App handler', async () => {
+  harness.fallback = true;
+  harness.savedView = SAVED_VIEW;
+  const share = vi.fn<(data: { files: File[]; text: string }) => Promise<void>>(async () => undefined);
+  stubShare(share, vi.fn(() => true));
+  const restoreVideoRecorder = installFakeVideoRecorder();
+
+  try {
+    const { container } = await renderApp();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.key-video')!.click();
+      container.querySelector<HTMLButtonElement>('.key-video')!.click();
+    });
+
+    const dialog = container.querySelector<HTMLElement>('.fb-media-dialog');
+    expect(dialog).not.toBeNull();
+    await act(async () => {
+      dialog!.querySelector<HTMLButtonElement>('.pop-ok')!.click();
+    });
+
+    const call = share.mock.calls[0]?.[0] as { files: File[]; text: string } | undefined;
+    expect(call?.files[0]).toBeInstanceOf(File);
+    expect(call?.files[0]?.type).toBe('video/webm');
+    expect(call?.text).toContain('mode=map');
+    expect(call?.text).toContain('lat=40.000000');
+    expect(addAction).toHaveBeenCalledWith('media_shared', { route_name: 'gpx-topo', kind: 'video' });
+  } finally {
+    restoreVideoRecorder();
+  }
+});
+
+describe.each(['photo', 'video'] as const)('save-only fallback media (%s)', (kind) => {
+  it('saves from the real dialog without sharing or building a permalink', async () => {
+    harness.fallback = true;
+    harness.savedView = SAVED_VIEW;
+    delete (navigator as unknown as Record<string, unknown>).share;
+    delete (navigator as unknown as Record<string, unknown>).canShare;
+    const download = stubDownload();
+    const restoreVideoRecorder = kind === 'video' ? installFakeVideoRecorder() : () => {};
+
+    try {
+      const { container } = await renderApp();
+      await act(async () => {
+        if (kind === 'photo') {
+          container.querySelector<HTMLButtonElement>('.key-camera')!.click();
+        } else {
+          container.querySelector<HTMLButtonElement>('.key-video')!.click();
+          container.querySelector<HTMLButtonElement>('.key-video')!.click();
+        }
+      });
+
+      const dialog = container.querySelector<HTMLElement>('.fb-media-dialog');
+      expect(dialog).not.toBeNull();
+      expect(dialog!.querySelector<HTMLButtonElement>('.pop-ok')?.textContent).toBe('Save');
+      engine.getViewState.mockClear();
+      await act(async () => {
+        dialog!.querySelector<HTMLButtonElement>('.pop-ok')!.click();
+      });
+
+      expect(download.click).toHaveBeenCalledTimes(1);
+      expect(engine.getViewState).not.toHaveBeenCalled();
+      expect(addAction).toHaveBeenCalledWith('media_saved', { route_name: 'gpx-topo', kind });
+    } finally {
+      restoreVideoRecorder();
+      download.restore();
+    }
+  });
 });
 
 describe('App initial restore lifecycle', () => {
