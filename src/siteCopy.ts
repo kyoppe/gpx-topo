@@ -48,8 +48,8 @@ export type SiteCopy = {
   tutorialGpx: string;
   tutorialSheetFirst: (tab: string) => string;
   /** the settings-panel tab each panel step works in, as the tab is labelled on a narrow screen */
-  /** added to the pin step: where the pin gets its name, beside the map or in the bottom sheet */
-  tutorialPinName: (sheet: boolean) => string;
+  /** added to the pin step: where the pin gets its name (on the pin itself, in the bottom sheet, or in the panel beside the map) */
+  tutorialPinName: (where: 'native' | 'sheet' | 'panel') => string;
   tutorialTabs: Readonly<Record<string, string>>;
   previous: string;
   next: string;
@@ -114,7 +114,8 @@ const JAPANESE: SiteCopy = {
   tutorialMap: 'Mapモード',
   tutorialGpx: 'GPXモード',
   tutorialSheetFirst: (tab) => `下の「つまみ」をタップするか上へ引いてパネルを開き、「${tab}」タブで、`,
-  tutorialPinName: (sheet) => (sheet ? '立てたピンには、下の「つまみ」をタップするか上へ引いてパネルを開き、「ピン」タブで名前を付けられます。' : '立てたピンには、横のパネルで名前を付けられます。'),
+  tutorialPinName: (where) =>
+    where === 'native' ? '立てたピンには、そのまま名前を書き込めます。' : where === 'sheet' ? '立てたピンには、下の「つまみ」をタップするか上へ引いてパネルを開き、「ピン」タブで名前を付けられます。' : '立てたピンには、横のパネルで名前を付けられます。',
   tutorialTabs: { search: '検索', sun: '日照', progress: 'ルート', waypoints: 'ウェイポイント' },
   previous: '前へ',
   next: '次へ',
@@ -137,13 +138,13 @@ const JAPANESE: SiteCopy = {
     { title: '撮ったものを共有する', description: '撮った画像は「画像をコピー」でコピーして、投稿先に貼り付けられます。撮ったあとに出るXボタンからは、そのまま投稿もできます。', pointer: '「画像をコピー」して貼り付ける、またはXボタンで投稿', touch: '「画像をコピー」して貼り付ける、またはXボタンで投稿', target: 'share', appMode: 'map', nativeOnly: true },
   ],
   gpxSteps: [
-    { title: 'GPXを開く', description: '手元のGPXファイルを開くと、GPXモードに切り替わります。', pointer: '「GPX」を押してファイルを選ぶ', touch: '「GPX」をタップしてファイルを選ぶ', target: 'open-map', appMode: 'map' },
+    { title: 'GPXを開く', description: 'GPXボタンを押してGPXファイルを開くと、GPXモードに切り替わります。このチュートリアルでは、見本のルートが開きます。', pointer: '「GPX」を押す', touch: '「GPX」をタップ', target: 'open-map', appMode: 'map' },
     { title: 'ルートを見る', description: '読み込んだルートが地形の上に表示されます。', pointer: 'ドラッグで回転、右ドラッグで移動', touch: '1本指で回転、2本指で移動', target: 'route', appMode: 'gpx' },
     { title: 'ウェイポイントを見る', description: 'ルートに含まれるウェイポイントを、一覧と地図の上で確認できます。', pointer: 'ウェイポイントの番号を押す', touch: 'ウェイポイントの番号をタップ', target: 'waypoints', appMode: 'gpx' },
     { title: '進み具合を見る', description: '標高プロファイルや経過時間から、ルートの進み具合を確認します。', pointer: 'プロファイルや時刻を操作', touch: 'プロファイルや時刻を操作', target: 'progress', appMode: 'gpx' },
     { title: 'Flyoverでルートを飛ぶ', description: 'Flyoverを再生すると、カメラがルートに沿って地形の上を進みます。', pointer: '▶ボタンを押す', touch: '▶ボタンをタップ', target: 'flyover', appMode: 'gpx' },
     { title: 'Mapに戻る', description: 'Mapモードへ戻って別の場所を探したり、別のGPXを開いたりできます。', pointer: 'モード切替ボタンを押す', touch: 'モード切替ボタンをタップ', target: 'return', appMode: 'map' },
-    { title: '別のGPXを開く', description: 'Mapモードに戻ったら、GPXボタンから別のファイルを開けます。', pointer: '「GPX」を押して別のファイルを選ぶ', touch: '「GPX」をタップして別のファイルを選ぶ', target: 'open-map', appMode: 'map' },
+    { title: 'GPXモードにまた入る', description: 'Mapモードに戻っても、GPXボタンでGPXモードにすぐ戻れます。別のファイルは、GPXモードの「GPXを開く」から開けます。', pointer: '「GPX」を押す', touch: '「GPX」をタップ', target: 'open-map', appMode: 'map' },
   ],
   footer: '',
 };
@@ -200,7 +201,8 @@ const ENGLISH: SiteCopy = {
   tutorialMap: 'Map mode',
   tutorialGpx: 'GPX mode',
   tutorialSheetFirst: (tab) => `Tap the handle at the bottom or pull it up to open the panel, then in the “${tab}” tab, `,
-  tutorialPinName: (sheet) => (sheet ? 'Tap the handle at the bottom or pull it up to open the panel, then name the pin in the “Pin” tab.' : 'Name the pin in the panel beside the map.'),
+  tutorialPinName: (where) =>
+    where === 'native' ? 'Type a name straight onto the pin.' : where === 'sheet' ? 'Tap the handle at the bottom or pull it up to open the panel, then name the pin in the “Pin” tab.' : 'Name the pin in the panel beside the map.',
   tutorialTabs: { search: 'Search', sun: 'Sunlight', progress: 'Route', waypoints: 'Waypoints' },
   previous: 'Previous',
   next: 'Next',
@@ -223,13 +225,13 @@ const ENGLISH: SiteCopy = {
     { title: 'Share what you made', description: 'Copy the image with “Copy image” and paste it where you want to post it. The X button that appears after you capture one posts it straight away.', pointer: 'Copy the image and paste it, or post with the X button', touch: 'Copy the image and paste it, or post with the X button', target: 'share', appMode: 'map', nativeOnly: true },
   ],
   gpxSteps: [
-    { title: 'Open a GPX', description: 'Open a GPX file to switch to GPX mode.', pointer: 'Press “GPX” and choose a file', touch: 'Tap “GPX” and choose a file', target: 'open-map', appMode: 'map' },
+    { title: 'Open a GPX', description: 'Press the GPX button and open a GPX file to switch to GPX mode. In this tutorial, a sample route opens.', pointer: 'Press “GPX”', touch: 'Tap “GPX”', target: 'open-map', appMode: 'map' },
     { title: 'View the route', description: 'The loaded route appears on top of the terrain.', pointer: 'Drag to rotate; right-drag to move', touch: 'Use one finger to rotate; use two fingers to move', target: 'route', appMode: 'gpx' },
     { title: 'View waypoints', description: 'Inspect the waypoints included in the route, in the list and on the map.', pointer: 'Press a waypoint number', touch: 'Tap a waypoint number', target: 'waypoints', appMode: 'gpx' },
     { title: 'Review progress', description: 'Use the elevation profile and elapsed time to review progress along the route.', pointer: 'Use the profile or time controls', touch: 'Use the profile or time controls', target: 'progress', appMode: 'gpx' },
     { title: 'Fly along the route', description: 'Play the Flyover and the camera travels along the route over the terrain.', pointer: 'Press the ▶ button', touch: 'Tap the ▶ button', target: 'flyover', appMode: 'gpx' },
     { title: 'Return to Map', description: 'Return to Map mode to explore another place.', pointer: 'Press the mode switch', touch: 'Tap the mode switch', target: 'return', appMode: 'map' },
-    { title: 'Open another GPX', description: 'Back in Map mode, use the GPX button to open another file.', pointer: 'Press “GPX” and choose another file', touch: 'Tap “GPX” and choose another file', target: 'open-map', appMode: 'map' },
+    { title: 'Go back into GPX mode', description: 'Back in Map mode, the GPX button takes you straight back to GPX mode. To open another file, use “Open GPX” in GPX mode.', pointer: 'Press “GPX”', touch: 'Tap “GPX”', target: 'open-map', appMode: 'map' },
   ],
   footer: '',
 };

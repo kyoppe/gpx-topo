@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import BrushSelection from './BrushSelection';
 import { supportsHtmlInCanvas } from './htmlInCanvas';
 import { detectLanguage } from './i18n';
 import { SiteFooter, SiteHeader, usePrimaryTouch } from './SiteChrome';
@@ -34,7 +35,7 @@ export default function TutorialPage() {
       sheetShown && PANEL_TARGETS.has(item.target) ? copy.tutorialSheetFirst(copy.tutorialTabs[item.target]) + text.replace(/^[A-Z]/, (letter) => letter.toLowerCase()) : text;
     return {
       description:
-        item.target === 'pin' ? `${item.description}${language === 'ja' ? '' : ' '}${copy.tutorialPinName(sheetShown)}` : openFirst(item.description),
+        item.target === 'pin' ? `${item.description}${language === 'ja' ? '' : ' '}${copy.tutorialPinName(native ? 'native' : sheetShown ? 'sheet' : 'panel')}` : openFirst(item.description),
       gesture: touch ? item.touch : item.pointer,
     };
   };
@@ -76,6 +77,7 @@ export default function TutorialPage() {
 
   return (
     <main className="site-page tutorial-page">
+      <BrushSelection />
       <SiteHeader copy={copy} current="tutorial" />
 
       <section className="tutorial-intro" aria-labelledby="tutorial-title">

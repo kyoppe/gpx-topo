@@ -288,6 +288,14 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
       let pending = false;
       let failures = 0;
       let uploaded = false;
+      // The pictures of the map and of the page are only taken again when what they show has changed, not on
+      // every frame of the model standing up or lying down (an upload and its mipmaps are the costly part).
+      let mapStale = true;
+      let pageStale = true;
+      const markStale = () => {
+        mapStale = true;
+        pageStale = true;
+      };
       let lastGeometry = '';
       // how high above the base the page is taken to lie, for the browser's hit-testing (follows the pointer)
       let planeHeight: number | null = null;
@@ -465,16 +473,22 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
           const pw = Math.max(1, Math.round(page.offsetWidth * scale));
           const ph = Math.max(1, Math.round(page.offsetHeight * scale));
           gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-          allocate(mapTexture, mw, mh);
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, mapTexture);
-          gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, map, { width: mw, height: mh });
-          gl.generateMipmap(gl.TEXTURE_2D);
-          allocate(pageTexture, pw, ph);
-          gl.activeTexture(gl.TEXTURE1);
-          gl.bindTexture(gl.TEXTURE_2D, pageTexture);
-          gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, page, { width: pw, height: ph });
-          gl.generateMipmap(gl.TEXTURE_2D);
+          if (mapStale || allocated.get(mapTexture) !== `${mw}x${mh}`) {
+            allocate(mapTexture, mw, mh);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, mapTexture);
+            gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, map, { width: mw, height: mh });
+            gl.generateMipmap(gl.TEXTURE_2D);
+            mapStale = false;
+          }
+          if (pageStale || allocated.get(pageTexture) !== `${pw}x${ph}`) {
+            allocate(pageTexture, pw, ph);
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, pageTexture);
+            gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, page, { width: pw, height: ph });
+            gl.generateMipmap(gl.TEXTURE_2D);
+            pageStale = false;
+          }
           gl.activeTexture(gl.TEXTURE0);
           uploaded = true;
           failures = 0;
@@ -524,6 +538,7 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
           if (Math.abs(progress - wanted) < 1e-6) {
             progress = wanted;
             mode = wanted === 1 ? 'raised' : 'flat';
+            markStale();
           }
           // the same curve both ways, slow at each end, so standing up and lying down take the same time
           eased = progress * progress * (3 - 2 * progress);
@@ -637,8 +652,22 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
         else if (reducedMotion && mode === 'raised') page.scrollTop = scrollTarget;
       };
       const onScroll = () => {
+        pageStale = true;
         dirty = true;
       };
+      // anything that changes what the elements look like: tiles arriving, text, selection, hover, focus
+      const mutationObserver = new MutationObserver(markStale);
+      const observeOptions = { childList: true, attributes: true, characterData: true, subtree: true };
+      mutationObserver.observe(map, observeOptions);
+      mutationObserver.observe(page, observeOptions);
+      const onMapLoad = () => {
+        mapStale = true;
+      };
+      map.addEventListener('load', onMapLoad, true);
+      const onPageLook = () => {
+        pageStale = true;
+      };
+      for (const name of ['mouseover', 'mouseout', 'focusin', 'focusout']) page.addEventListener(name, onPageLook, true);
 
       canvas.addEventListener('paint', render);
       canvas.addEventListener('wheel', onWheel, { passive: false });
@@ -652,6 +681,7 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
       page.addEventListener('scroll', onScroll, { passive: true });
       const resizeObserver = new ResizeObserver(() => {
         setSize({ w: canvas.clientWidth, h: canvas.clientHeight });
+        markStale();
         dirty = true;
         window.clearTimeout(loadTimer);
         loadTimer = window.setTimeout(ensureTerrain, 250);
@@ -676,6 +706,9 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
         canvas.removeEventListener('click', onClick);
         page.removeEventListener('scroll', onScroll);
         resizeObserver.disconnect();
+        mutationObserver.disconnect();
+        map.removeEventListener('load', onMapLoad, true);
+        for (const name of ['mouseover', 'mouseout', 'focusin', 'focusout']) page.removeEventListener(name, onPageLook, true);
         gl.deleteTexture(mapTexture);
         gl.deleteTexture(pageTexture);
         gl.deleteBuffer(vertexBuffer);

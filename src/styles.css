@@ -3739,6 +3739,18 @@ html[data-fb-drag] .fb-panel-body {
   content: '';
 }
 
+.scene-map {
+  position: relative;
+  overflow: hidden;
+}
+
+/* each tile lies where sceneTiles() puts it, so a missing or late tile never shifts the others */
+.scene-map img {
+  position: absolute;
+  display: block;
+  max-width: none;
+}
+
 .about-bg .scene-map {
   position: absolute;
   top: 0;
