@@ -1,164 +1,183 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import AboutHero from './AboutHero';
-import { detectLanguage } from './i18n';
+import BrushSelection from './BrushSelection';
+import CreatorSection from './CreatorSection';
+import { detectLanguage, getCopy } from './i18n';
 import { supportsHtmlInCanvas } from './htmlInCanvas';
+import SceneMap from './SceneMap';
+import { SiteFooter, SiteHeader, usePrimaryTouch } from './SiteChrome';
+import TerrainStage from './TerrainStage';
+import { SHOWCASE_SCENE } from './siteScene';
 import { siteCopy } from './siteCopy';
 
-function SiteHeader({ copy }: { copy: ReturnType<typeof siteCopy> }) {
-  return (
-    <header className="site-header">
-      <a className="site-brand" href="/" aria-label={copy.navMap}>
-        {copy.footer}
-      </a>
-      <nav className="site-nav" aria-label="Navigation">
-        <a href="/about">{copy.navAbout}</a>
-        <a href="/tutorial">{copy.navTutorial}</a>
-        <a className="site-nav-map" href="/">
-          {copy.navMap}
-        </a>
-      </nav>
-    </header>
-  );
-}
+const FAQ_URL = 'https://www.boxhouse120.com/gpx-wallpaper';
+const HTML_IN_CANVAS_URL = 'https://github.com/WICG/html-in-canvas';
 
-function usePrimaryTouch() {
-  const [touch] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window),
+/** The page's opening: the same words whether the page lies on the GSI map or on the terrain model. */
+function Hero({ copy, credit }: { copy: ReturnType<typeof siteCopy>; credit: string }) {
+  return (
+    <section className="about-plain" aria-labelledby="about-title">
+      <div className="about-plain-copy">
+        <span className="site-rule" />
+        <h1 id="about-title">{copy.heroTitle}</h1>
+        <p className="site-lead">{copy.heroLead}</p>
+        <div className="site-actions">
+          <a className="site-button site-button-primary" href="/">
+            {copy.heroButton}
+          </a>
+          <a className="site-button" href="/tutorial">
+            {copy.heroTutorial}
+          </a>
+        </div>
+      </div>
+      <p className="about-plain-credit">
+        {SHOWCASE_SCENE.name}・{credit}
+      </p>
+    </section>
   );
-  return touch;
 }
 
 export default function AboutPage() {
   const language = detectLanguage();
   const copy = siteCopy(language);
   const touch = usePrimaryTouch();
-  const native = supportsHtmlInCanvas();
+  const [nativeFailed, setNativeFailed] = useState(false);
+  const native = !nativeFailed && supportsHtmlInCanvas();
+  const onUnavailable = useCallback(() => setNativeFailed(true), []);
 
   useEffect(() => {
     document.documentElement.lang = language;
     document.title = `${copy.navAbout} - ${copy.footer}`;
   }, [copy.footer, copy.navAbout, language]);
 
-  return (
-    <main className={`site-page about-page${native ? ' about-native' : ' about-fallback'}`} data-primary-input={touch ? 'touch' : 'pointer'}>
-      <SiteHeader copy={copy} />
-      <section className="about-hero" aria-labelledby="about-hero-title">
-        <div className="about-hero-scene" data-native-showcase={native ? 'true' : 'false'} aria-hidden="true">
-          {native ? (
-            <AboutHero copy={copy} />
-          ) : (
-            <div className="about-hero-map">
-              <svg className="about-contours" viewBox="0 0 640 440" preserveAspectRatio="none">
-                <path d="M-20 350C70 285 95 390 180 310S330 250 390 300s105 70 170-5 100-50 150-100" />
-                <path d="M-30 390C80 315 105 425 200 340s130-35 205 20 100 47 160-30 105-35 145-90" />
-                <path d="M-10 260c105-35 105 75 205-5s145-60 220 10 95 45 160-15 100-30 150-70" />
-                <path d="M70 210c80-15 80 45 150-10s125-50 185 5 85 38 140-18 90-20 125-55" />
-                <path d="M190 160c65 15 72 45 125-5s95-48 140-5 73 45 115 0" />
-                <path d="M255 105c40 24 78 34 106 0s68-36 104-5 60 38 91 8" />
-              </svg>
-              <div className="about-hero-sign">
-                <strong>{copy.heroTitle}</strong>
-                <span>{copy.footer}</span>
-              </div>
-            </div>
-          )}
+  const controlsTitle = touch ? copy.touchTitle : copy.pointerTitle;
+  const controls = touch ? copy.touchItems : copy.pointerItems;
+
+  // One page, two places to lie: on the GSI blank map, or (HTML-in-Canvas) on the terrain model made from it.
+  const content = (
+    <>
+      <BrushSelection />
+
+      <div className="site-bar">
+        <SiteHeader copy={copy} current="about" />
+      </div>
+
+      <Hero copy={copy} credit={native ? copy.mapCredit : copy.mapCreditPale} />
+
+      <section className="site-section" id="about-can" aria-labelledby="about-can-title">
+        <h2 id="about-can-title">{copy.aboutCan}</h2>
+        <ol className="site-ledger">
+          {copy.canItems.map((item, index) => (
+            <li key={item}>
+              <span className="site-index">{String(index + 1).padStart(2, '0')}</span>
+              <p>{item}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="site-section" id="about-examples" aria-labelledby="about-examples-title">
+        <h2 id="about-examples-title">{copy.examples}</h2>
+        <ul className="site-notes">
+          {copy.exampleItems.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="site-section" id="about-controls" aria-labelledby="about-controls-title">
+        <h2 id="about-controls-title">{copy.operation}</h2>
+        <div className="site-controls" data-input={touch ? 'touch' : 'pointer'}>
+          <h3>{controlsTitle}</h3>
+          <ul>
+            {controls.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         </div>
-        <div className="about-hero-copy">
-          <p className="site-eyebrow">{copy.footer}</p>
-          <h1 id="about-hero-title">{copy.heroTitle}</h1>
-          <p className="site-lead">{copy.heroLead}</p>
-          <div className="site-actions">
-            <a className="site-button site-button-primary" href="/">
-              {copy.heroButton}
-            </a>
-            <a className="site-button" href="/tutorial">
-              {copy.heroTutorial}
-            </a>
+      </section>
+
+      <section className="site-section site-faq" id="faq" aria-labelledby="about-faq-title">
+        <h2 id="about-faq-title">{copy.faq}</h2>
+        <div className="site-faq-list">
+          <div className="site-faq-item">
+            <h3>{copy.faqQuestion}</h3>
+            <p>{copy.faqAnswer}</p>
+            <p>
+              <a href={FAQ_URL} target="_blank" rel="noreferrer">
+                {copy.faqLinkLabel}
+              </a>
+            </p>
+          </div>
+          <div className="site-faq-item">
+            <h3>{copy.faqViewQuestion}</h3>
+            <p>{copy.faqViewAnswer}</p>
+            <p>
+              <a href={HTML_IN_CANVAS_URL} target="_blank" rel="noreferrer">
+                {copy.faqViewLinkLabel}
+              </a>
+            </p>
           </div>
         </div>
       </section>
 
-      <section className="site-section" aria-labelledby="about-can-title">
-        <p className="site-eyebrow">{copy.footer}</p>
-        <h2 id="about-can-title">{copy.aboutCan}</h2>
-        <ul className="site-grid site-grid-five">
-          {copy.canItems.map((item, index) => (
-            <li key={item} className="site-card">
-              <span className="site-card-index">{String(index + 1).padStart(2, '0')}</span>
-              <p>{item}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <CreatorSection title={copy.creatorTitle} name={copy.creatorName} copy={getCopy(language)} />
 
-      <section className="site-section site-section-muted" aria-labelledby="about-examples-title">
-        <p className="site-eyebrow">{copy.footer}</p>
-        <h2 id="about-examples-title">{copy.examples}</h2>
-        <ul className="site-grid site-grid-four">
-          {copy.exampleItems.map((item) => (
-            <li key={item} className="site-card site-card-soft">
-              <p>{item}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <SiteFooter copy={copy} />
 
-      <section className="site-section" aria-labelledby="about-operation-title">
-        <p className="site-eyebrow">{copy.footer}</p>
-        <h2 id="about-operation-title">{copy.operation}</h2>
-        <div className="site-grid site-grid-two">
-          <article className="site-card site-device-card site-device-card-pointer">
-            <h3>{copy.pointerTitle}</h3>
-            <ul>
-              {copy.pointerItems.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </article>
-          <article className="site-card site-device-card site-device-card-touch">
-            <h3>{copy.touchTitle}</h3>
-            <ul>
-              {copy.touchItems.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </article>
-        </div>
-      </section>
+      <div className="about-dock">
+        <a className="site-button site-button-primary" href="/">
+          {copy.heroButton}
+        </a>
+        <a className="site-button" href="/tutorial">
+          {copy.heroTutorial}
+        </a>
+      </div>
+    </>
+  );
 
-      <section className="site-section site-faq" aria-labelledby="about-faq-title">
-        <p className="site-eyebrow">{copy.footer}</p>
-        <h2 id="about-faq-title">{copy.faq}</h2>
-        <details open>
-          <summary>{copy.faqQuestion}</summary>
-          <p>
-            {copy.faqAnswer}{' '}
-            <a href="https://www.boxhouse120.com/gpx-wallpaper" target="_blank" rel="noreferrer">
-              GPX Wallpaper Whatever
-            </a>
-          </p>
-        </details>
-      </section>
+  const attributes = { 'data-hero': native ? 'native' : 'plain', 'data-primary-input': touch ? 'touch' : 'pointer' };
 
-      <section className="site-cta">
-        <h2>{copy.heroTitle}</h2>
-        <div className="site-actions">
-          <a className="site-button site-button-primary" href="/tutorial">
-            {copy.heroTutorial}
-          </a>
-          <a className="site-button" href="/">
-            {copy.navMap}
-          </a>
-        </div>
-      </section>
+  if (native) {
+    return (
+      <TerrainStage scene={SHOWCASE_SCENE} pageAttributes={attributes} onUnavailable={onUnavailable}>
+        {content}
+      </TerrainStage>
+    );
+  }
+  return <PlainPage attributes={attributes}>{content}</PlainPage>;
+}
 
-      <footer className="site-footer">
-        <span>{copy.footer}</span>
-        <a href="/">{copy.navMap}</a>
-      </footer>
+/** Without HTML-in-Canvas the page lies on the GSI pale map, and the map scrolls away with it. */
+function PlainPage({ attributes, children }: { attributes: Record<string, string>; children: React.ReactNode }) {
+  const pageRef = useRef<HTMLElement | null>(null);
+  const [height, setHeight] = useState(1600);
+  const [mapHeight, setMapHeight] = useState(1600);
+  useEffect(() => {
+    const page = pageRef.current;
+    if (!page) return;
+    // The map is exactly as tall as the page's own content, so it never makes the page scroll past the bottom bar.
+    // (The page's scroll height can't be used: it includes the map itself.) The map's picture is rounded up,
+    // so it is not rebuilt on every small change.
+    const measure = () => {
+      const footer = page.querySelector<HTMLElement>('.site-footer');
+      const dock = page.querySelector<HTMLElement>('.about-dock');
+      const content = footer ? footer.offsetTop + footer.offsetHeight + (dock?.offsetHeight ?? 0) : page.scrollHeight;
+      setHeight(content);
+      setMapHeight(Math.min(6144, Math.ceil(content / 256) * 256));
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(page);
+    for (const child of Array.from(page.children)) observer?.observe(child);
+    return () => observer?.disconnect();
+  }, []);
+  return (
+    <main ref={pageRef} className="site-page about-page" {...attributes}>
+      <div className="about-bg" aria-hidden="true" style={{ height }}>
+        <SceneMap scene={SHOWCASE_SCENE} width={2304} height={mapHeight} layer="pale" focusY={420} />
+      </div>
+      {children}
     </main>
   );
 }
