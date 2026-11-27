@@ -4,6 +4,7 @@ import BrushSelection from './BrushSelection';
 import { supportsHtmlInCanvas } from './htmlInCanvas';
 import { detectLanguage } from './i18n';
 import { SiteFooter, SiteHeader, usePrimaryTouch } from './SiteChrome';
+import { addAction } from './observability';
 import { siteCopy } from './siteCopy';
 
 /** steps whose controls live in the settings panel, which is a bottom sheet on a narrow screen */
@@ -56,6 +57,14 @@ export default function TutorialPage() {
   useEffect(() => {
     sendStep();
   }, [sendStep]);
+  // which step a visitor is on, and whether they got to the end (the first step is just the page opening)
+  const stepsSeen = useRef(new Set<number>([0]));
+  useEffect(() => {
+    if (stepsSeen.current.has(stepIndex)) return;
+    stepsSeen.current.add(stepIndex);
+    addAction('tutorial_step_changed', { step: stepIndex + 1, step_count: steps.length, target: step.target, mode: step.appMode, flow: step.flow === copy.tutorialGpx ? 'gpx' : 'map' });
+    if (stepIndex === steps.length - 1) addAction('tutorial_last_step_reached', { step_count: steps.length });
+  }, [copy.tutorialGpx, step.appMode, step.flow, step.target, stepIndex, steps.length]);
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin || event.source !== frameRef.current?.contentWindow) return;

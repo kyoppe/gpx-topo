@@ -2,6 +2,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { addAction } from './observability';
 import TerrainStage from './TerrainStage';
 import { SHOWCASE_SCENE } from './siteScene';
 
@@ -9,6 +10,8 @@ vi.mock('./dem', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./dem')>()),
   loadSceneElevation: vi.fn(() => Promise.resolve({ nx: 4, ny: 4, values: new Float32Array(25), source: 'gsi-dem' as const })),
 }));
+
+vi.mock('./observability', () => ({ addAction: vi.fn() }));
 
 ((globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true);
 
@@ -132,6 +135,11 @@ describe('the terrain stage on the native path', () => {
     paint();
     expect(count(map)).toBe(2);
     expect(count(page)).toBe(2);
+    // the rise is recorded: when the terrain was ready, and when the model stood up
+    const names = vi.mocked(addAction).mock.calls.map(([name]) => name);
+    expect(names).toContain('about_terrain_ready');
+    expect(names).toContain('about_terrain_raised');
+    expect(names).not.toContain('about_terrain_lowered');
   });
 
   it('takes the page alone after a scroll, and the map alone after a tile arrives', async () => {
@@ -176,11 +184,30 @@ describe('the terrain stage on the native path', () => {
     expect(first.onUnavailable).not.toHaveBeenCalled();
   });
 
+  it('takes a picture again after a later upload fails, once one has been taken', async () => {
+    const { page, map, paint } = await mount();
+    paint();
+    expect(count(page)).toBe(1);
+    const requestPaint = (HTMLCanvasElement.prototype as unknown as { requestPaint: ReturnType<typeof vi.fn> }).requestPaint;
+
+    failures.left = 1;
+    act(() => void page.dispatchEvent(new Event('scroll')));
+    act(() => step());
+    const before = requestPaint.mock.calls.length;
+    paint();
+    // the upload failed: the page is still stale, and another paint was asked for
+    expect(count(page)).toBe(1);
+    expect(requestPaint.mock.calls.length).toBeGreaterThan(before);
+    paint();
+    expect(count(page)).toBe(2);
+    expect(count(map)).toBe(1);
+  });
+
   it('hands over to the ordinary page when no picture can be taken', async () => {
     failures.left = 1000;
     const { paint, onUnavailable } = await mount();
     for (let attempt = 0; attempt < 30; attempt += 1) paint();
-    expect(onUnavailable).toHaveBeenCalled();
+    expect(onUnavailable).toHaveBeenCalledWith('upload_failed');
   });
 
   it('stops listening once it is unmounted', async () => {

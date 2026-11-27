@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { loadSceneElevation, type ElevationGrid } from './dem';
 import type { HtmlInCanvasContext, HtmlInCanvasElement } from './htmlInCanvas';
+import { addAction } from './observability';
 import SceneMap from './SceneMap';
 import { buildTerrainMesh, RIM, TERRAIN_STRIDE, type TerrainMesh } from './sceneTerrain';
 import { createTextureFreshness } from './stageTextures';
@@ -157,7 +158,7 @@ export type TerrainStageProps = {
   /** attributes for the page element (it is the window's whole page, drawn onto the terrain) */
   pageAttributes?: Record<string, string>;
   /** called when the terrain cannot start, so the caller can show an ordinary page instead */
-  onUnavailable: () => void;
+  onUnavailable: (reason: 'setup_failed' | 'elevation_failed' | 'upload_failed') => void;
   children: ReactNode;
 };
 
@@ -284,7 +285,8 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
       let inertia = 0;
       let scrollTarget: number | null = null;
       let dirty = true;
-      let last = performance.now();
+      const startedAt = performance.now();
+      let last = startedAt;
       let disposed = false;
       let pending = false;
       let failures = 0;
@@ -325,11 +327,14 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
           .then((grid) => {
             if (disposed || current.signal.aborted) return;
             upload(buildTerrainMesh(grid, scene, width, half), half, grid);
-            terrainReadyAt ??= performance.now();
+            if (terrainReadyAt === null) {
+              terrainReadyAt = performance.now();
+              addAction('about_terrain_ready', { duration_ms: Math.round(terrainReadyAt - startedAt) });
+            }
             dirty = true;
           })
           .catch(() => {
-            if (!disposed && !current.signal.aborted && terrainReadyAt === null) onUnavailable();
+            if (!disposed && !current.signal.aborted && terrainReadyAt === null) onUnavailable('elevation_failed');
           });
       };
 
@@ -491,9 +496,11 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
           failures = 0;
         } catch {
           failures += 1;
-          // no picture yet: ask again a few times, then hand over to the ordinary page
-          if (!uploaded && failures > 20) onUnavailable();
-          else if (!uploaded) need();
+          // A picture that failed stays marked as stale, so ask for another paint and take it again. With none taken
+          // yet, give up after a few tries and hand over to the ordinary page; after one has been, just stop asking
+          // (the next change asks again).
+          if (!uploaded && failures > 20) onUnavailable('upload_failed');
+          else if (failures <= 20) need();
           return;
         }
         if (!mesh) return;
@@ -535,6 +542,7 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
           if (Math.abs(progress - wanted) < 1e-6) {
             progress = wanted;
             mode = wanted === 1 ? 'raised' : 'flat';
+            addAction(wanted === 1 ? 'about_terrain_raised' : 'about_terrain_lowered');
             markStale();
           }
           // the same curve both ways, slow at each end, so standing up and lying down take the same time
@@ -710,7 +718,7 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
         gl.deleteProgram(program);
       };
     } catch {
-      onUnavailable();
+      onUnavailable('setup_failed');
     }
     return cleanup;
   }, [onUnavailable, scene]);

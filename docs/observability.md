@@ -144,7 +144,7 @@ attributes:
 - `photo_post_opened` when the X post composer opens
 - `photo_closed` when the print returns to the camera key, with `via` set to
   `button` or `escape`; automatic closing during a flyover is not counted
-- `info_link_clicked` for links inside the falling Info flag
+- `info_link_clicked` for links inside the falling Info flag and its fallback dialog, with `destination`: `about`, `tutorial`, `x`, `spotify`, `amazon_wishlist`, `gpx_wallpaper` or `zessoku_help`
 - `highest_point_toggled` and `waypoint_placement_toggled`
 - `info_flag_toggled`
 - `map_pin_placement_started`, `map_pin_placement_cancelled` (with `source` when
@@ -246,6 +246,39 @@ requires a non-throwing upload with no WebGL error or lost context on the first
 successful upload; fallback animation frames and failed uploads do not emit it.
 It confirms an element snapshot was uploaded, not that every element or final
 screen pixel rendered correctly.
+
+## About and tutorial pages
+
+`/about` and `/tutorial` go through the same `startObservability()` as the map, so
+their views, clicks, resources, long tasks and errors carry `render_path` and
+`html_in_canvas_supported`. Views are told apart by URL path (`/about`,
+`/tutorial`).
+
+About, on the native path (the whole page drawn on the terrain model):
+
+- `about_terrain_ready` when the elevations are in and the model can stand up,
+  with `duration_ms` from the stage starting
+- `about_terrain_raised` and `about_terrain_lowered` when the model has finished
+  standing up or lying down; the first push down raises it and scrolling back to
+  the top lowers it, so a raised without a lowered is a visit that ended scrolled
+- `about_terrain_unavailable` when the terrain could not be drawn and the page
+  carried on as an ordinary page, with `reason`: `setup_failed` (no WebGL2 or no
+  element-to-texture upload), `elevation_failed` (the DEM did not load) or
+  `upload_failed` (no picture of the page could be taken after repeated tries).
+  Its share of native views is the failure rate of this path
+
+Tutorial:
+
+- `tutorial_step_changed` each time a new step is reached (a step seen before is
+  not counted again, and the first step is just the page opening), with `step`
+  (1-based), `step_count`, `target`, `mode` (`map` or `gpx`, the mode the step
+  puts the screen in) and `flow` (`map` or `gpx`, which list the step is in)
+- `tutorial_last_step_reached` once the last step has been reached
+- The real app runs in a frame on this page, addressed with a `tutorial` query.
+  Its RUM and Browser Logs events carry the global context `tutorial: true`, so
+  exclude it (`-@context.tutorial:true`) when counting real use of the app
+- The sample route is loaded on demand; a failure is reported as the error
+  operation `load_tutorial_route`
 
 ## Custom RUM duration vitals
 

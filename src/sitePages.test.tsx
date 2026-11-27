@@ -6,7 +6,10 @@ import AboutPage from './AboutPage';
 import { detectLanguage, getCopy } from './i18n';
 import { FlagContent } from './Flag';
 import TutorialPage from './TutorialPage';
+import { addAction } from './observability';
 import { siteCopy } from './siteCopy';
+
+vi.mock('./observability', async (importOriginal) => ({ ...(await importOriginal<typeof import('./observability')>()), addAction: vi.fn() }));
 
 ((globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true);
 
@@ -77,6 +80,11 @@ describe('standalone site pages', () => {
     expect(container.querySelector('iframe')).toBe(frame);
     expect(frame.getAttribute('src')).toBe(firstSrc);
     expect(sent.map((message) => message.step)).toEqual([...Array(total).keys()]);
+    // each step reached is recorded once, with where it is; the last one is marked as the end
+    const recorded = vi.mocked(addAction).mock.calls.filter(([name]) => name === 'tutorial_step_changed');
+    expect(recorded).toHaveLength(total - 1);
+    expect(recorded[0][1]).toMatchObject({ step: 2, step_count: total });
+    expect(vi.mocked(addAction).mock.calls.some(([name]) => name === 'tutorial_last_step_reached')).toBe(true);
     expect(sent[0].mode).toBe('map');
     expect(sent[sent.length - 1].mode).toBe('map');
   });

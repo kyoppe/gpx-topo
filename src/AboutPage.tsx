@@ -4,6 +4,7 @@ import BrushSelection from './BrushSelection';
 import CreatorSection from './CreatorSection';
 import { detectLanguage, getCopy } from './i18n';
 import { supportsHtmlInCanvas } from './htmlInCanvas';
+import { addAction } from './observability';
 import SceneMap from './SceneMap';
 import { SiteFooter, SiteHeader, usePrimaryTouch } from './SiteChrome';
 import TerrainStage from './TerrainStage';
@@ -43,7 +44,11 @@ export default function AboutPage() {
   const touch = usePrimaryTouch();
   const [nativeFailed, setNativeFailed] = useState(false);
   const native = !nativeFailed && supportsHtmlInCanvas();
-  const onUnavailable = useCallback(() => setNativeFailed(true), []);
+  const onUnavailable = useCallback((reason: string) => {
+    // the page carries on as an ordinary one; record why the terrain could not be drawn
+    addAction('about_terrain_unavailable', { reason });
+    setNativeFailed(true);
+  }, []);
 
   useEffect(() => {
     document.documentElement.lang = language;
