@@ -4,6 +4,7 @@ import { loadSceneElevation, type ElevationGrid } from './dem';
 import type { HtmlInCanvasContext, HtmlInCanvasElement } from './htmlInCanvas';
 import SceneMap from './SceneMap';
 import { buildTerrainMesh, RIM, TERRAIN_STRIDE, type TerrainMesh } from './sceneTerrain';
+import { createTextureFreshness } from './stageTextures';
 import type { SiteScene } from './siteScene';
 
 /** The map under the page is cut from this many tile pixels top to bottom, whatever the window's shape. */
@@ -290,12 +291,8 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
       let uploaded = false;
       // The pictures of the map and of the page are only taken again when what they show has changed, not on
       // every frame of the model standing up or lying down (an upload and its mipmaps are the costly part).
-      let mapStale = true;
-      let pageStale = true;
-      const markStale = () => {
-        mapStale = true;
-        pageStale = true;
-      };
+      const fresh = createTextureFreshness();
+      const markStale = fresh.markAll;
       let lastGeometry = '';
       // how high above the base the page is taken to lie, for the browser's hit-testing (follows the pointer)
       let planeHeight: number | null = null;
@@ -473,21 +470,21 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
           const pw = Math.max(1, Math.round(page.offsetWidth * scale));
           const ph = Math.max(1, Math.round(page.offsetHeight * scale));
           gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-          if (mapStale || allocated.get(mapTexture) !== `${mw}x${mh}`) {
+          if (fresh.needsMap(`${mw}x${mh}`)) {
             allocate(mapTexture, mw, mh);
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, mapTexture);
             gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, map, { width: mw, height: mh });
             gl.generateMipmap(gl.TEXTURE_2D);
-            mapStale = false;
+            fresh.mapTaken(`${mw}x${mh}`);
           }
-          if (pageStale || allocated.get(pageTexture) !== `${pw}x${ph}`) {
+          if (fresh.needsPage(`${pw}x${ph}`)) {
             allocate(pageTexture, pw, ph);
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, pageTexture);
             gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, page, { width: pw, height: ph });
             gl.generateMipmap(gl.TEXTURE_2D);
-            pageStale = false;
+            fresh.pageTaken(`${pw}x${ph}`);
           }
           gl.activeTexture(gl.TEXTURE0);
           uploaded = true;
@@ -652,7 +649,7 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
         else if (reducedMotion && mode === 'raised') page.scrollTop = scrollTarget;
       };
       const onScroll = () => {
-        pageStale = true;
+        fresh.markPage();
         dirty = true;
       };
       // anything that changes what the elements look like: tiles arriving, text, selection, hover, focus
@@ -660,13 +657,9 @@ export default function TerrainStage({ scene, pageAttributes, onUnavailable, chi
       const observeOptions = { childList: true, attributes: true, characterData: true, subtree: true };
       mutationObserver.observe(map, observeOptions);
       mutationObserver.observe(page, observeOptions);
-      const onMapLoad = () => {
-        mapStale = true;
-      };
+      const onMapLoad = fresh.markMap;
       map.addEventListener('load', onMapLoad, true);
-      const onPageLook = () => {
-        pageStale = true;
-      };
+      const onPageLook = fresh.markPage;
       for (const name of ['mouseover', 'mouseout', 'focusin', 'focusout']) page.addEventListener(name, onPageLook, true);
 
       canvas.addEventListener('paint', render);
