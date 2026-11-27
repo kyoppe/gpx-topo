@@ -71,6 +71,33 @@ describe('parseMapPermalink', () => {
     expect(result?.ignoredParameters).toContain('current_pin_lat');
   });
 
+  it('clamps current pin latitude to the serializable Web Mercator range', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 90, lon: 139.76 },
+        view: 'flat',
+        bearing: 0,
+        pitch: 0,
+        zoom: 1,
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        currentPin: { lat: 90, lon: 139.76 },
+        sunlight: true,
+        sunAuto: false,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+
+    const params = new URL(url).searchParams;
+    expect(params.get('lat')).toBe('85.051128');
+    expect(params.get('current_pin_lat')).toBe('85.051128');
+    expect(parseMapPermalink(new URL(url).search)?.currentPin).toEqual({ lat: 85.051128, lon: 139.76 });
+  });
+
   it('round-trips the blank map style', () => {
     const url = buildMapPermalink(
       {

@@ -437,6 +437,7 @@ export default function App() {
   const mapBufferRef = useRef<MapBuffer | null>(null);
   const mapDragOffsetRef = useRef<[number, number]>([0, 0]);
   const apartRef = useRef(false);
+  const viewModeRef = useRef<ViewMode>('map');
   const pendingViewModeRef = useRef<ViewMode | null>(null);
   const enterGpxAfterLoadRef = useRef(false);
   const [modeTransition, setModeTransition] = useState<ViewMode | null>(null);
@@ -452,7 +453,9 @@ export default function App() {
   const mapPinPlacedAtRef = useRef<number | null>(null);
   const currentLocationRequestRef = useRef(0);
   const currentLocationRecenterRef = useRef(false);
-  const pendingCurrentLocationRef = useRef<{ requestId: number; location: CurrentLocation } | null>(null);
+  const pendingCurrentLocationRef = useRef<{ requestId: number; location: CurrentLocation } | null>(
+    permalink?.currentPin ? { requestId: 0, location: permalink.currentPin } : null,
+  );
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
@@ -489,6 +492,7 @@ export default function App() {
   const statsCacheRef = useRef<{ points: GpxRoute['points']; stats: ReturnType<typeof calculateStats> } | null>(null);
   routeNameRef.current = route?.name ?? null;
   apartRef.current = apart;
+  viewModeRef.current = viewMode;
 
   // Fallback: a wide, tall window keeps the panel beside the map (the canvas gives it room); a smaller one has a drawer.
   const docked = fb !== null && isDocked(viewport.width, viewport.height);
@@ -1629,20 +1633,34 @@ export default function App() {
 
   useEffect(() => {
     if (viewMode === 'map') setPlacing(false);
+    if (viewMode !== 'map') {
+      currentLocationRequestRef.current += 1;
+      pendingCurrentLocationRef.current = null;
+      currentLocationRecenterRef.current = false;
+      setCurrentLocationBusy(false);
+    }
     if (viewMode !== 'map' || !apart) setMapManeuverMenuOpen(false);
     engineRef.current?.refreshHud();
   }, [apart, viewMode]);
 
   useEffect(() => {
     const pending = pendingCurrentLocationRef.current;
-    if (!pending || viewMode !== 'map' || apart || !mapProjection || !mapReady) return;
+    if (!pending || viewMode !== 'map' || !mapProjection || !mapReady) return;
     const frame = window.requestAnimationFrame(() => {
-      if (pendingCurrentLocationRef.current?.requestId !== pending.requestId) return;
+      if (pendingCurrentLocationRef.current?.requestId !== pending.requestId || viewMode !== 'map') return;
       pendingCurrentLocationRef.current = null;
       setCurrentLocation(pending.location);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [apart, mapProjection, mapReady, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      currentLocationRequestRef.current += 1;
+      pendingCurrentLocationRef.current = null;
+      currentLocationRecenterRef.current = false;
+    };
+  }, []);
 
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !terrain) return null;
@@ -2502,7 +2520,7 @@ export default function App() {
     setCurrentLocationBusy(true);
     try {
       const location = await requestCurrentLocation(typeof navigator === 'undefined' ? undefined : navigator.geolocation);
-      if (requestId !== currentLocationRequestRef.current) return;
+      if (requestId !== currentLocationRequestRef.current || viewModeRef.current !== 'map') return;
       detachPermalink('map_center');
       currentLocationRecenterRef.current = apartRef.current;
       pendingCurrentLocationRef.current = { requestId, location };
@@ -2531,11 +2549,12 @@ export default function App() {
     }
   };
   const toggleCurrentLocation = () => {
-    if (viewMode !== 'map' || !mapReady || currentLocationBusy) return;
+    if (viewMode !== 'map' || currentLocationBusy) return;
     if (currentLocation) {
       clearCurrentLocation();
       return;
     }
+    if (!mapReady) return;
     void showCurrentLocation();
   };
   const commitMapPinLabel = (label: string) => {
@@ -2674,7 +2693,7 @@ export default function App() {
                   <CurrentLocationButton
                     active={Boolean(currentLocation)}
                     busy={currentLocationBusy}
-                    disabled={!mapReady || currentLocationBusy}
+                    disabled={currentLocationBusy || (!currentLocation && !mapReady)}
                     label={copy.ui.currentLocation}
                     clearLabel={copy.ui.currentLocationClear}
                     onClick={toggleCurrentLocation}
