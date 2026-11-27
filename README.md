@@ -56,6 +56,30 @@ npm test
 npm run build
 ```
 
+### Code coverage
+
+The `Code coverage` GitHub Actions workflow runs the Vitest suite with V8
+coverage on pull requests, pushes to `main`, and manual runs. It generates
+`coverage/lcov.info` and uploads the report to Datadog using the repository's
+`DD_API_KEY` Actions secret and the `datadoghq.com` site. Connect this repository
+through Datadog's GitHub integration to associate coverage with source code.
+Uploads are skipped for pull requests from forks because secrets are unavailable.
+
+The workflow installs the optional V8 coverage provider at the same version as
+the installed Vitest, without saving it to the dependency manifest or lockfile.
+To generate the same report locally after installing project dependencies:
+
+```bash
+VITEST_VERSION=$(node -p "require('vitest/package.json').version")
+npm install --no-save --ignore-scripts "@vitest/coverage-v8@${VITEST_VERSION}"
+npm run test:coverage
+```
+
+Coverage includes application and API TypeScript files, including untested files,
+and excludes tests and type declarations. Generated reports are ignored by Git.
+
+Once your CI pipeline runs with these changes, you can view code coverage data for your repositories by navigating to **Software Delivery > Code Coverage** in Datadog.
+
 ## Observability
 
 Datadog Browser RUM and Browser Logs configuration, event naming, environment
