@@ -79,9 +79,14 @@ Clock times are Japan Standard Time.
 - Output directory: `dist`
 - `functions/api/gsi/[[path]].ts` proxies allowed GSI layers with a one-day edge cache.
 
-Pushing to `main` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
-The workflow runs the test suite, uploads the JUnit report to Datadog CI
-Visibility, builds the app, and deploys `dist` to the `gpx-topo` Pages project.
+Pull requests targeting `main` run the test suite, typecheck, and build without
+access to deployment secrets. Pushing to `main` runs the same validation, then
+uploads the JUnit report to Datadog CI Visibility and deploys the validated
+`dist` artifact to the `gpx-topo` Pages project.
+
+The Datadog upload is a deployment gate on `main`: if the upload fails, the
+Cloudflare deployment does not start. The workflow uses pinned action and CLI
+versions, and the deploy job does not rerun the test or build code.
 
 Before the first push to `main`, configure these GitHub Actions secrets:
 
@@ -92,6 +97,10 @@ Before the first push to `main`, configure these GitHub Actions secrets:
 Enable GitHub Actions pipeline collection in the Datadog GitHub integration to
 see workflow, job, and deployment pipeline data in CI Visibility. The workflow
 uses `gpx-topo-web` as the Datadog service and `ci` as the environment.
+
+The workflow does not configure GitHub branch protection. To make validation a
+merge gate, require the `Validate and deploy / validate` check in the
+repository ruleset or branch protection settings for `main`.
 
 For manual recovery, deploy the built directory with Wrangler:
 
