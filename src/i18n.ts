@@ -133,6 +133,7 @@ export type Copy = {
     gpxMode: string;
     copyPermalink: string;
     currentLocation: string;
+    currentLocationClear: string;
     mapPin: string;
     mapPinCancel: string;
     mapPinNameAria: string;
@@ -315,6 +316,7 @@ function makeCopy(language: Language): Copy {
         gpxMode: 'GPX',
         copyPermalink: 'パーマリンクをコピー',
         currentLocation: '現在地を表示',
+        currentLocationClear: '現在地表示を解除',
         mapPin: '地点を示すピン',
         mapPinCancel: 'ピン配置を取消',
         mapPinNameAria: 'ピンの名前',
@@ -495,6 +497,7 @@ function makeCopy(language: Language): Copy {
       gpxMode: 'GPX',
       copyPermalink: 'Copy permalink',
       currentLocation: 'Show current location',
+      currentLocationClear: 'Hide current location',
       mapPin: 'Drop a location pin',
       mapPinCancel: 'Cancel pin placement',
       mapPinNameAria: 'Pin name',

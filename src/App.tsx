@@ -26,6 +26,7 @@ import { fallbackPerformanceFor } from './fallbackPerf';
 import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
 import { shouldSwitchToGpxAfterFileLoad, toggleViewMode, type ViewMode } from './mapMode';
+import { shouldShowCurrentLocationControl } from './currentLocationControl';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
 import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } from './geolocation';
@@ -35,6 +36,7 @@ import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coo
 import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
+import { CurrentLocationButton } from './CurrentLocationButton';
 import { detectLanguage, getCopy, type Copy } from './i18n';
 import {
   legacyFixtureProjectionScale,
@@ -486,6 +488,7 @@ export default function App() {
   const mapBufferRef = useRef<MapBuffer | null>(null);
   const mapDragOffsetRef = useRef<[number, number]>([0, 0]);
   const apartRef = useRef(false);
+  const viewModeRef = useRef<ViewMode>('map');
   const pendingViewModeRef = useRef<ViewMode | null>(null);
   const enterGpxAfterLoadRef = useRef(false);
   const [modeTransition, setModeTransition] = useState<ViewMode | null>(null);
@@ -501,6 +504,9 @@ export default function App() {
   const mapPinPlacedAtRef = useRef<number | null>(null);
   const currentLocationRequestRef = useRef(0);
   const currentLocationRecenterRef = useRef(false);
+  const pendingCurrentLocationRef = useRef<{ requestId: number; location: CurrentLocation } | null>(
+    permalink?.currentPin ? { requestId: 0, location: permalink.currentPin } : null,
+  );
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
@@ -516,6 +522,12 @@ export default function App() {
     },
     [permalink],
   );
+  const cancelCurrentLocationRequest = useCallback((resetBusy = true) => {
+    currentLocationRequestRef.current += 1;
+    pendingCurrentLocationRef.current = null;
+    currentLocationRecenterRef.current = false;
+    if (resetBusy) setCurrentLocationBusy(false);
+  }, []);
   const syncHudHitAreas = useCallback((areas: HudHitArea[]) => {
     const layer = hudHitLayerRef.current;
     if (!layer) return;
@@ -537,6 +549,7 @@ export default function App() {
   const statsCacheRef = useRef<{ points: GpxRoute['points']; stats: ReturnType<typeof calculateStats> } | null>(null);
   routeNameRef.current = route?.name ?? null;
   apartRef.current = apart;
+  viewModeRef.current = viewMode;
 
   // Fallback: a wide, tall window keeps the panel beside the map (the canvas gives it room); a smaller one has a drawer.
   const docked = fb !== null && isDocked(viewport.width, viewport.height);
@@ -646,6 +659,7 @@ export default function App() {
       detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
+      if (viewMode === 'map' && target === 'gpx') cancelCurrentLocationRequest();
       if (target === 'map') {
         if (!gpxProjection) return;
         setMapViewport((current) => current ?? { lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
@@ -670,7 +684,7 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
+    [apart, cancelCurrentLocationRequest, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
@@ -740,6 +754,7 @@ export default function App() {
       context.clearRect(0, 0, target.width, target.height);
       context.drawImage(source, sx, sy, sourceWidth, sourceHeight, 0, 0, target.width, target.height);
     }
+    engineRef.current?.setFlatMapDragOffset(offset[0], offset[1]);
     engineRef.current?.refreshMap();
   }, []);
   const panMapPreview = useCallback(
@@ -1196,6 +1211,7 @@ export default function App() {
       if (viewMode === 'map') {
         mapBufferRef.current = { flat: nextFlat, relief: nextRelief, density, pad };
         mapDragOffsetRef.current = [0, 0];
+        engineRef.current?.setFlatMapDragOffset(0, 0);
       } else {
         mapBufferRef.current = null;
       }
@@ -1225,6 +1241,7 @@ export default function App() {
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
+          cancelCurrentLocationRequest();
           setMapLoading(false);
           reportError('load_basemap', error, { map_style: baseMapStyle });
           setToast(copy.toast.mapTilesFailed);
@@ -1234,7 +1251,7 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [baseMapStyle, flatMapMode, hillshade, projection, viewMode]);
+  }, [baseMapStyle, cancelCurrentLocationRequest, flatMapMode, hillshade, projection, viewMode]);
 
   useEffect(() => {
     if (!projection) return;
@@ -1661,9 +1678,27 @@ export default function App() {
 
   useEffect(() => {
     if (viewMode === 'map') setPlacing(false);
+    if (viewMode !== 'map') cancelCurrentLocationRequest();
     if (viewMode !== 'map' || !apart) setMapManeuverMenuOpen(false);
     engineRef.current?.refreshHud();
-  }, [apart, viewMode]);
+  }, [apart, cancelCurrentLocationRequest, viewMode]);
+
+  useEffect(() => {
+    const pending = pendingCurrentLocationRef.current;
+    if (!pending || viewMode !== 'map' || !mapProjection || !mapReady) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (pendingCurrentLocationRef.current?.requestId !== pending.requestId || viewMode !== 'map') return;
+      pendingCurrentLocationRef.current = null;
+      setCurrentLocation(pending.location);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [apart, mapProjection, mapReady, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      cancelCurrentLocationRequest(false);
+    };
+  }, [cancelCurrentLocationRequest]);
 
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !terrain) return null;
@@ -2433,6 +2468,7 @@ export default function App() {
         mapStyle: baseMapStyle,
         hillshade,
         pin: mapPin,
+        currentPin: currentLocation,
         fpv:
           currentFpv && fpvLocation
             ? {
@@ -2570,16 +2606,25 @@ export default function App() {
     addAction('map_pin_placement_started');
     engineRef.current?.startMapPinPlacement();
   };
+  const clearCurrentLocation = () => {
+    if (!currentLocation) return;
+    detachPermalink('current_location_clear');
+    currentLocationRequestRef.current += 1;
+    pendingCurrentLocationRef.current = null;
+    currentLocationRecenterRef.current = false;
+    setCurrentLocation(null);
+    setCurrentLocationBusy(false);
+  };
   const showCurrentLocation = async () => {
     if (viewMode !== 'map' || !mapReady) return;
     const requestId = ++currentLocationRequestRef.current;
     setCurrentLocationBusy(true);
     try {
       const location = await requestCurrentLocation(typeof navigator === 'undefined' ? undefined : navigator.geolocation);
-      if (requestId !== currentLocationRequestRef.current) return;
+      if (requestId !== currentLocationRequestRef.current || viewModeRef.current !== 'map') return;
       detachPermalink('map_center');
       currentLocationRecenterRef.current = apartRef.current;
-      setCurrentLocation(location);
+      pendingCurrentLocationRef.current = { requestId, location };
       setMapViewport((viewportState) => ({
         lat: location.lat,
         lon: location.lon,
@@ -2603,6 +2648,15 @@ export default function App() {
     } finally {
       if (requestId === currentLocationRequestRef.current) setCurrentLocationBusy(false);
     }
+  };
+  const toggleCurrentLocation = () => {
+    if (viewMode !== 'map' || currentLocationBusy) return;
+    if (currentLocation) {
+      clearCurrentLocation();
+      return;
+    }
+    if (!mapReady) return;
+    void showCurrentLocation();
   };
   const commitMapPinLabel = (label: string) => {
     const normalized = normalizeMapPinLabel(label);
@@ -2738,24 +2792,15 @@ export default function App() {
             <div className="map" data-map="" style={mapStyle}>
               <StageHost host={fb?.mapControls ?? null}>
               <div className="map-actions">
-                {viewMode === 'map' && (!native || !apart) && (
-                  <button
-                    type="button"
-                    className="map-location-button"
-                    data-piece="content"
-                    data-map-control=""
-                    drawable=""
-                    aria-label={copy.ui.currentLocation}
-                    aria-busy={currentLocationBusy}
-                    disabled={!mapReady}
-                    onClick={() => void showCurrentLocation()}
-                  >
-                    <svg className="location-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                      <circle cx="12" cy="12" r="6.8" />
-                      <circle cx="12" cy="12" r="2.2" />
-                      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-                    </svg>
-                  </button>
+                {shouldShowCurrentLocationControl(viewMode, apart) && (
+                  <CurrentLocationButton
+                    active={Boolean(currentLocation)}
+                    busy={currentLocationBusy}
+                    disabled={currentLocationBusy || (!currentLocation && !mapReady)}
+                    label={copy.ui.currentLocation}
+                    clearLabel={copy.ui.currentLocationClear}
+                    onClick={toggleCurrentLocation}
+                  />
                 )}
                 <div
                   className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
@@ -2845,7 +2890,12 @@ export default function App() {
               )}
               {viewMode === 'map' && currentLocation && (
                 <div className="pin current-location" data-piece="pin" data-current-location="" drawable="" role="img" aria-label={copy.ui.currentLocation}>
-                  <span className="current-location-marker" aria-hidden="true" />
+                  <span className="current-location-marker" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d="M12 21s7-6.2 7-12A7 7 0 0 0 5 9c0 5.8 7 12 7 12Z" />
+                      <circle cx="12" cy="9" r="2.4" />
+                    </svg>
+                  </span>
                 </div>
               )}
               {viewMode === 'gpx' && ways.map((way, index) => (

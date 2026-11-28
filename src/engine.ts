@@ -450,6 +450,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let MAPY = 20;
   let MW = 660;
   let MH = 660;
+  let flatMapDragOffset: [number, number] = [0, 0];
 
   let pieces: Piece[] = [];
   const byEl = new Map<Element, Piece>();
@@ -2940,10 +2941,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     return changed;
   }
 
+  function setFlatMapDragOffset(x: number, y: number) {
+    flatMapDragOffset = [x, y];
+    need();
+  }
+
   function setModel(next: EngineModel) {
     const terrainChanged = !model || model.terrain !== next.terrain;
     const mapStyleChanged = !model || model.mapStyle !== next.mapStyle;
     model = next;
+    flatMapDragOffset = [0, 0];
     PW = next.pageWidth;
     PH = next.pageHeight;
     MAPX = next.mapX;
@@ -4033,8 +4040,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         const isMapPin = p.el.hasAttribute('data-map-pin');
         const movingMapPin = isMapPin && mapPinMotion !== null;
         if (p.el.hasAttribute('data-map-pin-moving') !== movingMapPin) p.el.toggleAttribute('data-map-pin-moving', movingMapPin);
-        const ax = MAPX + p.at.x;
-        const ay = MAPY + p.at.y;
+        const previewX = st.e < 0.5 ? flatMapDragOffset[0] : 0;
+        const previewY = st.e < 0.5 ? flatMapDragOffset[1] : 0;
+        const ax = MAPX + p.at.x + previewX;
+        const ay = MAPY + p.at.y + previewY;
         const gz = groundZ(p.at.x, p.at.y, lift);
         if (p === hiker && flight) {
           // flown over, the runner lies on the ground centred on its place, so it runs on the route itself rather
@@ -4254,7 +4263,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     for (const p of standing) {
       if (p.el.hasAttribute('data-map-pin-moving')) continue;
       const hgt = p.anchor[3] - p.anchor[2];
-      if (hgt > 1) {
+      if (!p.el.hasAttribute('data-current-location') && hgt > 1) {
         const sw = 1.1 * shrink;
         opaque.push({
           solid: [0.36, 0.39, 0.45],
@@ -5692,6 +5701,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   return {
     setModel,
+    setFlatMapDragOffset,
     refreshMap,
     refreshDetail,
     refreshPop,
