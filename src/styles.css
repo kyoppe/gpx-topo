@@ -2699,20 +2699,26 @@ main[lang='en'] .bar-hint {
   position: absolute;
   top: max(var(--fb-edge), env(safe-area-inset-top));
   left: max(var(--fb-edge), env(safe-area-inset-left));
+  right: max(var(--fb-edge), env(safe-area-inset-right));
+  container-type: inline-size;
 }
 
 .fb-map-controls .map-credit {
   order: -1;
   align-self: flex-start;
   margin-top: 18px;
-  font-size: 9px;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: clamp(6px, 3cqw, 9px);
   text-align: left;
+  text-overflow: clip;
 }
 
 .fb-map-controls .map-actions {
   position: relative;
   right: auto;
   bottom: auto;
+  width: 100%;
   align-items: flex-start;
 }
 
@@ -2734,6 +2740,10 @@ main[lang='en'] .bar-hint {
     + max(var(--fb-edge), env(safe-area-inset-bottom))
     + max(var(--fb-edge), env(safe-area-inset-bottom))
   );
+}
+
+.fb-ui[data-dock='true'] .fb-map-controls {
+  right: calc(var(--fb-dock-width) + max(var(--fb-edge), env(safe-area-inset-right)));
 }
 
 /* the room a docked panel takes beside the canvas (its width and the margin either side) */
