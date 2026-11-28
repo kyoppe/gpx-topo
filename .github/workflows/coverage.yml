@@ -1,0 +1,49 @@
+name: Code coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Vitest requires the coverage provider to match its version exactly.
+      # Install this optional tool without changing the project's lockfile.
+      - name: Install V8 coverage provider
+        run: |
+          VITEST_VERSION=$(node -p "require('vitest/package.json').version")
+          npm install --no-save --ignore-scripts "@vitest/coverage-v8@${VITEST_VERSION}"
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Verify LCOV report
+        run: test -s coverage/lcov.info
+
+      # Fork pull requests can run tests, but cannot access repository secrets.
+      - name: Upload coverage reports to Datadog
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: DataDog/coverage-upload-github-action@v1
+        with:
+          api_key: ${{ secrets.DD_API_KEY }}
+          site: datadoghq.com

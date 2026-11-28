@@ -35,6 +35,7 @@ export type EngineModel = {
   /** Marks on the map (map px) that are not waypoints, such as the high point. */
   marks: { id: string; x: number; y: number }[];
   mapPin?: { x: number; y: number } | null;
+  currentLocation?: { x: number; y: number } | null;
   date: string;
   lat: number;
   lon: number;
@@ -420,6 +421,11 @@ export type EngineOptions = {
   maxPixelRatio?: number;
   /** Fallback only: the most frames per second while moving (default and ceiling: 60). It still drops to 30 when frames run long. */
   maxFps?: number;
+  /**
+   * A manual turn pivots on the middle of the model as it is drawn now, rather than on the ground point that lies under where
+   * the flat map's centre would be. Used by the tutorial, whose small frame makes the difference plain.
+   */
+  rotateAboutModelCenter?: boolean;
 };
 
 export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, callbacks: EngineCallbacks, options: EngineOptions = {}) {
@@ -449,6 +455,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
   let MAPY = 20;
   let MW = 660;
   let MH = 660;
+  let flatMapDragOffset: [number, number] = [0, 0];
 
   let pieces: Piece[] = [];
   const byEl = new Map<Element, Piece>();
@@ -2730,10 +2737,12 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       const p = get(el, 'pin');
       const spot = el.hasAttribute('data-map-pin')
         ? model?.mapPin
+        : el.hasAttribute('data-current-location')
+          ? model?.currentLocation
         : model?.ways.find((w) => w.id === el.dataset.way) ?? model?.marks.find((m) => m.id === el.dataset.mark);
       p.at = spot ? { x: spot.x, y: spot.y } : { x: 0, y: 0 };
       p.hidden = el.hasAttribute('data-map-pin') && !spot;
-      p.stand = 26;
+      p.stand = el.hasAttribute('data-current-location') ? 16 : 26;
       return p;
     });
     const hikers = of('hiker').map((el) => {
@@ -2926,36 +2935,58 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     }
     return [x, y];
   }
-  function measure() {
-    for (const p of pieces) {
-      if (p.kind === 'bar' || p.kind === 'key') continue;
-      if (p.kind === 'pin') {
-        p.w = p.el.offsetWidth;
-        p.h = p.el.offsetHeight;
-        continue;
-      }
-      const o = offsetIn(p.el);
-      p.x = o[0];
-      p.y = o[1];
+  function measurePiece(p: Piece) {
+    const previousW = p.w;
+    const previousH = p.h;
+    if (p.kind === 'bar' || p.kind === 'key') return false;
+    if (p.kind === 'pin') {
       p.w = p.el.offsetWidth;
       p.h = p.el.offsetHeight;
+      return p.w !== previousW || p.h !== previousH;
     }
+    const o = offsetIn(p.el);
+    p.x = o[0];
+    p.y = o[1];
+    p.w = p.el.offsetWidth;
+    p.h = p.el.offsetHeight;
+    return p.w !== previousW || p.h !== previousH;
+  }
+
+  function measure() {
+    for (const p of pieces) measurePiece(p);
+  }
+
+  function measurePins() {
+    let changed = false;
+    for (const p of pieces) {
+      if (p.kind === 'pin' && measurePiece(p)) changed = true;
+    }
+    return changed;
   }
 
   function syncPinEngineStem() {
+    let changed = false;
     for (const p of pins) {
       const hasStem = p.el.hasAttribute('data-pin-engine-stem');
       if (hasStem !== pinEngineStem) {
         p.el.toggleAttribute('data-pin-engine-stem', pinEngineStem);
         p.stale = true;
+        changed = true;
       }
     }
+    return changed;
+  }
+
+  function setFlatMapDragOffset(x: number, y: number) {
+    flatMapDragOffset = [x, y];
+    need();
   }
 
   function setModel(next: EngineModel) {
     const terrainChanged = !model || model.terrain !== next.terrain;
     const mapStyleChanged = !model || model.mapStyle !== next.mapStyle;
     model = next;
+    flatMapDragOffset = [0, 0];
     PW = next.pageWidth;
     PH = next.pageHeight;
     MAPX = next.mapX;
@@ -4045,8 +4076,10 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         const isMapPin = p.el.hasAttribute('data-map-pin');
         const movingMapPin = isMapPin && mapPinMotion !== null;
         if (p.el.hasAttribute('data-map-pin-moving') !== movingMapPin) p.el.toggleAttribute('data-map-pin-moving', movingMapPin);
-        const ax = MAPX + p.at.x;
-        const ay = MAPY + p.at.y;
+        const previewX = st.e < 0.5 ? flatMapDragOffset[0] : 0;
+        const previewY = st.e < 0.5 ? flatMapDragOffset[1] : 0;
+        const ax = MAPX + p.at.x + previewX;
+        const ay = MAPY + p.at.y + previewY;
         const gz = groundZ(p.at.x, p.at.y, lift);
         if (p === hiker && flight) {
           // flown over, the runner lies on the ground centred on its place, so it runs on the route itself rather
@@ -4266,7 +4299,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     for (const p of standing) {
       if (p.el.hasAttribute('data-map-pin-moving')) continue;
       const hgt = p.anchor[3] - p.anchor[2];
-      if (hgt > 1) {
+      if (!p.el.hasAttribute('data-current-location') && hgt > 1) {
         const sw = 1.1 * shrink;
         opaque.push({
           solid: [0.36, 0.39, 0.45],
@@ -4443,6 +4476,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     syncPinEngineStem();
     measure();
     for (const p of pieces) p.stale = true;
+    need();
+  }
+  /** Fallback: remeasure only pin labels after delayed text or layout resources settle. */
+  function refreshFallbackLayout() {
+    if (!fallback) return;
+    collect();
+    const stemChanged = syncPinEngineStem();
+    const sizeChanged = measurePins();
+    if (!stemChanged && !sizeChanged) return;
+    for (const p of pieces) if (p.kind === 'pin') p.stale = true;
     need();
   }
   /** Move the side cards out of the way before replacing their HTML, then bring the new set back. */
@@ -4869,7 +4912,16 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       if (P) panFrom = { cam, P, pan: [...st.pan] };
       else drag = 'turn';
     }
-    const pivot = drag === 'turn' ? rotationPivot(liftOf(st.e)) : null;
+    const pivot = drag === 'turn' && options.rotateAboutModelCenter
+      ? (() => {
+          const point: Vec3 = [MAPX + MW / 2, MAPY + MH / 2, liftOf(st.e)];
+          const c = mulBy(cam.vp, [point[0], point[1], point[2], 1]);
+          if (!(c[3] > 0)) return null;
+          return { point, sx: (c[0] / c[3] * 0.5 + 0.5) * vw, sy: (-c[1] / c[3] * 0.5 + 0.5) * vh };
+        })()
+      : drag === 'turn'
+      ? rotationPivot(liftOf(st.e))
+      : null;
     const start = { pointerId: ev.pointerId, startedAt: performance.now() };
     cameraDrag = drag === 'pan'
       ? { ...start, kind: 'pan', change: { delta_x_px: 0, delta_y_px: 0, delta_z_px: 0, distance_px: 0 } }
@@ -5681,6 +5733,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
 
   return {
     setModel,
+    setFlatMapDragOffset,
     refreshMap,
     refreshDetail,
     refreshPop,
@@ -5715,6 +5768,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
     capture,
     captureFrame,
     refreshHud,
+    refreshFallbackLayout,
     refreshUi,
     transitionPanels,
     dispose,

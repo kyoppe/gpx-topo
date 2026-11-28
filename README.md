@@ -14,7 +14,7 @@
 
 Open the app in desktop Chrome 157+ or Edge 157+. Other browsers get a short notice, because HTML-in-Canvas is not available in Safari, iOS browsers, or Firefox.
 
-The bundled `SFMT2026-110km.gpx` fixture loads first, on the flat map. `GPX を開く` loads a local file.
+The app opens on the map, centered on Mt. Fuji. `GPX を開く` loads a local file.
 
 | Action | Result |
 | --- | --- |
@@ -56,6 +56,30 @@ npm test
 npm run build
 ```
 
+### Code coverage
+
+The `Code coverage` GitHub Actions workflow runs the Vitest suite with V8
+coverage on pull requests, pushes to `main`, and manual runs. It generates
+`coverage/lcov.info` and uploads the report to Datadog using the repository's
+`DD_API_KEY` Actions secret and the `datadoghq.com` site. Connect this repository
+through Datadog's GitHub integration to associate coverage with source code.
+Uploads are skipped for pull requests from forks because secrets are unavailable.
+
+The workflow installs the optional V8 coverage provider at the same version as
+the installed Vitest, without saving it to the dependency manifest or lockfile.
+To generate the same report locally after installing project dependencies:
+
+```bash
+VITEST_VERSION=$(node -p "require('vitest/package.json').version")
+npm install --no-save --ignore-scripts "@vitest/coverage-v8@${VITEST_VERSION}"
+npm run test:coverage
+```
+
+Coverage includes application and API TypeScript files, including untested files,
+and excludes tests and type declarations. Generated reports are ignored by Git.
+
+Once your CI pipeline runs with these changes, you can view code coverage data for your repositories by navigating to **Software Delivery > Code Coverage** in Datadog.
+
 ## Observability
 
 Datadog Browser RUM and Browser Logs configuration, event naming, environment
@@ -79,15 +103,39 @@ Clock times are Japan Standard Time.
 - Output directory: `dist`
 - `functions/api/gsi/[[path]].ts` proxies allowed GSI layers with a one-day edge cache.
 
-The `gpx-topo` Pages project is not connected to a Git provider. A push to
-GitHub does not deploy it automatically. Deploy the built directory with
-Wrangler:
+Pull requests targeting `main` run the test suite, typecheck, and build without
+access to deployment secrets. Pushing to `main` runs the same validation, then
+uploads the JUnit report to Datadog CI Visibility and deploys the validated
+`dist` artifact to the `gpx-topo` Pages project.
+The typecheck includes the Pages Functions under `functions/` with
+Cloudflare Workers runtime types.
+
+The Datadog upload is a deployment gate on `main`: if the upload fails, the
+Cloudflare deployment does not start. The workflow uses pinned action and CLI
+versions, and the deploy job does not rerun the test or build code.
+
+Before the first push to `main`, configure these GitHub Actions secrets:
+
+- `CLOUDFLARE_API_TOKEN`: an API token that can deploy to Cloudflare Pages
+- `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account containing the Pages project
+- `DD_API_KEY`: a Datadog API key that can submit CI Visibility test results
+
+Enable GitHub Actions pipeline collection in the Datadog GitHub integration to
+see workflow, job, and deployment pipeline data in CI Visibility. The workflow
+uses `gpx-topo-web` as the Datadog service and `ci` as the environment.
+
+The workflow does not configure GitHub branch protection. To make validation a
+merge gate, require the `Validate and deploy / validate` check in the
+repository ruleset or branch protection settings for `main`.
+
+For manual recovery, deploy the built directory with Wrangler:
 
 ```bash
 npx wrangler login
 npx wrangler whoami
 export CF_PAGES_COMMIT_SHA="$(git rev-parse --short=7 HEAD)"
 npm ci
+npm test
 npm run build
 npx wrangler pages deploy dist \
   --project-name gpx-topo \

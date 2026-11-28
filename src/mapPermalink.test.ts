@@ -36,6 +36,7 @@ describe('stripMapPermalinkParameters', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: { lat: 35.36, lon: 138.72, label: 'Summit' },
+        currentPin: null,
         fpv: { lat: 35.36, lon: 138.72, bearing: 10, pitch: 5, zoom: 1.5 },
         area: { width: 292, height: 456, scale: 2691.35 },
         sunlight: true,
@@ -64,6 +65,39 @@ describe('parseMapPermalink', () => {
     });
   });
 
+  it('requires both current pin coordinates', () => {
+    const result = parseMapPermalink('?mode=map&current_pin_lat=35.681236');
+    expect(result?.currentPin).toBeNull();
+    expect(result?.ignoredParameters).toContain('current_pin_lat');
+  });
+
+  it('clamps current pin latitude to the serializable Web Mercator range', () => {
+    const url = buildMapPermalink(
+      {
+        center: { lat: 90, lon: 139.76 },
+        view: 'flat',
+        bearing: 0,
+        pitch: 0,
+        zoom: 1,
+        date: null,
+        mapStyle: 'pale',
+        hillshade: true,
+        pin: null,
+        currentPin: { lat: 90, lon: 139.76 },
+        sunlight: true,
+        sunAuto: false,
+        sunSpeed: 'normal',
+        timeMinutes: 630,
+      },
+      'https://example.test/',
+    );
+
+    const params = new URL(url).searchParams;
+    expect(params.get('lat')).toBe('85.051128');
+    expect(params.get('current_pin_lat')).toBe('85.051128');
+    expect(parseMapPermalink(new URL(url).search)?.currentPin).toEqual({ lat: 85.051128, lon: 139.76 });
+  });
+
   it('round-trips the blank map style', () => {
     const url = buildMapPermalink(
       {
@@ -76,6 +110,7 @@ describe('parseMapPermalink', () => {
         mapStyle: 'blank',
         hillshade: true,
         pin: null,
+        currentPin: null,
         sunlight: true,
         sunAuto: false,
         sunSpeed: 'normal',
@@ -91,7 +126,7 @@ describe('parseMapPermalink', () => {
   it('parses 3D camera parameters and normalizes bearing', () => {
     expect(
       parseMapPermalink(
-        '?mode=map&view=3d&bearing=-30&pitch=42&zoom=1.8&pan_x=12.345&pan_y=-6.7&pan_z=0.25&date=2026-11-24&style=photoNames&hillshade=off&pin_lat=35.68&pin_lon=139.76&pin_label=Summit&sun=auto&sun_speed=fast',
+        '?mode=map&view=3d&bearing=-30&pitch=42&zoom=1.8&pan_x=12.345&pan_y=-6.7&pan_z=0.25&date=2026-11-24&style=photoNames&hillshade=off&pin_lat=35.68&pin_lon=139.76&pin_label=Summit&current_pin_lat=35.7&current_pin_lon=139.8&sun=auto&sun_speed=fast',
       ),
     ).toMatchObject({
       view: '3d',
@@ -103,6 +138,7 @@ describe('parseMapPermalink', () => {
       mapStyle: 'photoNames',
       hillshade: false,
       pin: { lat: 35.68, lon: 139.76, label: 'Summit' },
+      currentPin: { lat: 35.7, lon: 139.8 },
       sun: 'auto',
       sunSpeed: 'fast',
       timeMinutes: null,
@@ -171,6 +207,7 @@ describe('parseMapPermalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: { lat: 35.68, lon: 139.76, label: 'Summit' },
+        currentPin: { lat: 35.7, lon: 139.8 },
         sunlight: true,
         sunAuto: false,
         sunSpeed: 'normal',
@@ -180,7 +217,7 @@ describe('parseMapPermalink', () => {
     );
 
     expect(url).toBe(
-      'https://example.test/?mode=map&lat=35.681236&lon=139.767125&style=pale&hillshade=on&date=2026-11-24&view=3d&pin_lat=35.680000&pin_lon=139.760000&pin_label=Summit&bearing=35.12&pitch=42.57&zoom=1.800&pan_x=12.346&pan_y=-6.700&pan_z=0.250&time=18%3A30',
+      'https://example.test/?mode=map&lat=35.681236&lon=139.767125&style=pale&hillshade=on&date=2026-11-24&view=3d&pin_lat=35.680000&pin_lon=139.760000&pin_label=Summit&current_pin_lat=35.700000&current_pin_lon=139.800000&bearing=35.12&pitch=42.57&zoom=1.800&pan_x=12.346&pan_y=-6.700&pan_z=0.250&time=18%3A30',
     );
   });
 
@@ -196,6 +233,7 @@ describe('parseMapPermalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: null,
+        currentPin: null,
         sunlight: true,
         sunAuto: false,
         sunSpeed: 'normal',
@@ -219,6 +257,7 @@ describe('parseMapPermalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: null,
+        currentPin: null,
         fpv: { lat: 35.68, lon: 139.76, bearing: 330.1234, pitch: 12.5678, zoom: 1.8 },
         sunlight: true,
         sunAuto: false,
@@ -258,6 +297,7 @@ describe('parseMapPermalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: null,
+        currentPin: null,
         sunlight: true,
         sunAuto: true,
         sunSpeed: 'fast',
@@ -278,6 +318,7 @@ describe('parseMapPermalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: null,
+        currentPin: null,
         sunlight: true,
         sunAuto: true,
         sunSpeed: 'normal',
@@ -325,6 +366,7 @@ describe('the display area of a permalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: null,
+        currentPin: null,
         area: { width: 1000.4, height: 639.6, scale: 52428.80000001 },
         sunlight: true,
         sunAuto: false,
@@ -353,6 +395,7 @@ describe('the display area of a permalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: null,
+        currentPin: null,
         sunlight: true,
         sunAuto: false,
         sunSpeed: 'normal',
@@ -376,6 +419,7 @@ describe('the display area of a permalink', () => {
         mapStyle: 'pale',
         hillshade: true,
         pin: null,
+        currentPin: null,
         sunlight: true,
         sunAuto: false,
         sunSpeed: 'normal',

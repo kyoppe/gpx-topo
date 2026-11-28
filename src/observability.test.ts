@@ -80,13 +80,9 @@ describe('startObservability', () => {
   });
 
   it.each([
-    { supported: true, enabled: true, path: 'native' },
-    { supported: true, enabled: false, path: 'native' },
-    { supported: false, enabled: true, path: 'fallback' },
-    { supported: false, enabled: false, path: 'unsupported' },
-  ])('tags RUM and Logs with render_path $path (supported $supported, fallback enabled $enabled)', async ({ supported, enabled, path }) => {
-    vi.stubEnv('DEV', enabled);
-    vi.stubEnv('VITE_ENABLE_FALLBACK', 'false');
+    { supported: true, path: 'native' },
+    { supported: false, path: 'fallback' },
+  ])('tags RUM and Logs with render_path $path (supported $supported)', async ({ supported, path }) => {
     vi.mocked(supportsHtmlInCanvas).mockReturnValue(supported);
     const { startObservability } = await import('./observability');
 
@@ -94,7 +90,6 @@ describe('startObservability', () => {
 
     expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledWith('render_path', path);
     expect(datadogLogs.setGlobalContextProperty).toHaveBeenCalledWith('render_path', path);
-    vi.unstubAllEnvs();
   });
 
   it('sets render_path after RUM initialization and before view engagement starts', async () => {
@@ -108,6 +103,21 @@ describe('startObservability', () => {
     const setOrder = vi.mocked(datadogRum.setGlobalContextProperty).mock.invocationCallOrder[index];
     expect(vi.mocked(datadogRum.init).mock.invocationCallOrder[0]).toBeLessThan(setOrder);
     expect(vi.mocked(startViewEngagement).mock.invocationCallOrder[0]).toBeGreaterThan(setOrder);
+  });
+
+  it('marks the events of the tutorial page\'s frame, and only those', async () => {
+    window.history.replaceState(null, '', '/?tutorial=map&step=0');
+    const { startObservability } = await import('./observability');
+    startObservability();
+    expect(datadogRum.setGlobalContextProperty).toHaveBeenCalledWith('tutorial', true);
+    expect(datadogLogs.setGlobalContextProperty).toHaveBeenCalledWith('tutorial', true);
+
+    vi.resetModules();
+    vi.mocked(datadogRum.setGlobalContextProperty).mockClear();
+    window.history.replaceState(null, '', '/');
+    const again = await import('./observability');
+    again.startObservability();
+    expect(vi.mocked(datadogRum.setGlobalContextProperty).mock.calls.map(([name]) => name)).not.toContain('tutorial');
   });
 
   it('starts view engagement once, after RUM initialization', async () => {

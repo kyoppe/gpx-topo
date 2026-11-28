@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom';
 
 import { renderBasemaps, streamNames, streamRelief, type MapStyle } from './basemap';
-import { cropElevationGrid, gpxElevationGrid, loadDemGrid, type ElevationGrid } from './dem';
+import { cropElevationGrid, gpxElevationGrid, loadDemGrid, tutorialElevationGrid, type ElevationGrid } from './dem';
 import {
   createEngine,
   FRAME_X,
@@ -25,22 +25,37 @@ import { DOCK_WIDTH, compactHudSize, fallbackLayoutFor, isCompactBar, isDocked }
 import { fallbackPerformanceFor } from './fallbackPerf';
 import { canShareFile, isTouchDevice, mediaActions, plainMimeType, saveFailureMessage, shareFile, type MediaActions } from './mediaShare';
 import { fallbackEnabled, resolveRenderPath } from './renderPath';
-import { toggleViewMode, type ViewMode } from './mapMode';
+import { shouldSwitchToGpxAfterFileLoad, toggleViewMode, type ViewMode } from './mapMode';
+import { shouldShowCurrentLocationControl } from './currentLocationControl';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } from './geolocation';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
 import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
+import { CurrentLocationButton } from './CurrentLocationButton';
 import { detectLanguage, getCopy, type Copy } from './i18n';
+import {
+  legacyFixtureProjectionScale,
+  resolveInitialMapViewport,
+  shouldWaitForInitialMapViewport,
+  type GpxRestoreState,
+} from './initialMapViewport';
 import { addAction, reportError, reportInfo, reportWarning, startVital } from './observability';
 import { loadGpx, loadPlan, loadStart, loadView, saveGpx, savePlan, saveStart, saveView, startNow, type MapViewport } from './session';
 import { buildTerrain } from './terrain';
 import { MAX_VIDEO_RECORDING_MS, VIDEO_RECORDING_FRAME_RATE, supportedVideoMimeType, videoFileName } from './video';
 
-const DEFAULT_GPX_URL = '/fixtures/SFMT2026-110km.gpx';
+/** Where the map opens when there is no permalink, saved view, or restored GPX: Mt. Fuji, the whole cone in frame. */
+const DEFAULT_MAP_VIEWPORT: MapViewport = { lat: 35.3606, lon: 138.7274, scale: 5000 };
+/** The tutorial's GPX steps use a real route, the SFMT 110 km, loaded only when the tutorial needs it. */
+async function loadTutorialRoute() {
+  const { default: text } = await import('./tutorialRoute.gpx?raw');
+  return ensureWaypoints(parseGpx(text));
+}
 const PANEL_WIDTH = 400;
 const PAD = 20;
 const MIN_PAGE_WIDTH = 1080;
@@ -88,7 +103,7 @@ function flatElevationGrid(nx: number, ny: number): ElevationGrid {
   return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'gsi-dem' };
 }
 
-function parseGpxWithVital(xml: string, source: 'file' | 'restore' | 'fixture'): GpxRoute {
+function parseGpxWithVital(xml: string, source: 'file' | 'restore'): GpxRoute {
   const stop = startVital('gpx_parse', { source });
   try {
     const parsed = parseGpx(xml);
@@ -146,8 +161,7 @@ type Pop =
   | { seq: number; kind: 'date'; anchor: string }
   | { seq: number; kind: 'time'; anchor: string; target: string; minutes: number; baseMinutes: number; label: string };
 
-type GpxSource = 'fixture' | 'user';
-type GpxRestoreState = 'pending' | 'none' | 'ready';
+type GpxSource = 'user';
 type PendingGpxFile = { file: File; xml: string; route: GpxRoute };
 
 type LatestMedia = 'photo' | 'video';
@@ -189,6 +203,33 @@ function downloadBlob(blob: Blob, filename: string) {
 
 /** Fallback: a photo or a video made here, with the file the share sheet takes. */
 type FallbackMedia = { kind: 'photo' | 'video'; url: string; blob: Blob; file: File; actions: MediaActions };
+
+export async function shareFallbackMedia(
+  media: Pick<FallbackMedia, 'file' | 'actions'>,
+  shareText: string,
+  currentPermalink: () => string | null,
+  dependencies: {
+    share: typeof shareFile;
+    onShared: () => void;
+    save: () => void;
+    warn: (error: unknown) => void;
+  },
+) {
+  if (media.actions !== 'save') {
+    try {
+      const permalink = currentPermalink();
+      const text = permalink ? shareTextWithPermalink(shareText, permalink) : shareText;
+      const result = await dependencies.share(media.file, text);
+      if (result === 'shared') dependencies.onShared();
+      if (result !== 'unsupported') return;
+    } catch (error) {
+      dependencies.warn(error);
+      // with a Save key of its own beside it, a sheet that is busy or refused is left alone
+      if (media.actions === 'split') return;
+    }
+  }
+  dependencies.save();
+}
 
 /** A waypoint's km: typing a new one moves it along the route once Enter is pressed or the field is left; Esc puts it back. */
 function KmField({ km, label, onCommit }: { km: number; label: string; onCommit: (km: number) => void }) {
@@ -288,7 +329,7 @@ function Fallback({ copy }: { copy: Copy }) {
   return (
     <main lang={copy.language} className="unsupported">
       <div className="unsupported-card">
-        <p className="unsupported-mark">gpx-topo</p>
+        <p className="unsupported-mark">{copy.appName}</p>
         <h1>{copy.fallbackTitle}</h1>
         <p>{copy.fallbackBody}</p>
       </div>
@@ -299,6 +340,18 @@ function Fallback({ copy }: { copy: Copy }) {
 export default function App() {
   const [renderPath] = useState(() => resolveRenderPath(supportsHtmlInCanvas(), fallbackEnabled()));
   const native = renderPath === 'native';
+  const tutorialParams = new URLSearchParams(window.location.search);
+  const tutorialMode = tutorialParams.get('tutorial');
+  const tutorialGpx = tutorialMode === 'gpx';
+  // The tutorial page keeps one frame open and moves it from step to step with messages, so the screen
+  // changes in place instead of reloading. The query only says where the first step starts.
+  const [tutorial, setTutorial] = useState(() => ({
+    mode: tutorialGpx ? ('gpx' as ViewMode) : ('map' as ViewMode),
+    step: Math.max(0, Number(tutorialParams.get('step') ?? 0) || 0),
+    target: tutorialParams.get('target') ?? '',
+  }));
+  const tutorialStep = tutorial.step;
+  const tutorialTarget = tutorial.target;
   // The fallback renders the page into an ordinary element beside the canvas; null on the native path.
   // It exists from the first render, so every ref in the page is set in the same commit as on the native path.
   const [fallbackHost] = useState<HTMLDivElement | null>(() => (renderPath === 'fallback' ? document.createElement('div') : null));
@@ -332,11 +385,11 @@ export default function App() {
     document.title = copy.appName;
   }, [copy.appName, language]);
   const [permalink] = useState(() => parseMapPermalink(window.location.search));
-  const [savedView] = useState(() => loadView());
+  const [savedView] = useState(() => (tutorialMode ? null : loadView()));
   const [route, setRoute] = useState<GpxRoute | null>(null);
-  const [fileName, setFileName] = useState('SFMT2026-110km.gpx');
+  const [fileName, setFileName] = useState('');
   const [gpxSource, setGpxSource] = useState<GpxSource | null>(null);
-  const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>('pending');
+  const [gpxRestoreState, setGpxRestoreState] = useState<GpxRestoreState>(() => (tutorialMode ? 'ready' : 'pending'));
   const [gpxDirty, setGpxDirty] = useState(false);
   const [pendingGpxFile, setPendingGpxFile] = useState<PendingGpxFile | null>(null);
   // the start set last time carries over; a GPX opened afresh starts now (see onFile)
@@ -356,8 +409,9 @@ export default function App() {
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => (permalink ? 'map' : 'map'));
+  const [viewMode, setViewMode] = useState<ViewMode>('map');
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
+    if (tutorialMode === 'map') return DEFAULT_MAP_VIEWPORT;
     // a permalink with its display area sets the scale itself (below), from the frame this window has
     if (permalink?.center && savedView?.mapViewport && !permalink.area) return { ...savedView.mapViewport, ...permalink.center };
     if (permalink?.center) return null;
@@ -369,6 +423,8 @@ export default function App() {
   const [mapSearchBusy, setMapSearchBusy] = useState(false);
   const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [mapPin, setMapPin] = useState<MapPermalinkPin | null>(() => permalink?.pin ?? null);
+  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(null);
+  const [currentLocationBusy, setCurrentLocationBusy] = useState(false);
   const [mapPinRemoving, setMapPinRemoving] = useState(false);
   const [mapPinSelecting, setMapPinSelecting] = useState(false);
   const [fpvSelecting, setFpvSelecting] = useState(false);
@@ -432,7 +488,9 @@ export default function App() {
   const mapBufferRef = useRef<MapBuffer | null>(null);
   const mapDragOffsetRef = useRef<[number, number]>([0, 0]);
   const apartRef = useRef(false);
+  const viewModeRef = useRef<ViewMode>('map');
   const pendingViewModeRef = useRef<ViewMode | null>(null);
+  const enterGpxAfterLoadRef = useRef(false);
   const [modeTransition, setModeTransition] = useState<ViewMode | null>(null);
   const modeTransitionTimerRef = useRef<number | null>(null);
   const modeTransitionSeqRef = useRef(0);
@@ -444,6 +502,11 @@ export default function App() {
   const permalinkAppliedRef = useRef(false);
   const permalinkDetachedRef = useRef(false);
   const mapPinPlacedAtRef = useRef<number | null>(null);
+  const currentLocationRequestRef = useRef(0);
+  const currentLocationRecenterRef = useRef(false);
+  const pendingCurrentLocationRef = useRef<{ requestId: number; location: CurrentLocation } | null>(
+    permalink?.currentPin ? { requestId: 0, location: permalink.currentPin } : null,
+  );
   const mapSearchRequestRef = useRef(0);
   const autoSunDispatchRef = useRef(false);
   const touchedRef = useRef(false);
@@ -459,6 +522,12 @@ export default function App() {
     },
     [permalink],
   );
+  const cancelCurrentLocationRequest = useCallback((resetBusy = true) => {
+    currentLocationRequestRef.current += 1;
+    pendingCurrentLocationRef.current = null;
+    currentLocationRecenterRef.current = false;
+    if (resetBusy) setCurrentLocationBusy(false);
+  }, []);
   const syncHudHitAreas = useCallback((areas: HudHitArea[]) => {
     const layer = hudHitLayerRef.current;
     if (!layer) return;
@@ -480,6 +549,7 @@ export default function App() {
   const statsCacheRef = useRef<{ points: GpxRoute['points']; stats: ReturnType<typeof calculateStats> } | null>(null);
   routeNameRef.current = route?.name ?? null;
   apartRef.current = apart;
+  viewModeRef.current = viewMode;
 
   // Fallback: a wide, tall window keeps the panel beside the map (the canvas gives it room); a smaller one has a drawer.
   const docked = fb !== null && isDocked(viewport.width, viewport.height);
@@ -508,6 +578,10 @@ export default function App() {
   const gpxProjection = useMemo(
     () => (points ? createMapProjection({ points }, layout.mapWidth, layout.mapHeight) : null),
     [points, layout.mapWidth, layout.mapHeight],
+  );
+  const legacyPermalinkScale = useMemo(
+    () => legacyFixtureProjectionScale(layout.mapWidth, layout.mapHeight),
+    [layout.mapHeight, layout.mapWidth],
   );
   const mapProjection = useMemo(
     () =>
@@ -585,6 +659,7 @@ export default function App() {
       detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
+      if (viewMode === 'map' && target === 'gpx') cancelCurrentLocationRequest();
       if (target === 'map') {
         if (!gpxProjection) return;
         setMapViewport((current) => current ?? { lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
@@ -609,7 +684,7 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
+    [apart, cancelCurrentLocationRequest, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
@@ -656,6 +731,8 @@ export default function App() {
     }
     if (gpxRestoreState === 'pending') return;
     if (gpxSource === 'user' && route) requestViewMode('gpx');
+    // the tutorial has no file picker: the button brings up its sample route instead
+    else if (tutorialMode) setTutorial((current) => ({ ...current, mode: 'gpx' }));
     else openGpxPicker();
   };
 
@@ -677,6 +754,7 @@ export default function App() {
       context.clearRect(0, 0, target.width, target.height);
       context.drawImage(source, sx, sy, sourceWidth, sourceHeight, 0, 0, target.width, target.height);
     }
+    engineRef.current?.setFlatMapDragOffset(offset[0], offset[1]);
     engineRef.current?.refreshMap();
   }, []);
   const panMapPreview = useCallback(
@@ -917,61 +995,30 @@ export default function App() {
   // ---------------------------------------------------------------- data
   /** the GPX and its plan are in, so changes to them are its own to keep */
   const planReadyRef = useRef(false);
-  // Restore only a user-opened GPX. The bundled sample is a background preview and is never used as the
-  // persisted-user-GPX signal.
+  // Restore a user-opened GPX from the previous session, if one was saved. With no saved GPX the app
+  // simply opens on the map; no sample route is loaded.
   useEffect(() => {
+    if (tutorialMode) {
+      planReadyRef.current = true;
+      return;
+    }
     let cancelled = false;
     const initialRequest = fileRequestRef.current;
     const isCurrent = () => !cancelled && fileRequestRef.current === initialRequest && !touchedRef.current;
-    const fixture = () =>
-      fetch(DEFAULT_GPX_URL)
-        .then((response) => {
-          if (!response.ok) throw new Error(`GPX request failed: ${response.status}`);
-          return response.text();
-        })
-        .then((xml) => {
-          if (!isCurrent()) return;
-          const name = DEFAULT_GPX_URL.split('/').pop() ?? 'route.gpx';
-          const next = ensureWaypoints(parseGpxWithVital(xml, 'fixture'));
-          if (!isCurrent()) return;
-          setRoute(next);
-          setFileName(name);
-          setGpxSource('fixture');
-          setGpxRestoreState('none');
-          setGpxDirty(false);
-          planReadyRef.current = true;
-          const routeStats = statsFor(next.points);
-          reportInfo('gpx-topo GPX loaded', {
-            event_type: 'gpx_loaded',
-            source: 'fixture',
-            file_name: name,
-            gpx_content: xml,
-            waypoint_count: next.waypoints.length,
-            route_distance_km: routeStats.distanceKm,
-          });
-          addAction('gpx_loaded', { source: 'fixture', file_name: name, waypoint_count: next.waypoints.length });
-        })
-        .catch((error) => {
-          if (isCurrent()) {
-            setGpxRestoreState('none');
-            reportError('load_default_gpx', error, { file_name: DEFAULT_GPX_URL });
-            setToast(copy.toast.defaultGpxFailed);
-          }
-        });
     void (async () => {
       try {
         const saved = await loadGpx();
         if (!isCurrent()) return;
         if (!saved) {
           setGpxRestoreState('none');
-          return fixture();
+          return;
         }
         let parsed: GpxRoute;
         try {
           parsed = ensureWaypoints(parseGpxWithVital(saved.xml, 'restore'));
         } catch {
           setGpxRestoreState('none');
-          return fixture();
+          return;
         }
         const savedPlan = await loadPlan<Waypoint>(saved.name);
         if (!isCurrent()) return;
@@ -997,27 +1044,44 @@ export default function App() {
         if (isCurrent()) {
           setGpxRestoreState('none');
           reportWarning('load_saved_gpx_session', error);
-          void fixture();
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tutorialMode]);
+
+  useEffect(() => {
+    if (!enterGpxAfterLoadRef.current) return;
+    if (viewMode !== 'map') {
+      enterGpxAfterLoadRef.current = false;
+      return;
+    }
+    if (gpxSource !== 'user' || !route || !gpxProjection || !engineRef.current) return;
+    enterGpxAfterLoadRef.current = false;
+    requestViewMode('gpx');
+  }, [gpxProjection, gpxSource, requestViewMode, route, viewMode]);
 
   useEffect(() => {
     if (viewRestoredRef.current) return;
     if (viewMode === 'map' && !mapViewport) {
-      if (!gpxProjection) return;
-      // opened in a window of another size: keep the area the permalink showed in view, at the scale that fits it here
+      // opened in a window of another size: keep the area the permalink showed in view, at the scale that fits it here;
+      // with no permalink and no restored GPX, the map opens on the default view (Mt. Fuji)
       const fitted = permalink?.center && permalink.area ? fromPermalinkView(permalinkFrame, permalink.area, permalink.pan) : null;
       if (fitted) permalinkFitRef.current = { pan: fitted.pan };
-      setMapViewport({
-        lat: permalink?.center?.lat ?? gpxProjection.centerLat,
-        lon: permalink?.center?.lon ?? gpxProjection.centerLon,
-        scale: fitted ? fitted.scale : permalink?.center ? gpxProjection.scale : savedView?.mapViewport?.scale ?? gpxProjection.scale,
-      });
+      // a session GPX still restoring outranks the default view: wait for it, as the map did before
+      if (shouldWaitForInitialMapViewport(permalink?.center ?? null, gpxProjection, gpxRestoreState)) return;
+      setMapViewport(
+        resolveInitialMapViewport({
+          permalinkCenter: permalink?.center ?? null,
+          fittedScale: fitted?.scale ?? null,
+          savedMapViewport: savedView?.mapViewport ?? null,
+          gpxProjection,
+          legacyPermalinkScale: permalink?.center && !permalink.area ? legacyPermalinkScale : null,
+          defaultViewport: DEFAULT_MAP_VIEWPORT,
+        }),
+      );
       return;
     }
     viewRestoredRef.current = true;
@@ -1027,7 +1091,7 @@ export default function App() {
       map_viewport: !!mapViewport,
       map_style: savedView?.baseMapStyle ?? 'pale',
     });
-  }, [gpxProjection, mapViewport, permalink, permalinkFrame, savedView, viewMode]);
+  }, [gpxProjection, gpxRestoreState, legacyPermalinkScale, mapViewport, permalink, permalinkFrame, savedView, viewMode]);
 
   useEffect(() => {
     if (!viewRestoredRef.current) return;
@@ -1147,6 +1211,7 @@ export default function App() {
       if (viewMode === 'map') {
         mapBufferRef.current = { flat: nextFlat, relief: nextRelief, density, pad };
         mapDragOffsetRef.current = [0, 0];
+        engineRef.current?.setFlatMapDragOffset(0, 0);
       } else {
         mapBufferRef.current = null;
       }
@@ -1176,6 +1241,7 @@ export default function App() {
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
+          cancelCurrentLocationRequest();
           setMapLoading(false);
           reportError('load_basemap', error, { map_style: baseMapStyle });
           setToast(copy.toast.mapTilesFailed);
@@ -1185,7 +1251,7 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [baseMapStyle, flatMapMode, hillshade, projection, viewMode]);
+  }, [baseMapStyle, cancelCurrentLocationRequest, flatMapMode, hillshade, projection, viewMode]);
 
   useEffect(() => {
     if (!projection) return;
@@ -1239,7 +1305,7 @@ export default function App() {
             grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
           });
         } else if (!demGrid) {
-          setDemGrid({ projection: sourceProjection, grid: flatElevationGrid(cx, cy) });
+          setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
         }
         return;
       }
@@ -1473,7 +1539,10 @@ export default function App() {
           }
         },
         onPopClosed: (seq) => setPop((current) => (current && String(current.seq) === seq ? null : current)),
-      }, native ? undefined : { renderPath: 'fallback', uiRoot: fb?.root ?? null, ...fallbackPerformanceFor(window) });
+      }, {
+        ...(native ? {} : { renderPath: 'fallback' as const, uiRoot: fb?.root ?? null, ...fallbackPerformanceFor(window) }),
+        ...(tutorialMode ? { rotateAboutModelCenter: true } : {}),
+      });
     } catch (error) {
       stopEngineStart('error');
       fallbackPaint?.dispose();
@@ -1508,15 +1577,17 @@ export default function App() {
     return () => window.removeEventListener('keydown', onEscape, true);
   }, [mapPinSelecting]);
 
+  // Both render paths need a second measurement after text and layout resources settle.
   useEffect(() => {
-    if (!native) return;
     let cancelled = false;
     let firstFrame = 0;
     let secondFrame = 0;
     let lateRefresh = 0;
     let finalRefresh = 0;
     const refreshHud = () => {
-      if (!cancelled) engineRef.current?.refreshHud();
+      if (cancelled) return;
+      if (native) engineRef.current?.refreshHud();
+      else engineRef.current?.refreshFallbackLayout();
     };
     firstFrame = requestAnimationFrame(() => {
       refreshHud();
@@ -1607,9 +1678,27 @@ export default function App() {
 
   useEffect(() => {
     if (viewMode === 'map') setPlacing(false);
+    if (viewMode !== 'map') cancelCurrentLocationRequest();
     if (viewMode !== 'map' || !apart) setMapManeuverMenuOpen(false);
     engineRef.current?.refreshHud();
-  }, [apart, viewMode]);
+  }, [apart, cancelCurrentLocationRequest, viewMode]);
+
+  useEffect(() => {
+    const pending = pendingCurrentLocationRef.current;
+    if (!pending || viewMode !== 'map' || !mapProjection || !mapReady) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (pendingCurrentLocationRef.current?.requestId !== pending.requestId || viewMode !== 'map') return;
+      pendingCurrentLocationRef.current = null;
+      setCurrentLocation(pending.location);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [apart, mapProjection, mapReady, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      cancelCurrentLocationRequest(false);
+    };
+  }, [cancelCurrentLocationRequest]);
 
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !terrain) return null;
@@ -1622,6 +1711,7 @@ export default function App() {
       ways: gpx ? ways.map((w) => ({ id: w.id, x: w.x, y: w.y, km: w.km, minutes: w.minutes })) : [],
       marks: gpx && showHigh && high ? [{ id: 'high', x: high.x, y: high.y }] : [],
       mapPin: viewMode === 'map' && mapProjection && mapPin ? mapProjection.project(mapPin) : null,
+      currentLocation: viewMode === 'map' && mapProjection && currentLocation ? mapProjection.project(currentLocation) : null,
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
@@ -1631,11 +1721,87 @@ export default function App() {
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [baseMapStyle, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [baseMapStyle, currentLocation, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
   }, [model]);
+
+  useLayoutEffect(() => {
+    if (!tutorialMode || !model || !engineRef.current) return;
+    // raised only on the steps that look at terrain, and only once the screen is in that step's mode
+    const raised =
+      !modeTransition &&
+      ((['terrain', 'sun', 'maneuver'].includes(tutorialTarget) && viewMode === 'map') ||
+        (['route', 'waypoints', 'progress', 'flyover'].includes(tutorialTarget) && viewMode === 'gpx'));
+    // laying it down is the same as the Lay flat key: the turn, the zoom and the move go with it, so it settles exactly in the frame
+    if (raised) engineRef.current.setViewState({ raised });
+    else engineRef.current.together();
+  }, [model, modeTransition, tutorialMode, tutorialTarget, viewMode]);
+
+  // The tutorial page asks for the next step by message; follow it without reloading.
+  useEffect(() => {
+    if (!tutorialMode) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== window.parent) return;
+      const data = event.data as { type?: string; step?: number; target?: string; mode?: string } | null;
+      if (data?.type !== 'gpx-topo-tutorial' || typeof data.step !== 'number') return;
+      setTutorial({ mode: data.mode === 'gpx' ? 'gpx' : 'map', step: Math.max(0, data.step), target: String(data.target ?? '') });
+    };
+    window.addEventListener('message', onMessage);
+    window.parent.postMessage({ type: 'gpx-topo-tutorial-ready' }, window.location.origin);
+    return () => window.removeEventListener('message', onMessage);
+  }, [tutorialMode]);
+
+  // tell the tutorial page whether the settings panel is a bottom sheet with a handle right now
+  const sheetShown = fb !== null && !docked;
+  useEffect(() => {
+    if (!tutorialMode) return;
+    window.parent.postMessage({ type: 'gpx-topo-tutorial-sheet', sheet: sheetShown }, window.location.origin);
+  }, [sheetShown, tutorialMode]);
+
+  const tutorialRouteLoadingRef = useRef(false);
+  const tutorialFollowedRef = useRef('');
+  // Bring the screen to the step's mode: load the sample route for GPX steps, go back to the map for the others.
+  // This only follows a step change. Once the screen has got there, a visitor pressing the GPX button on the
+  // "open a GPX" steps is left in the mode they chose instead of being pulled back.
+  useEffect(() => {
+    if (!tutorialMode) return;
+    const followKey = `${tutorial.step}:${tutorial.mode}`;
+    if (tutorialFollowedRef.current === followKey) return;
+    if (viewMode === tutorial.mode && !modeTransition && (tutorial.mode === 'map' || route)) {
+      tutorialFollowedRef.current = followKey;
+      return;
+    }
+    if (tutorial.mode === 'gpx') {
+      if (!route) {
+        if (tutorialRouteLoadingRef.current) return;
+        tutorialRouteLoadingRef.current = true;
+        loadTutorialRoute()
+          .then((loaded) => {
+            setRoute(loaded);
+            setFileName('sfmt-110km.gpx');
+            setGpxSource('user');
+            setGpxRestoreState('ready');
+          })
+          .catch((error) => {
+            tutorialRouteLoadingRef.current = false;
+            reportError('load_tutorial_route', error);
+          });
+        return;
+      }
+      if (viewMode !== 'gpx') requestViewMode('gpx');
+    } else if (viewMode !== 'map') {
+      requestViewMode('map');
+    }
+  }, [modeTransition, requestViewMode, route, tutorial.mode, tutorial.step, tutorialMode, viewMode]);
+
+  useLayoutEffect(() => {
+    const location = model?.currentLocation;
+    if (!apart || !currentLocationRecenterRef.current || !location) return;
+    currentLocationRecenterRef.current = false;
+    engineRef.current?.centerViewOnMapPoint(location.x, location.y);
+  }, [apart, model]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -1901,6 +2067,7 @@ export default function App() {
 
   // ---------------------------------------------------------------- actions
   const applyGpxFile = (candidate: PendingGpxFile) => {
+    if (shouldSwitchToGpxAfterFileLoad(viewMode)) enterGpxAfterLoadRef.current = true;
     touchedRef.current = true;
     engineRef.current?.together();
     setPendingGpxFile(null);
@@ -2049,18 +2216,12 @@ export default function App() {
   const shareFbMedia = async () => {
     const media = fbMedia;
     if (!media) return;
-    if (media.actions !== 'save') {
-      try {
-        const result = await shareFile(media.file, copy.shareText);
-        if (result === 'shared') addAction('media_shared', { route_name: route?.name || 'gpx-topo', kind: media.kind });
-        if (result !== 'unsupported') return;
-      } catch (error) {
-        reportWarning('share_media', error);
-        // with a Save key of its own beside it, a sheet that is busy or refused is left alone
-        if (media.actions === 'split') return;
-      }
-    }
-    saveFbMedia();
+    await shareFallbackMedia(media, copy.shareText, () => buildCurrentMapPermalink()?.url ?? null, {
+      share: shareFile,
+      onShared: () => addAction('media_shared', { route_name: route?.name || 'gpx-topo', kind: media.kind }),
+      save: saveFbMedia,
+      warn: (error) => reportWarning('share_media', error),
+    });
   };
 
   const exportPng = async () => {
@@ -2307,6 +2468,7 @@ export default function App() {
         mapStyle: baseMapStyle,
         hillshade,
         pin: mapPin,
+        currentPin: currentLocation,
         fpv:
           currentFpv && fpvLocation
             ? {
@@ -2444,6 +2606,58 @@ export default function App() {
     addAction('map_pin_placement_started');
     engineRef.current?.startMapPinPlacement();
   };
+  const clearCurrentLocation = () => {
+    if (!currentLocation) return;
+    detachPermalink('current_location_clear');
+    currentLocationRequestRef.current += 1;
+    pendingCurrentLocationRef.current = null;
+    currentLocationRecenterRef.current = false;
+    setCurrentLocation(null);
+    setCurrentLocationBusy(false);
+  };
+  const showCurrentLocation = async () => {
+    if (viewMode !== 'map' || !mapReady) return;
+    const requestId = ++currentLocationRequestRef.current;
+    setCurrentLocationBusy(true);
+    try {
+      const location = await requestCurrentLocation(typeof navigator === 'undefined' ? undefined : navigator.geolocation);
+      if (requestId !== currentLocationRequestRef.current || viewModeRef.current !== 'map') return;
+      detachPermalink('map_center');
+      currentLocationRecenterRef.current = apartRef.current;
+      pendingCurrentLocationRef.current = { requestId, location };
+      setMapViewport((viewportState) => ({
+        lat: location.lat,
+        lon: location.lon,
+        scale: viewportState?.scale ?? gpxProjection?.scale ?? 1,
+      }));
+    } catch (error) {
+      if (requestId !== currentLocationRequestRef.current) return;
+      const kind = error instanceof CurrentLocationError ? error.kind : 'unknown';
+      const message =
+        kind === 'unsupported'
+          ? copy.toast.currentLocationUnsupported
+          : kind === 'permission-denied'
+            ? copy.toast.currentLocationPermissionDenied
+            : kind === 'timeout'
+              ? copy.toast.currentLocationTimeout
+              : kind === 'unavailable'
+                ? copy.toast.currentLocationUnavailable
+                : copy.toast.currentLocationFailed;
+      reportWarning('get_current_location', error, { reason: kind });
+      setToast(message);
+    } finally {
+      if (requestId === currentLocationRequestRef.current) setCurrentLocationBusy(false);
+    }
+  };
+  const toggleCurrentLocation = () => {
+    if (viewMode !== 'map' || currentLocationBusy) return;
+    if (currentLocation) {
+      clearCurrentLocation();
+      return;
+    }
+    if (!mapReady) return;
+    void showCurrentLocation();
+  };
   const commitMapPinLabel = (label: string) => {
     const normalized = normalizeMapPinLabel(label);
     if (!mapPin || mapPin.label === normalized) return;
@@ -2521,6 +2735,8 @@ export default function App() {
     <main
       lang={language}
       className={`app${photoRouteOverlay ? ' photo-route-overlay' : ''}${mapManeuverActive ? ' map-maneuver-active' : ''}${mapPinSelecting ? ' map-pin-selecting' : ''}${fpvSelecting ? ' fpv-selecting' : ''}${fpvActive ? ' fpv-active' : ''}${fb ? ' fallback-ui' : ''}${docked ? ' fb-docked' : ''}`}
+      // the "raise" prompt is dropped once the map is up; it comes back if the map is laid flat again
+      data-tutorial-target={(tutorialTarget === 'raise' && apart ? '' : tutorialTarget) || undefined}
     >
       <canvas ref={canvasRef} className="stage-canvas" tabIndex={-1}>
         <StageHost host={fallbackHost}>
@@ -2538,7 +2754,7 @@ export default function App() {
                     <path className="route-line" d={routeD} />
                   </svg>
                 )}
-                {!terrain && <span className="terrain-status">{route ? copy.ui.loadingTerrain : copy.ui.loadingGpx}</span>}
+                {!terrain && <span className="terrain-status">{viewMode === 'gpx' ? copy.ui.loadingGpx : copy.ui.loadingTerrain}</span>}
               </div>
             ))}
             <canvas ref={photoRef} aria-hidden="true" style={{ display: 'none' }} />
@@ -2575,60 +2791,72 @@ export default function App() {
 
             <div className="map" data-map="" style={mapStyle}>
               <StageHost host={fb?.mapControls ?? null}>
-              <div
-                className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
-                data-piece="content"
-                data-map-control=""
-                drawable=""
-                role="group"
-                aria-label={copy.ui.mapType}
-              >
-                <button
-                  type="button"
-                  className="map-switch-toggle"
-                  aria-expanded={mapSwitchOpen}
-                  onClick={() => setMapSwitchOpen((open) => !open)}
+              <div className="map-actions">
+                {shouldShowCurrentLocationControl(viewMode, apart) && (
+                  <CurrentLocationButton
+                    active={Boolean(currentLocation)}
+                    busy={currentLocationBusy}
+                    disabled={currentLocationBusy || (!currentLocation && !mapReady)}
+                    label={copy.ui.currentLocation}
+                    clearLabel={copy.ui.currentLocationClear}
+                    onClick={toggleCurrentLocation}
+                  />
+                )}
+                <div
+                  className={`map-switch${mapSwitchOpen ? ' is-open' : ''}`}
+                  data-piece="content"
+                  data-map-control=""
+                  drawable=""
+                  role="group"
+                  aria-label={copy.ui.mapType}
                 >
-                  <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
+                  <button
+                    type="button"
+                    className="map-switch-toggle"
+                    aria-expanded={mapSwitchOpen}
+                    onClick={() => setMapSwitchOpen((open) => !open)}
+                  >
+                    <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
                   {mapLoading && (
                     <span className="map-switch-loading" role="status" aria-live="polite">
                       <i className="map-spinner" aria-hidden="true" />
                       {copy.ui.mapLoading}
                     </span>
                   )}
-                  <b className="map-switch-chevron" aria-hidden="true">
-                    {mapSwitchOpen ? '⌃' : '⌄'}
-                  </b>
-                </button>
-                {mapSwitchOpen && (
-                  <>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
-                      {copy.ui.standardMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
-                      {copy.ui.paleMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
-                      {copy.ui.blankMap}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
-                      {copy.ui.aerial}
-                    </button>
-                    <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
-                      {copy.ui.photoNames}
-                    </button>
-                    <span className="map-switch-divider" aria-hidden="true" />
-                    <button
-                      type="button"
-                      className="map-switch-option"
-                      aria-pressed={hillshade}
-                      disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
-                      onClick={toggleHillshade}
-                    >
-                      {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
-                    </button>
-                  </>
-                )}
+                    <b className="map-switch-chevron" aria-hidden="true">
+                      {mapSwitchOpen ? '⌃' : '⌄'}
+                    </b>
+                  </button>
+                  {mapSwitchOpen && (
+                    <>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
+                        {copy.ui.standardMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
+                        {copy.ui.paleMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
+                        {copy.ui.blankMap}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
+                        {copy.ui.aerial}
+                      </button>
+                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
+                        {copy.ui.photoNames}
+                      </button>
+                      <span className="map-switch-divider" aria-hidden="true" />
+                      <button
+                        type="button"
+                        className="map-switch-option"
+                        aria-pressed={hillshade}
+                        disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
+                        onClick={toggleHillshade}
+                      >
+                        {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               </StageHost>
               {viewMode === 'map' && mapPin && (
@@ -2657,6 +2885,16 @@ export default function App() {
                         }}
                       />
                     )}
+                  </span>
+                </div>
+              )}
+              {viewMode === 'map' && currentLocation && (
+                <div className="pin current-location" data-piece="pin" data-current-location="" drawable="" role="img" aria-label={copy.ui.currentLocation}>
+                  <span className="current-location-marker" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <path d="M12 21s7-6.2 7-12A7 7 0 0 0 5 9c0 5.8 7 12 7 12Z" />
+                      <circle cx="12" cy="9" r="2.4" />
+                    </svg>
                   </span>
                 </div>
               )}
@@ -3365,9 +3603,9 @@ export default function App() {
                   <circle className="map-icon-pin-hole" cx="19" cy="4.5" r="1.1" />
                 </svg>
               ) : fb ? (
-                <KeyFace icon="route" label={gpxActionLabel} />
+                <KeyFace icon="route" label={copy.ui.gpxMode} />
               ) : (
-                gpxActionLabel
+                copy.ui.gpxMode
               )}
             </button>
             {viewMode === 'map' && (
@@ -3430,6 +3668,7 @@ export default function App() {
             )}
             {viewMode === 'gpx' && (
               <>
+            {!tutorialMode && (
             <button
               type="button"
               className="key key-open"
@@ -3440,6 +3679,7 @@ export default function App() {
             >
               {fb ? <KeyFace icon="open" label={copy.ui.openGpx} /> : copy.ui.openGpx}
             </button>
+            )}
             <button
               type="button"
               className="key key-place"
@@ -3788,12 +4028,14 @@ export default function App() {
             )}
             {viewMode === 'gpx' && (
               <>
-                <button
-                  type="button"
-                  data-hud-hit="open"
-                  tabIndex={-1}
-                  onClick={openGpxPicker}
-                />
+                {!tutorialMode && (
+                  <button
+                    type="button"
+                    data-hud-hit="open"
+                    tabIndex={-1}
+                    onClick={openGpxPicker}
+                  />
+                )}
                 <button
                   type="button"
                   data-hud-hit="place"

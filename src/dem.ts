@@ -1,4 +1,5 @@
-import type { MapProjection } from './geo';
+import { createCenteredProjection, type MapProjection } from './geo';
+import type { SiteScene } from './siteScene';
 import { decodePng } from './png';
 
 const TILE = 256;
@@ -198,4 +199,39 @@ export function cropElevationGrid(
     }
   }
   return { nx, ny, values, source: source.source };
+}
+
+/**
+ * A fixed set of rolling hills for the tutorial frame, used only when the GSI elevation tiles cannot be
+ * loaded, so the lesson never shows an empty terrain. It is deterministic: the same lattice gives the same hills.
+ */
+export function tutorialElevationGrid(nx: number, ny: number): ElevationGrid {
+  const values = new Float32Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j += 1) {
+    for (let i = 0; i <= nx; i += 1) {
+      const u = i / Math.max(1, nx);
+      const v = j / Math.max(1, ny);
+      const ridge = Math.exp(-(((u - 0.55) / 0.22) ** 2 + ((v - 0.45) / 0.3) ** 2)) * 900;
+      const knoll = Math.exp(-(((u - 0.25) / 0.14) ** 2 + ((v - 0.7) / 0.16) ** 2)) * 420;
+      const swell = (Math.sin(u * 9) * Math.cos(v * 7) + 1) * 30;
+      values[j * (nx + 1) + i] = 1200 + ridge + knoll + swell;
+    }
+  }
+  return { nx, ny, values, source: 'gsi-dem' };
+}
+
+/**
+ * The elevations under a standalone-page scene: the same box the blank-map sheet covers (one sheet pixel per
+ * map pixel at the scene's zoom), sampled on an (nx + 1) x (ny + 1) lattice.
+ */
+export function loadSceneElevation(
+  scene: SiteScene,
+  width: number,
+  height: number,
+  nx: number,
+  ny: number,
+  signal?: AbortSignal,
+): Promise<ElevationGrid> {
+  const projection = createCenteredProjection(scene.lat, scene.lon, width, height, 2 ** scene.zoom);
+  return loadDemGrid(projection, nx, ny, signal);
 }

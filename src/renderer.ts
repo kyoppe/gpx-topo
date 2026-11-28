@@ -530,6 +530,9 @@ export function createRenderer(canvas: HtmlInCanvasElement, textureSource: Eleme
     powerPreference: 'high-performance',
   }) as HtmlInCanvasContext | null;
   if (!context) throw new Error('WebGL2 is unavailable.');
+  // an opaque canvas is black until something is drawn: give it the stage's colour at once, while the map loads
+  context.clearColor(0.79, 0.8, 0.81, 1);
+  context.clear(context.COLOR_BUFFER_BIT);
   const gl: HtmlInCanvasContext = context;
 
   const shader = (type: number, source: string) => {
