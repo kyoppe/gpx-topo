@@ -111,6 +111,7 @@ export type Copy = {
     estimated: string;
     gsiCredit: string;
     osmCredit: string;
+    usgsCredit: string;
     mapCoverageUnsupported: string;
     mapSearchUnsupported: string;
     previousMonth: string;
@@ -297,7 +298,8 @@ function makeCopy(language: Language): Copy {
         deleteWaypointAria: (name) => `${name} を削除`,
         estimated: '推定',
         gsiCredit: '地理院タイル (淡色地図・白地図・陰影起伏図・標高タイル) 国土地理院',
-        osmCredit: '地図: © OpenStreetMap contributors。標高: USGS 3DEP。',
+        osmCredit: '地図: © OpenStreetMap contributors',
+        usgsCredit: '標高: USGS 3DEP',
         mapCoverageUnsupported: 'この地域の地図と地形には未対応です。',
         mapSearchUnsupported: 'この地域の地図と地形には未対応です。対応地域へ移動してください。',
         previousMonth: '前の月',
@@ -482,7 +484,8 @@ function makeCopy(language: Language): Copy {
       deleteWaypointAria: (name) => `Delete ${name}`,
       estimated: 'estimated',
       gsiCredit: 'GSI tiles (Pale map, blank map, hillshade, elevation) Geospatial Information Authority of Japan',
-      osmCredit: 'Map: © OpenStreetMap contributors. Elevation: USGS 3DEP.',
+      osmCredit: 'Map: © OpenStreetMap contributors',
+      usgsCredit: 'Elevation: USGS 3DEP',
       mapCoverageUnsupported: 'This region is not supported for maps and terrain.',
       mapSearchUnsupported: 'This region is not supported for maps and terrain. Move to a supported area.',
       previousMonth: 'Previous month',

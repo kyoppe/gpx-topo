@@ -29,6 +29,7 @@ import { shouldSwitchToGpxAfterFileLoad, toggleViewMode, type ViewMode } from '.
 import { shouldShowCurrentLocationControl } from './currentLocationControl';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { MapCredit } from './MapCredit';
 import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } from './geolocation';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
@@ -2625,8 +2626,6 @@ export default function App() {
           : effectiveMapStyle === 'photo'
             ? copy.ui.aerial
             : copy.ui.photoNames;
-  const mapCredit =
-    coverageRegion === 'united-states' ? copy.ui.osmCredit : coverageRegion === 'japan' ? copy.ui.gsiCredit : null;
   const gpxActionLabel =
     gpxRestoreState === 'pending' ? copy.ui.loadingGpx : gpxSource === 'user' ? copy.ui.gpxMode : copy.ui.openGpx;
   const startMapManeuver = (kind: MapManeuverKind) => {
@@ -2881,6 +2880,7 @@ export default function App() {
                 </div>
               )}
               <StageHost host={fb?.mapControls ?? null}>
+              <MapCredit region={coverageRegion} copy={copy} />
               <div className="map-actions">
                 {shouldShowCurrentLocationControl(viewMode, apart) && (
                   <CurrentLocationButton
@@ -3360,7 +3360,6 @@ export default function App() {
                       </li>
                     ))}
                   </ol>
-                  {mapCredit && <p className="credit" data-selectable="">{mapCredit}</p>}
                 </div>
                 </section>
               )}

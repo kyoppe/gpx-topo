@@ -1312,10 +1312,30 @@ main[lang='en'] .in-ways > .row small {
   outline: none;
 }
 
-.credit {
-  margin: 6px 0 0;
+.map-credit {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  z-index: 2;
+  max-width: calc(100% - 28px);
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 82%);
   color: var(--ink3);
-  font-size: 10px;
+  font: 10px/1.3 var(--sans);
+  text-align: right;
+  pointer-events: auto;
+}
+
+.map-credit a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgb(138 148 163 / 72%);
+  text-underline-offset: 2px;
+}
+
+.map-credit a:hover {
+  color: var(--ink);
 }
 
 /* ---------------------------------------------------------------- pickers */
@@ -2681,6 +2701,14 @@ main[lang='en'] .bar-hint {
   left: max(var(--fb-edge), env(safe-area-inset-left));
 }
 
+.fb-map-controls .map-credit {
+  position: fixed;
+  top: max(var(--fb-edge), env(safe-area-inset-top));
+  right: max(var(--fb-edge), env(safe-area-inset-right));
+  bottom: auto;
+  left: auto;
+}
+
 .fb-map-controls .map-actions {
   position: relative;
   right: auto;
@@ -2705,6 +2733,11 @@ main[lang='en'] .bar-hint {
     + max(var(--fb-edge), env(safe-area-inset-bottom))
     + max(var(--fb-edge), env(safe-area-inset-bottom))
   );
+}
+
+.fb-ui[data-dock='true'] .fb-map-controls .map-credit {
+  right: calc(var(--fb-dock-width) + max(var(--fb-edge), env(safe-area-inset-right)));
+  top: max(var(--fb-edge), env(safe-area-inset-top));
 }
 
 /* the room a docked panel takes beside the canvas (its width and the margin either side) */
