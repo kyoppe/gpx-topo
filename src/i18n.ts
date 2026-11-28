@@ -127,8 +127,6 @@ export type Copy = {
     controls: string;
     loadingTerrain: string;
     loadingGpx: string;
-    dragHint: string;
-    scrollHint: string;
     mapMode: string;
     gpxMode: string;
     copyPermalink: string;
@@ -310,8 +308,6 @@ function makeCopy(language: Language): Copy {
         controls: '操作',
         loadingTerrain: '地形を読み込み中',
         loadingGpx: 'GPX を読み込み中',
-        dragHint: 'ドラッグで回転 · 右ドラッグで移動',
-        scrollHint: 'ホイールで立体・ズーム · Esc で平面',
         mapMode: 'Map',
         gpxMode: 'GPX',
         copyPermalink: 'パーマリンクをコピー',
@@ -491,8 +487,6 @@ function makeCopy(language: Language): Copy {
       controls: 'Controls',
       loadingTerrain: 'Loading terrain',
       loadingGpx: 'Loading GPX',
-      dragHint: 'Drag to rotate · Right-drag to move',
-      scrollHint: 'Scroll to raise and zoom · Esc to lay flat',
       mapMode: 'Map',
       gpxMode: 'GPX',
       copyPermalink: 'Copy permalink',

@@ -1821,6 +1821,14 @@ main[lang='en'] .pop-foot small {
 
 .well[data-well='flip'] {
   width: 130px;
+  position: absolute;
+  top: calc(50% - 24px);
+  left: calc(50% - 65px);
+}
+
+.well-flip-slot {
+  width: 130px;
+  visibility: hidden;
 }
 
 .well[data-well='fly'] {
@@ -1847,19 +1855,6 @@ main[lang='en'] .pop-foot small {
 .well[data-well='map-cancel'],
 .well[data-well='fpv'] {
   width: 48px;
-}
-
-.bar-hint {
-  padding: 0 6px 0 10px;
-  color: var(--ink2);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
-main[lang='en'] .bar-hint {
-  width: 240px;
-  white-space: normal;
 }
 
 /* risen, a key's face shades from --top to --bottom; flat, it is one colour and --tint darkens it on hover and press */
@@ -2968,6 +2963,10 @@ html[data-fb-drag] .fb-panel-body {
   display: none;
 }
 
+.key-flip-slot {
+  display: none;
+}
+
 .fb-hud .key {
   position: relative;
   display: grid;
@@ -3014,6 +3013,39 @@ html[data-fb-drag] .fb-panel-body {
 .fb-hud .key-flip {
   width: 84px;
   min-width: 84px;
+}
+
+.fb-ui[data-compact='false'] .fb-hud .key-flip-slot,
+.fb-ui[data-compact='true'] .fb-hud .key-flip-slot {
+  display: block;
+  height: 40px;
+  flex: none;
+}
+
+.fb-ui[data-compact='false'] .fb-hud .key-flip-slot,
+.fb-ui[data-compact='false'] .fb-hud .key[data-key='flip'] {
+  width: 84px;
+  min-width: 84px;
+}
+
+.fb-ui[data-compact='true'] .fb-hud .key-flip-slot,
+.fb-ui[data-compact='true'] .fb-hud .key[data-key='flip'] {
+  width: var(--fb-compact-flip-width);
+  min-width: var(--fb-compact-flip-width);
+}
+
+.fb-ui[data-compact='true'] .fb-hud .key-flyover-compact-slot,
+.fb-ui[data-compact='true'] .fb-hud .key[data-key='flip'].key-flyover-compact {
+  width: var(--fb-compact-key-width);
+  min-width: var(--fb-compact-key-width);
+}
+
+.fb-ui[data-compact='false'] .fb-hud .key[data-key='flip'],
+.fb-ui[data-compact='true'] .fb-hud .key[data-key='flip'] {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .fb-hud .key-moves {

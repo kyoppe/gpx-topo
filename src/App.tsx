@@ -3568,7 +3568,7 @@ export default function App() {
                   <span className="well" data-well="place" />
                 </>
               )}
-              <span className="well well-flip" data-well="flip" />
+              <span className="well well-flip-slot" aria-hidden="true" />
               {viewMode === 'gpx' && <span className="well" data-well="fly" />}
               {flyoverPlaying && (
                 <span className="well" data-well="stop" data-appear="" />
@@ -3579,11 +3579,7 @@ export default function App() {
               <span className="well" data-well="camera" />
               <span className="well" data-well="video" />
               {latestMedia && <span className="well" data-well="x" data-appear="" />}
-              <span className="bar-hint">
-                {copy.ui.dragHint}
-                <br />
-                {copy.ui.scrollHint}
-              </span>
+              <span className="well well-flip" data-well="flip" />
             </div>
             <button
               type="button"
@@ -3752,6 +3748,7 @@ export default function App() {
             {fb && compactBar && viewMode === 'map' && !movesKeyShown && (
               <span className="key key-moves key-moves-placeholder" aria-hidden="true" />
             )}
+            <span className={`key-flip-slot${fb && compactBar && flyoverPlaying ? ' key-flyover-compact-slot' : ''}`} aria-hidden="true" />
             <button
               type="button"
               className={`key key-flip${fb && compactBar && flyoverPlaying ? ' key-flyover-compact' : ''}`}

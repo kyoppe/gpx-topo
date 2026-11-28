@@ -117,4 +117,15 @@ describe('compact bar', () => {
     expect(css).toContain("    padding: 8px 0;\n}\n\n.fb-ui[data-compact='true'] .fb-hud .key-mode,");
     expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n}");
   });
+
+  it('keeps the flip key in a centered slot for native and both fallback bar sizes', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
+    expect(css).toContain('.well-flip-slot');
+    expect(css).toContain("left: calc(50% - 65px);");
+    expect(css).toContain(".fb-ui[data-compact='false'] .fb-hud .key-flip-slot");
+    expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-flip-slot");
+    expect(css).toContain('key-flyover-compact-slot');
+    expect(css).not.toContain('.bar-hint');
+  });
 });
