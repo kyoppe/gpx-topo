@@ -8,6 +8,7 @@ describe('map coverage regions', () => {
     expect(regionForCoordinates(38.2682, 140.8694)).toBe('japan');
     expect(regionForCoordinates(36.5613, 136.6562)).toBe('japan');
     expect(regionForCoordinates(33.5904, 130.4017)).toBe('japan');
+    expect(regionForCoordinates(43.3306, 145.5828)).toBe('japan');
   });
 
   it('routes US coordinates to the US providers', () => {

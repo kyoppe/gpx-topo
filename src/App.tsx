@@ -1333,17 +1333,18 @@ export default function App() {
         demGrid.projection.width >= projection.width + DEM_PREFETCH * 2 &&
         demGrid.projection.height >= projection.height + DEM_PREFETCH * 2);
     const exactProjection = demGrid?.projection === projection;
+    const expectedSource = coverageRegion === 'japan' ? 'gsi-dem' : 'usgs-3dep';
     const canReuse =
       demGrid &&
       (viewMode === 'gpx'
-        ? hasPrefetch && projectionRect(demGrid.projection, projection)
+        ? hasPrefetch && demGrid.grid.source === expectedSource && projectionRect(demGrid.projection, projection)
         : flatMapMode
           ? hasPrefetch &&
-            ((coverageRegion === 'japan' && demGrid.grid.source === 'gsi-dem') ||
-              (coverageRegion === 'united-states' && demGrid.grid.source === 'usgs-3dep')) &&
+            demGrid.grid.source === expectedSource &&
             !!projectionRect(demGrid.projection, projection)
           : exactProjection);
     if (canReuse) return;
+    setDemGrid(null);
     const controller = new AbortController();
     const { signal } = controller;
     const lattice = (density: number) => {
@@ -1368,7 +1369,7 @@ export default function App() {
             projection: sourceProjection,
             grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
           });
-        } else if (!demGrid) {
+        } else {
           if (!tutorialMode) setToast(copy.toast.demUnavailable);
           setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
         }
@@ -1766,7 +1767,7 @@ export default function App() {
   }, [cancelCurrentLocationRequest]);
 
   const model = useMemo<EngineModel | null>(() => {
-    if (!projection || (coverageRegion !== 'unsupported' && !terrain)) return null;
+    if (!projection) return null;
     const gpx = viewMode === 'gpx' && progress && profile;
     return {
       ...layout,
