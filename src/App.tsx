@@ -372,7 +372,7 @@ export default function App() {
   const [mapSearchBusy, setMapSearchBusy] = useState(false);
   const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [mapPin, setMapPin] = useState<MapPermalinkPin | null>(() => permalink?.pin ?? null);
-  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(() => permalink?.currentPin ?? null);
+  const [currentLocation, setCurrentLocation] = useState<CurrentLocation | null>(null);
   const [currentLocationBusy, setCurrentLocationBusy] = useState(false);
   const [mapPinRemoving, setMapPinRemoving] = useState(false);
   const [mapPinSelecting, setMapPinSelecting] = useState(false);
@@ -471,6 +471,12 @@ export default function App() {
     },
     [permalink],
   );
+  const cancelCurrentLocationRequest = useCallback((resetBusy = true) => {
+    currentLocationRequestRef.current += 1;
+    pendingCurrentLocationRef.current = null;
+    currentLocationRecenterRef.current = false;
+    if (resetBusy) setCurrentLocationBusy(false);
+  }, []);
   const syncHudHitAreas = useCallback((areas: HudHitArea[]) => {
     const layer = hudHitLayerRef.current;
     if (!layer) return;
@@ -598,6 +604,7 @@ export default function App() {
       detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
+      if (viewMode === 'map' && target === 'gpx') cancelCurrentLocationRequest();
       if (target === 'map') {
         if (!gpxProjection) return;
         setMapViewport((current) => current ?? { lat: gpxProjection.centerLat, lon: gpxProjection.centerLon, scale: gpxProjection.scale });
@@ -622,7 +629,7 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
+    [apart, cancelCurrentLocationRequest, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
@@ -1202,6 +1209,7 @@ export default function App() {
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
+          cancelCurrentLocationRequest();
           setMapLoading(false);
           reportError('load_basemap', error, { map_style: baseMapStyle });
           setToast(copy.toast.mapTilesFailed);
@@ -1211,7 +1219,7 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [baseMapStyle, flatMapMode, hillshade, projection, viewMode]);
+  }, [baseMapStyle, cancelCurrentLocationRequest, flatMapMode, hillshade, projection, viewMode]);
 
   useEffect(() => {
     if (!projection) return;
@@ -1633,15 +1641,10 @@ export default function App() {
 
   useEffect(() => {
     if (viewMode === 'map') setPlacing(false);
-    if (viewMode !== 'map') {
-      currentLocationRequestRef.current += 1;
-      pendingCurrentLocationRef.current = null;
-      currentLocationRecenterRef.current = false;
-      setCurrentLocationBusy(false);
-    }
+    if (viewMode !== 'map') cancelCurrentLocationRequest();
     if (viewMode !== 'map' || !apart) setMapManeuverMenuOpen(false);
     engineRef.current?.refreshHud();
-  }, [apart, viewMode]);
+  }, [apart, cancelCurrentLocationRequest, viewMode]);
 
   useEffect(() => {
     const pending = pendingCurrentLocationRef.current;
@@ -1656,11 +1659,9 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      currentLocationRequestRef.current += 1;
-      pendingCurrentLocationRef.current = null;
-      currentLocationRecenterRef.current = false;
+      cancelCurrentLocationRequest(false);
     };
-  }, []);
+  }, [cancelCurrentLocationRequest]);
 
   const model = useMemo<EngineModel | null>(() => {
     if (!projection || !terrain) return null;
