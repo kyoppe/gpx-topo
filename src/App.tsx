@@ -408,6 +408,7 @@ export default function App() {
   const [mapSunAuto, setMapSunAuto] = useState(false);
   const [mapSunSpeed, setMapSunSpeed] = useState(() => MAP_SUN_SPEED_NAMES.indexOf(permalink?.sunSpeed ?? 'normal'));
   const [mapLoading, setMapLoading] = useState(false);
+  const [demLoading, setDemLoading] = useState(false);
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
   const [apart, setApart] = useState(false);
@@ -660,6 +661,7 @@ export default function App() {
     [grid, projection, layout.mapWidth, layout.mapHeight],
   );
   const mapReady = !!projection && basemap === projection;
+  const mapDataLoading = mapLoading || demLoading;
 
   const switchViewMode = useCallback(
     (next: ViewMode) => {
@@ -1312,9 +1314,13 @@ export default function App() {
   }, [cancelCurrentLocationRequest, coverageRegion, effectiveMapStyle, flatMapMode, hillshade, projection, viewMode]);
 
   useEffect(() => {
-    if (!projection) return;
+    if (!projection) {
+      setDemLoading(false);
+      return;
+    }
     if (coverageRegion === 'unsupported') {
       setDemGrid(null);
+      setDemLoading(false);
       return;
     }
     const sourcePad = flatMapMode && coverageRegion !== 'united-states' ? DEM_PREFETCH : 0;
@@ -1344,8 +1350,12 @@ export default function App() {
             demGrid.grid.source === expectedSource &&
             !!projectionRect(demGrid.projection, projection)
           : exactProjection);
-    if (canReuse) return;
+    if (canReuse) {
+      setDemLoading(false);
+      return;
+    }
     setDemGrid(null);
+    setDemLoading(true);
     const controller = new AbortController();
     const { signal } = controller;
     const lattice = (density: number) => {
@@ -1374,6 +1384,7 @@ export default function App() {
           if (!tutorialMode) setToast(copy.toast.demUnavailable);
           setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
         }
+        setDemLoading(false);
         return;
       }
       const [fx, fy] = lattice(FINE_DENSITY);
@@ -1387,6 +1398,7 @@ export default function App() {
         // the first pass stays
         if (!signal.aborted) reportWarning('load_dem_fine', error);
       }
+      if (!signal.aborted) setDemLoading(false);
     })();
     return () => controller.abort();
   }, [coverageRegion, flatMapMode, projection, points, viewMode]);
@@ -2907,10 +2919,10 @@ export default function App() {
                     onClick={() => setMapSwitchOpen((open) => !open)}
                   >
                     <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
-                  {mapLoading && (
+                  {mapDataLoading && (
                     <span className="map-switch-loading" role="status" aria-live="polite">
                       <i className="map-spinner" aria-hidden="true" />
-                      {copy.ui.mapLoading}
+                      {mapLoading ? copy.ui.mapLoading : copy.ui.elevationLoading}
                     </span>
                   )}
                     <b className="map-switch-chevron" aria-hidden="true">

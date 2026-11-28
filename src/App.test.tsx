@@ -463,6 +463,12 @@ describe('App initial restore lifecycle', () => {
     expect(container.querySelector('.terrain-status')?.textContent).toMatch(/Loading terrain|地形を読み込み中/);
   });
 
+  it('shows the map loading indicator while map data is loading', async () => {
+    const { container } = await renderApp();
+
+    expect(container.querySelector('.map-switch-loading')?.textContent).toMatch(/Loading map|地図を読み込み中/);
+  });
+
   it('waits for and then centers on a saved GPX', async () => {
     harness.savedGpx = SAVED_GPX;
 

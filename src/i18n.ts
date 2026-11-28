@@ -76,6 +76,7 @@ export type Copy = {
     hillshadeOn: string;
     hillshadeOff: string;
     mapLoading: string;
+    elevationLoading: string;
     highestPoint(elevation: number): string;
     highestPointLabel: string;
     positionAtTime: string;
@@ -264,6 +265,7 @@ function makeCopy(language: Language): Copy {
         hillshadeOn: '陰影あり',
         hillshadeOff: '陰影なし',
         mapLoading: '地図を読み込み中',
+        elevationLoading: '等高線を読み込み中',
         highestPoint: (elevation) => `最高点 ${Math.round(elevation)} m`,
         highestPointLabel: '最高点',
         positionAtTime: 'この時刻の位置',
@@ -450,6 +452,7 @@ function makeCopy(language: Language): Copy {
       hillshadeOn: 'Hillshade on',
       hillshadeOff: 'Hillshade off',
       mapLoading: 'Loading map',
+      elevationLoading: 'Loading contour data',
       highestPoint: (elevation) => `Highest point ${Math.round(elevation)} m`,
       highestPointLabel: 'Highest point',
       positionAtTime: 'Position at this time',
