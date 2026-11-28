@@ -51,4 +51,11 @@ describe('onRequest', () => {
       results: [{ label: '51.507400, -0.127800', lat: 51.5074, lon: -0.1278 }],
     });
   });
+
+  it('does not proxy ordinary text searches through the Pages Function', async () => {
+    const response = await onRequest({
+      request: new Request(`https://example.test/api/search?q=${encodeURIComponent('富士山')}`),
+    });
+    expect(await response.json()).toEqual({ results: [] });
+  });
 });

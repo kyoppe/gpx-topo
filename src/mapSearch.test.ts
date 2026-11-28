@@ -103,6 +103,8 @@ describe('map search coordinates', () => {
 
   it('recognizes Google Maps links before their short-link redirect is resolved', () => {
     expect(isGoogleMapsUrl('https://maps.app.goo.gl/example')).toBe(true);
+    expect(isGoogleMapsUrl('https://www.google.com/maps/@35.548554,139.435962,15z')).toBe(true);
+    expect(isGoogleMapsUrl('https://accounts.google.com/robots.txt')).toBe(false);
     expect(isGoogleMapsUrl('35.548554, 139.435962')).toBe(false);
   });
 

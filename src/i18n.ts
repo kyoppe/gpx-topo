@@ -40,6 +40,7 @@ export type Copy = {
   toast: {
     mapTilesFailed: string;
     demFallback: string;
+    demUnavailable: string;
     waypointAdded(name: string, km: number): string;
     addKmRequired: string;
     clickRoute: string;
@@ -226,6 +227,7 @@ function makeCopy(language: Language): Copy {
       toast: {
         mapTilesFailed: '地図タイルを読み込めませんでした。',
         demFallback: '地形データを読み込めなかったため、GPX の標高から地形を作っています。',
+        demUnavailable: '地形データを読み込めなかったため、平坦な地形を表示しています。',
         waypointAdded: (name, km) => `${name} を ${km.toFixed(1)} km に追加しました。`,
         addKmRequired: '追加する位置を km で入力してください。',
         clickRoute: 'ルートの上をクリックしてください。',
@@ -410,6 +412,7 @@ function makeCopy(language: Language): Copy {
     toast: {
       mapTilesFailed: 'Could not load the map tiles.',
       demFallback: 'Could not load the elevation data, so the terrain is built from GPX elevations.',
+      demUnavailable: 'Could not load the elevation data, so a flat terrain surface is shown.',
       waypointAdded: (name, km) => `${name} added at ${km.toFixed(1)} km.`,
       addKmRequired: 'Enter a position in km.',
       clickRoute: 'Click the route.',

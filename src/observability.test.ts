@@ -79,6 +79,23 @@ describe('startObservability', () => {
     );
   });
 
+  it('redacts map coordinates from RUM resource URLs', async () => {
+    vi.mocked(supportsHtmlInCanvas).mockReturnValue(true);
+    const { startObservability } = await import('./observability');
+    startObservability();
+
+    const config = vi.mocked(datadogRum.init).mock.calls[0][0] as {
+      beforeSend?: (event: { type: string; resource: { url: string } }, context: unknown) => boolean;
+    };
+    const event = {
+      type: 'resource',
+      resource: { url: 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples?geometry=secret' },
+    };
+
+    expect(config.beforeSend?.(event, {})).toBe(true);
+    expect(event.resource.url).toBe('https://elevation.nationalmap.gov');
+  });
+
   it.each([
     { supported: true, path: 'native' },
     { supported: false, path: 'fallback' },

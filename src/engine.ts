@@ -158,6 +158,7 @@ type Kind =
   | 'detail'
   | 'card'
   | 'content'
+  | 'coverage'
   | 'pin'
   | 'bar'
   | 'key'
@@ -2733,6 +2734,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       p.card = cardEl ? byEl.get(cardEl) : undefined;
       return p;
     });
+    const coverageMessages = of('coverage').map((el) => get(el, 'coverage'));
     pins = of('pin').map((el) => {
       const p = get(el, 'pin');
       const spot = el.hasAttribute('data-map-pin')
@@ -2821,6 +2823,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       ...details,
       ...cards,
       ...contents,
+      ...coverageMessages,
       ...pins,
       ...hikers,
       ...probes,
@@ -4026,7 +4029,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         }
         continue;
       }
-      if (p.kind === 'content') {
+      if (p.kind === 'content' || p.kind === 'coverage') {
         if (isXHintPiece(p)) {
           const c = p.card;
           if (!c) {
@@ -4041,7 +4044,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
           p.O = [0, 1, 2].map((i) => c.O[i] + c.ex[i] * dx + c.ey[i] * dy + c.nrm[i] * EPS) as Vec3;
           continue;
         }
-        if (p.el.hasAttribute('data-map-control')) {
+        if (p.kind === 'coverage' || p.el.hasAttribute('data-map-control')) {
           const x0 = clamp(p.x - MAPX, 0, MW);
           const x1 = clamp(p.x + p.w - MAPX, 0, MW);
           const y0 = clamp(p.y - MAPY, 0, MH);
@@ -4310,7 +4313,9 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
         });
       }
     }
-    const blend = contents.filter((c) => !isXHintPiece(c)).map((c) => q(c));
+    const blend = pieces
+      .filter((p) => (p.kind === 'content' || p.kind === 'coverage') && !isXHintPiece(p))
+      .map((p) => q(p));
     const xHintHud = xHintPiece ? [q(xHintPiece, { unlit: true })] : [];
     const xHintContent = contents.find((content) => isXHintPiece(content));
     if (xHintContent) xHintHud.push(q(xHintContent));

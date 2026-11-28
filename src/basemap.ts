@@ -41,14 +41,17 @@ type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 type CachedTileBlob = { blob: Blob; expiresAt: number };
 
-const tileBlobCache = new Map<string, Promise<CachedTileBlob | null>>();
+const tileBlobCache = new Map<string, CachedTileBlob>();
 const MAX_TILE_BLOBS = 256;
 
 function cacheExpiry(response: Response) {
   const cacheControl = response.headers.get('cache-control') ?? '';
   if (/\bno-store\b/i.test(cacheControl)) return 0;
   const maxAge = /\bmax-age=(\d+)/i.exec(cacheControl);
-  if (maxAge) return Date.now() + Number(maxAge[1]) * 1000;
+  if (maxAge) {
+    const seconds = Number(maxAge[1]);
+    return seconds > 0 ? Date.now() + seconds * 1000 : 0;
+  }
   const expires = response.headers.get('expires');
   const timestamp = expires ? Date.parse(expires) : Number.NaN;
   return Number.isFinite(timestamp) && timestamp > Date.now() ? timestamp : 0;
@@ -56,25 +59,22 @@ function cacheExpiry(response: Response) {
 
 async function loadTile(url: string, signal?: AbortSignal) {
   try {
-    let blob = tileBlobCache.get(url);
-    if (!blob) {
-      blob = fetch(url)
-        .then(async (response) => (response.ok ? { blob: await response.blob(), expiresAt: cacheExpiry(response) } : null))
-        .catch(() => null);
-      tileBlobCache.set(url, blob);
-      if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+    if (signal?.aborted) return null;
+    let source = tileBlobCache.get(url);
+    if (source && (source.expiresAt === 0 || (source.expiresAt > 0 && source.expiresAt <= Date.now()))) {
+      tileBlobCache.delete(url);
+      source = undefined;
     }
-    const source = await blob;
     if (!source) {
-      if (tileBlobCache.get(url) === blob) tileBlobCache.delete(url);
-      return null;
+      const response = await fetch(url, { signal });
+      if (!response.ok) return null;
+      source = { blob: await response.blob(), expiresAt: cacheExpiry(response) };
+      if (source.expiresAt > 0) {
+        tileBlobCache.set(url, source);
+        if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+      }
     }
     if (signal?.aborted) return null;
-    if (source.expiresAt > 0 && source.expiresAt <= Date.now()) {
-      if (tileBlobCache.get(url) === blob) tileBlobCache.delete(url);
-      return loadTile(url, signal);
-    }
-    if (source.expiresAt === 0 && tileBlobCache.get(url) === blob) tileBlobCache.delete(url);
     return await createImageBitmap(source.blob);
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -310,7 +310,7 @@ export async function renderBasemaps(
       onProgress();
     }),
   );
-  if (loaded === 0) throw new Error('GSI map tiles are unavailable.');
+  if (loaded === 0) throw new Error('Map tiles are unavailable.');
   if (style === 'photoNames') {
     const nameTiles = tilesIn(projection, zoom, region);
     const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile, coverage), signal)));
@@ -369,6 +369,7 @@ export async function streamRelief(
   const cy = region.y + region.h / 2;
   const away = (t: MapTile) => Math.hypot(t.left + t.size / 2 - cx, t.top + t.size / 2 - cy);
   const tiles = tilesIn(projection, zoom, fetchRegion).sort((a, b) => away(a) - away(b));
+  let loaded = 0;
   await Promise.all(
     tiles.map(async (tile) => {
       const image = await loadTile(tileUrl(mapLayer(style, coverage), tile, coverage), signal);
@@ -376,9 +377,11 @@ export async function streamRelief(
       if (signal.aborted) return image.close();
       placeTile(context, stripsRelief(style, coverage) ? strip(image) : image, tile, region, density);
       image.close();
+      loaded += 1;
       onTile();
     }),
   );
+  if (!signal.aborted && loaded === 0) throw new Error('Map detail tiles are unavailable.');
   if (style === 'photoNames') {
     const nameTiles = tilesIn(projection, zoom, fetchRegion);
     const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile, coverage), signal)));
@@ -429,5 +432,5 @@ export async function streamNames(
       onTile();
     }),
   );
-  if (!signal.aborted && loaded === 0) throw new Error('GSI name tiles are unavailable.');
+  if (!signal.aborted && loaded === 0) throw new Error('Map name tiles are unavailable.');
 }

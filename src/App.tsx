@@ -101,7 +101,7 @@ function layoutFor(width: number, height: number): Layout {
 }
 
 function flatElevationGrid(nx: number, ny: number): ElevationGrid {
-  return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'gsi-dem' };
+  return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'flat' };
 }
 
 function parseGpxWithVital(xml: string, source: 'file' | 'restore'): GpxRoute {
@@ -529,6 +529,10 @@ export default function App() {
     currentLocationRecenterRef.current = false;
     if (resetBusy) setCurrentLocationBusy(false);
   }, []);
+  const invalidateMapSearchRequest = useCallback(() => {
+    mapSearchRequestRef.current += 1;
+    setMapSearchBusy(false);
+  }, []);
   const syncHudHitAreas = useCallback((areas: HudHitArea[]) => {
     const layer = hudHitLayerRef.current;
     if (!layer) return;
@@ -633,7 +637,7 @@ export default function App() {
   };
 
   const grid = useMemo(() => {
-    if (!demGrid || !projection) return null;
+    if (coverageRegion === 'unsupported' || !demGrid || !projection) return null;
     const rect = projectionRect(demGrid.projection, projection);
     if (!rect) return null;
     const nx = Math.max(1, Math.round((demGrid.grid.nx * projection.width) / demGrid.projection.width));
@@ -649,7 +653,7 @@ export default function App() {
       nx,
       ny,
     );
-  }, [demGrid, projection]);
+  }, [coverageRegion, demGrid, projection]);
   const terrain = useMemo(
     () => (grid && projection ? buildTerrain(grid, layout.mapWidth, layout.mapHeight, projection.metersPerPixel) : null),
     [grid, projection, layout.mapWidth, layout.mapHeight],
@@ -789,6 +793,8 @@ export default function App() {
     const [offsetX, offsetY] = mapDragOffsetRef.current;
     const current = mapProjectionRef.current;
     if (!current || (offsetX === 0 && offsetY === 0)) return;
+    invalidateMapSearchRequest();
+    cancelCurrentLocationRequest();
     detachPermalink('map_pan');
     addAction('map_pan_completed', {
       distance_px: Math.round(Math.hypot(offsetX, offsetY)),
@@ -807,10 +813,12 @@ export default function App() {
       const center = projection.inverse(projection.width / 2 - offsetX, projection.height / 2 - offsetY);
       return { ...viewportState, ...center };
     });
-  }, [detachPermalink]);
+  }, [cancelCurrentLocationRequest, detachPermalink, invalidateMapSearchRequest]);
   const centerMap = useCallback(
     (center: Coordinates, source: string, location?: SearchLocation) => {
       if (apartRef.current) return;
+      invalidateMapSearchRequest();
+      cancelCurrentLocationRequest();
       if (regionForCoordinates(center.lat, center.lon) === 'unsupported') {
         setMapSearchResults([]);
         setMapSearchLocation(null);
@@ -827,9 +835,10 @@ export default function App() {
       setMapSearchResults([]);
       setMapSearchLocation(location ?? null);
       setMapSearchError(null);
+      setMapSearchBusy(false);
       addAction('map_search_selected', { source });
     },
-    [copy.ui.mapSearchUnsupported, detachPermalink, gpxProjection],
+    [cancelCurrentLocationRequest, copy.ui.mapSearchUnsupported, detachPermalink, gpxProjection, invalidateMapSearchRequest],
   );
   const searchMap = useCallback(
     async (event?: FormEvent) => {
@@ -843,6 +852,7 @@ export default function App() {
         centerMap(coordinates, 'coordinates');
         return;
       }
+      cancelCurrentLocationRequest();
       const request = ++mapSearchRequestRef.current;
       setMapSearchBusy(true);
       setMapSearchError(null);
@@ -875,7 +885,7 @@ export default function App() {
         if (request === mapSearchRequestRef.current) setMapSearchBusy(false);
       }
     },
-    [centerMap, copy.ui.mapSearchFailed, copy.ui.mapSearchNoResults, mapSearch],
+    [cancelCurrentLocationRequest, centerMap, copy.ui.mapSearchFailed, copy.ui.mapSearchNoResults, mapSearch],
   );
 
   // elevation profile: distance across, height up
@@ -1285,6 +1295,10 @@ export default function App() {
 
   useEffect(() => {
     if (!projection) return;
+    if (coverageRegion === 'unsupported') {
+      setDemGrid(null);
+      return;
+    }
     const sourcePad = flatMapMode && coverageRegion !== 'united-states' ? DEM_PREFETCH : 0;
     const sourceProjection = sourcePad
       ? createCenteredProjection(
@@ -1323,7 +1337,7 @@ export default function App() {
       const [cx, cy] = lattice(COARSE_DENSITY);
       const stopCoarse = startVital('dem_load', { phase: 'coarse', nx: cx, ny: cy }, signal);
       try {
-        const first = await loadDemGrid(sourceProjection, cx, cy, signal, coverageRegion);
+        const first = await loadDemGrid(sourceProjection, cx, cy, signal, coverageRegion, 'coarse');
         stopCoarse('ok');
         if (signal.aborted) return;
         setDemGrid({ projection: sourceProjection, grid: first });
@@ -1338,6 +1352,7 @@ export default function App() {
             grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
           });
         } else if (!demGrid) {
+          if (!tutorialMode) setToast(copy.toast.demUnavailable);
           setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
         }
         return;
@@ -1345,7 +1360,7 @@ export default function App() {
       const [fx, fy] = lattice(FINE_DENSITY);
       const stopFine = startVital('dem_load', { phase: 'fine', nx: fx, ny: fy }, signal);
       try {
-        const fine = await loadDemGrid(sourceProjection, fx, fy, signal, coverageRegion);
+        const fine = await loadDemGrid(sourceProjection, fx, fy, signal, coverageRegion, 'fine');
         stopFine('ok');
         if (!signal.aborted) setDemGrid({ projection: sourceProjection, grid: fine });
       } catch (error) {
@@ -2574,7 +2589,8 @@ export default function App() {
           : effectiveMapStyle === 'photo'
             ? copy.ui.aerial
             : copy.ui.photoNames;
-  const mapCredit = coverageRegion === 'united-states' ? copy.ui.osmCredit : copy.ui.gsiCredit;
+  const mapCredit =
+    coverageRegion === 'united-states' ? copy.ui.osmCredit : coverageRegion === 'japan' ? copy.ui.gsiCredit : null;
   const gpxActionLabel =
     gpxRestoreState === 'pending' ? copy.ui.loadingGpx : gpxSource === 'user' ? copy.ui.gpxMode : copy.ui.openGpx;
   const startMapManeuver = (kind: MapManeuverKind) => {
@@ -2643,14 +2659,13 @@ export default function App() {
   const clearCurrentLocation = () => {
     if (!currentLocation) return;
     detachPermalink('current_location_clear');
-    currentLocationRequestRef.current += 1;
-    pendingCurrentLocationRef.current = null;
-    currentLocationRecenterRef.current = false;
+    invalidateMapSearchRequest();
+    cancelCurrentLocationRequest();
     setCurrentLocation(null);
-    setCurrentLocationBusy(false);
   };
   const showCurrentLocation = async () => {
     if (viewMode !== 'map' || !mapReady) return;
+    invalidateMapSearchRequest();
     const requestId = ++currentLocationRequestRef.current;
     setCurrentLocationBusy(true);
     try {
@@ -2825,8 +2840,13 @@ export default function App() {
 
             <div className="map" data-map="" style={mapStyle}>
               {coverageRegion === 'unsupported' && (
-                <div className="map-coverage-message" role="status" data-selectable="">
+                <div className="map-coverage-message" data-piece="coverage" data-map-control="" drawable="" role="status" data-selectable="">
                   {copy.ui.mapCoverageUnsupported}
+                </div>
+              )}
+              {mapCredit && (
+                <div className="map-attribution" data-piece="coverage" data-map-control="" drawable="" data-selectable="">
+                  {mapCredit}
                 </div>
               )}
               <StageHost host={fb?.mapControls ?? null}>
@@ -3046,9 +3066,7 @@ export default function App() {
                           ))}
                         </ol>
                       )}
-                      <p className="credit" data-selectable="">
-                        {mapCredit}
-                      </p>
+                      {mapCredit && <p className="credit" data-selectable="">{mapCredit}</p>}
                     </div>
                   )}
                 </section>
@@ -3312,9 +3330,7 @@ export default function App() {
                       </li>
                     ))}
                   </ol>
-                  <p className="credit" data-selectable="">
-                    {mapCredit}
-                  </p>
+                  {mapCredit && <p className="credit" data-selectable="">{mapCredit}</p>}
                 </div>
                 </section>
               )}

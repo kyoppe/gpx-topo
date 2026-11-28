@@ -64,20 +64,15 @@ function fromPair(value: string | null): Coordinates | null {
   return match ? validCoordinates(Number(match[1]), Number(match[2])) : null;
 }
 
-function isGoogleMapsHost(host: string) {
-  return (
-    host === 'maps.google.com' ||
-    host.endsWith('.google.com') ||
-    host.endsWith('.google.co.jp') ||
-    host === 'google.com' ||
-    host === 'maps.app.goo.gl' ||
-    host === 'goo.gl'
-  );
+function isGoogleMapsLocationUrl(url: URL) {
+  const host = url.hostname.toLowerCase();
+  if (host === 'maps.app.goo.gl' || host === 'goo.gl' || host.startsWith('maps.google.')) return true;
+  return /^(?:www\.)?google\.[a-z.]+$/.test(host) && /^\/maps(?:\/|$)/.test(url.pathname);
 }
 
 export function isGoogleMapsUrl(value: string) {
   try {
-    return isGoogleMapsHost(new URL(value.trim()).hostname.toLowerCase());
+    return isGoogleMapsLocationUrl(new URL(value.trim()));
   } catch {
     return false;
   }
@@ -106,7 +101,7 @@ export function googleMapsLabel(value: string) {
   } catch {
     return null;
   }
-  if (!isGoogleMapsHost(url.hostname.toLowerCase())) return null;
+  if (!isGoogleMapsLocationUrl(url)) return null;
   const path = /\/maps\/(?:place|search)\/([^/?#]+)/.exec(url.pathname);
   return decodedLabel(path?.[1] ?? url.searchParams.get('query') ?? url.searchParams.get('q'));
 }
@@ -119,7 +114,7 @@ export function parseGoogleMapsUrl(value: string): Coordinates | null {
     return null;
   }
   const host = url.hostname.toLowerCase();
-  if (!isGoogleMapsHost(host)) return null;
+  if (!isGoogleMapsLocationUrl(url)) return null;
   const place = new RegExp(`!3d(${COORDINATE})!4d(${COORDINATE})`).exec(url.href);
   const at = new RegExp(`@(${COORDINATE},${COORDINATE})`).exec(url.href);
   const searchPath = /\/maps\/search\/([^/?#]+)/.exec(url.pathname);
@@ -143,7 +138,7 @@ async function fetchGoogleMapsUrl(initialUrl: URL, fetcher: typeof fetch): Promi
   let currentUrl = initialUrl;
   try {
     for (let redirectCount = 0; redirectCount <= MAX_GOOGLE_REDIRECTS; redirectCount += 1) {
-      if (!isGoogleMapsHost(currentUrl.hostname.toLowerCase())) return null;
+      if (!isGoogleMapsLocationUrl(currentUrl)) return null;
 
       const response = await fetcher(currentUrl.href, { redirect: 'manual', signal: controller.signal });
       const location = response.headers?.get('location');
@@ -151,7 +146,7 @@ async function fetchGoogleMapsUrl(initialUrl: URL, fetcher: typeof fetch): Promi
         const finalUrl = response.url || currentUrl.href;
         try {
           const parsedFinalUrl = new URL(finalUrl, currentUrl.href);
-          return isGoogleMapsHost(parsedFinalUrl.hostname.toLowerCase()) ? parsedFinalUrl.href : null;
+          return isGoogleMapsLocationUrl(parsedFinalUrl) ? parsedFinalUrl.href : null;
         } catch {
           return null;
         }
@@ -160,7 +155,7 @@ async function fetchGoogleMapsUrl(initialUrl: URL, fetcher: typeof fetch): Promi
       if (redirectCount === MAX_GOOGLE_REDIRECTS) return null;
       try {
         const nextUrl = new URL(location, currentUrl.href);
-        if (!isGoogleMapsHost(nextUrl.hostname.toLowerCase())) return null;
+        if (!isGoogleMapsLocationUrl(nextUrl)) return null;
         currentUrl = nextUrl;
       } catch {
         return null;
@@ -182,7 +177,7 @@ export async function resolveGoogleMapsLocation(value: string, fetcher: typeof f
   } catch {
     return null;
   }
-  if (!isGoogleMapsHost(url.hostname.toLowerCase())) return null;
+  if (!isGoogleMapsLocationUrl(url)) return null;
   const resolvedUrl = await fetchGoogleMapsUrl(url, fetcher);
   if (!resolvedUrl) return null;
   const resolved = parseGoogleMapsUrl(resolvedUrl);

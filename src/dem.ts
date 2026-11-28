@@ -13,7 +13,7 @@ export type ElevationGrid = {
   nx: number;
   ny: number;
   values: Float32Array;
-  source: 'gsi-dem' | 'usgs-3dep' | 'gpx';
+  source: 'gsi-dem' | 'usgs-3dep' | 'gpx' | 'flat';
 };
 
 export function decodeDemElevation(red: number, green: number, blue: number) {
@@ -76,6 +76,9 @@ const USGS_SAMPLES_URL = 'https://elevation.nationalmap.gov/arcgis/rest/services
 // Keep the query well below common URL-size limits. The service supports more
 // samples, but browser GET requests become unreliable before that limit.
 const USGS_MAX_SAMPLE_POINTS = 100;
+// ArcGIS documents an approximate 1,000-sample operation limit. Use almost
+// that many points per viewport, split into small browser-safe requests.
+const USGS_MAX_SAMPLE_INTERVALS = 30;
 
 type UsgsSample = {
   locationId?: number;
@@ -169,9 +172,11 @@ async function loadUsgsDemGrid(
   nx: number,
   ny: number,
   signal?: AbortSignal,
+  quality: 'coarse' | 'fine' = 'fine',
 ): Promise<ElevationGrid> {
-  const sampleNx = Math.min(Math.max(1, nx), 9);
-  const sampleNy = Math.min(Math.max(1, ny), 9);
+  const maxIntervals = quality === 'coarse' ? 9 : USGS_MAX_SAMPLE_INTERVALS;
+  const sampleNx = Math.min(Math.max(1, nx), maxIntervals);
+  const sampleNy = Math.min(Math.max(1, ny), maxIntervals);
   const points = [];
   for (let j = 0; j <= sampleNy; j += 1) {
     for (let i = 0; i <= sampleNx; i += 1) {
@@ -194,9 +199,10 @@ export async function loadDemGrid(
   ny: number,
   signal?: AbortSignal,
   region: CoverageRegion = 'japan',
+  quality: 'coarse' | 'fine' = 'fine',
 ): Promise<ElevationGrid> {
   const profile = regionProfileFor(region);
-  if (profile.elevation === 'usgs-3dep') return loadUsgsDemGrid(projection, nx, ny, signal);
+  if (profile.elevation === 'usgs-3dep') return loadUsgsDemGrid(projection, nx, ny, signal, quality);
   if (profile.elevation === 'none') throw new Error('Elevation data is unavailable for this region.');
   const zoom = projection.zoomFor((2 * nx) / projection.width, 5, 14);
   const tiles = projection.tiles(zoom);

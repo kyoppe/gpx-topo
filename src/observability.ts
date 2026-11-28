@@ -1,5 +1,5 @@
 import { datadogLogs, type LogsEvent } from '@datadog/browser-logs';
-import { datadogRum } from '@datadog/browser-rum';
+import { datadogRum, type RumEvent } from '@datadog/browser-rum';
 import { reactPlugin } from '@datadog/browser-rum-react';
 
 import { supportsHtmlInCanvas } from './htmlInCanvas';
@@ -21,6 +21,25 @@ let started = false;
 let vitalSequence = 0;
 
 const ERROR_STATUSES = new Set(['error', 'critical', 'alert', 'emerg']);
+const MAP_RESOURCE_HOSTS = new Set([
+  'cyberjapandata.gsi.go.jp',
+  'elevation.nationalmap.gov',
+  'msearch.gsi.go.jp',
+  'tile.openstreetmap.org',
+]);
+
+function redactMapResourceUrl(event: RumEvent): boolean {
+  if (event.type !== 'resource') return true;
+  try {
+    const url = new URL(event.resource.url);
+    if (MAP_RESOURCE_HOSTS.has(url.hostname.toLowerCase())) {
+      (event.resource as { url: string }).url = url.origin;
+    }
+  } catch {
+    // Keep malformed resource events unchanged. Datadog will handle their validation.
+  }
+  return true;
+}
 
 export function enrichBrowserLog(event: LogsEvent): boolean {
   if (typeof event.event_type !== 'string' || event.event_type.length === 0) {
@@ -60,6 +79,7 @@ export function startObservability(): void {
       trackUserInteractions: true,
       trackResources: true,
       trackLongTasks: true,
+      beforeSend: redactMapResourceUrl,
       plugins: [reactPlugin()],
     });
     // Set once, here, so every session, view, action, error, resource and long task carries the path.

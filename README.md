@@ -1,6 +1,6 @@
 # gpx-topo
 
-`gpx-topo` shows a GPX route on a faint GSI map and raises the same page into a 3D terrain model built from GSI DEM tiles.
+`gpx-topo` shows a GPX route on a regional map and raises the same page into a 3D terrain model built from the regional elevation source.
 
 - The terrain is one continuous surface at true scale: heights use the same metres per pixel as the map (1:1), with 10 m contours and 50 m index contours.
 - The map can use the GSI standard, pale, blank map, or seamless aerial photos. The pale map has hillshade only when flat; on the 3D model its hillshade, own contour lines, and vegetation marks are taken out, so the relief is drawn by the model's contours and sunlight. Aerial photos do not use the GSI hillshade.
@@ -46,7 +46,7 @@ npm install
 npm run dev
 ```
 
-The Vite dev server proxies `/api/gsi/*` to `https://cyberjapandata.gsi.go.jp/xyz/*`, so tiles are same-origin for texture uploads.
+The Vite dev server only handles Google Maps URL resolution for local testing. GSI address search, map tiles, DEM tiles, OSM tiles, and USGS elevation requests are made directly by the browser.
 
 ## Checks
 
@@ -88,7 +88,7 @@ selection, and commit version tagging are documented in
 
 ## Data
 
-GSI tiles (Geospatial Information Authority of Japan), attributed in the side panel:
+Japan uses GSI tiles (Geospatial Information Authority of Japan), attributed in the side panel:
 
 - `pale`: base map. For the 3D model its contour lines (and their labels) and its small grey vegetation marks are removed by colour and shape
 - `blank`: GSI blank map, kept unchanged in the 3D model
@@ -97,11 +97,21 @@ GSI tiles (Geospatial Information Authority of Japan), attributed in the side pa
 
 Clock times are Japan Standard Time.
 
+The initial overseas coverage is the United States:
+
+- `std`: OpenStreetMap standard raster tiles, requested directly by the browser and attributed on the map
+- `usgs-3dep`: USGS 3DEP elevation samples, requested directly by the browser and converted into the terrain grid
+- USGS fine loading uses a 31 x 31 sample lattice, split into sequential batches of at most 100 points. The documented approximate `getSamples` operation limit is about 1,000 samples, so the fine pass stays below that limit while avoiding a large URL.
+- The coarse pass is loaded first for progressive display. If the USGS request fails, the app explicitly reports that a flat surface is being shown instead of labeling it as GSI or USGS terrain.
+- Map tiles and DEM requests are not routed through a Cloudflare Proxy or Pages Function. The browser calls each provider directly, subject to provider CORS, terms, cache headers, attribution, and service limits.
+
+Coordinates outside the supported Japan and United States coverage are reported as unsupported. European coverage is tracked separately.
+
 ## Deployment (Cloudflare Pages)
 
 - Build command: `npm run build`
 - Output directory: `dist`
-- `functions/api/gsi/[[path]].ts` proxies allowed GSI layers with a one-day edge cache.
+- `functions/api/search.ts` resolves Google Maps URLs server-side when a redirect must be followed. It does not proxy GSI, OSM, or USGS map or elevation requests.
 
 Pull requests targeting `main` run the test suite, typecheck, and build without
 access to deployment secrets. Pushing to `main` runs the same validation, then

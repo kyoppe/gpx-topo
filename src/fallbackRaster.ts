@@ -4,10 +4,10 @@ import type { ElementTextureSource } from './renderer';
  * Pieces the fallback can reproduce with plain 2D drawing: a fill (with inset rings), canvases, SVG paths, and (for
  * the pins and the probe) boxes with words in them.
  */
-export const FALLBACK_PIECE_KINDS: ReadonlySet<string> = new Set(['sheet', 'terrain', 'relief', 'detail', 'hiker', 'pin', 'probe']);
+export const FALLBACK_PIECE_KINDS: ReadonlySet<string> = new Set(['sheet', 'terrain', 'relief', 'detail', 'coverage', 'hiker', 'pin', 'probe']);
 
 /** The pieces that are words on plates: their child boxes and their text are drawn as well. */
-const LABEL_KINDS: ReadonlySet<string> = new Set(['pin', 'probe']);
+const LABEL_KINDS: ReadonlySet<string> = new Set(['coverage', 'pin', 'probe']);
 
 type Box = { left: number; top: number; width: number; height: number };
 
