@@ -1314,7 +1314,8 @@ main[lang='en'] .in-ways > .row small {
 
 .map-credit {
   position: absolute;
-  right: 14px;
+  /* Reserve the full map-control column so the credit remains in the lower-right map area without covering it. */
+  right: calc(14px + 124px + 8px);
   bottom: 14px;
   z-index: 2;
   max-width: calc(100% - 28px);
@@ -2708,6 +2709,7 @@ main[lang='en'] .bar-hint {
     var(--fb-sheet-h, 0px) + 17px + 40px
     + max(var(--fb-edge), env(safe-area-inset-bottom))
     + max(var(--fb-edge), env(safe-area-inset-bottom))
+    + 38px + 8px
   );
   top: auto;
   left: auto;
@@ -2745,6 +2747,7 @@ main[lang='en'] .bar-hint {
     40px
     + max(var(--fb-edge), env(safe-area-inset-bottom))
     + max(var(--fb-edge), env(safe-area-inset-bottom))
+    + 38px + 8px
   );
 }
 
