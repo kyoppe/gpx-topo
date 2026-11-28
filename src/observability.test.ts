@@ -96,6 +96,23 @@ describe('startObservability', () => {
     expect(event.resource.url).toBe('https://elevation.nationalmap.gov');
   });
 
+  it('redacts Google Maps search query URLs from RUM resource events', async () => {
+    vi.mocked(supportsHtmlInCanvas).mockReturnValue(true);
+    const { startObservability } = await import('./observability');
+    startObservability();
+
+    const config = vi.mocked(datadogRum.init).mock.calls[0][0] as {
+      beforeSend?: (event: { type: string; resource: { url: string } }, context: unknown) => boolean;
+    };
+    const event = {
+      type: 'resource',
+      resource: { url: 'https://gpx-topo.example/api/search?q=https%3A%2F%2Fmaps.google.com%2Fmaps%3Fq%3D40.7%2C-74' },
+    };
+
+    expect(config.beforeSend?.(event, {})).toBe(true);
+    expect(event.resource.url).toBe('https://gpx-topo.example');
+  });
+
   it.each([
     { supported: true, path: 'native' },
     { supported: false, path: 'fallback' },

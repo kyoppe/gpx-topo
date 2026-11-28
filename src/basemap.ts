@@ -42,6 +42,7 @@ type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type CachedTileBlob = { blob: Blob; expiresAt: number };
 
 const tileBlobCache = new Map<string, CachedTileBlob>();
+const tileBlobLoads = new Map<string, Promise<CachedTileBlob | null>>();
 const MAX_TILE_BLOBS = 256;
 
 function cacheExpiry(response: Response) {
@@ -66,13 +67,25 @@ async function loadTile(url: string, signal?: AbortSignal) {
       source = undefined;
     }
     if (!source) {
-      const response = await fetch(url, { signal });
-      if (!response.ok) return null;
-      source = { blob: await response.blob(), expiresAt: cacheExpiry(response) };
-      if (source.expiresAt > 0) {
-        tileBlobCache.set(url, source);
-        if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+      let loading = tileBlobLoads.get(url);
+      if (!loading) {
+        loading = (async () => {
+          const response = await fetch(url);
+          if (!response.ok) return null;
+          const loaded = { blob: await response.blob(), expiresAt: cacheExpiry(response) };
+          if (loaded.expiresAt > 0) {
+            tileBlobCache.set(url, loaded);
+            if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+          }
+          return loaded;
+        })().finally(() => {
+          tileBlobLoads.delete(url);
+        });
+        tileBlobLoads.set(url, loading);
       }
+      const loaded = await loading;
+      if (!loaded) return null;
+      source = loaded;
     }
     if (signal?.aborted) return null;
     return await createImageBitmap(source.blob);

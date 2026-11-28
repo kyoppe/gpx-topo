@@ -666,6 +666,7 @@ export default function App() {
       detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
+      invalidateMapSearchRequest();
       if (viewMode === 'map' && target === 'gpx') cancelCurrentLocationRequest();
       if (target === 'map') {
         if (!gpxProjection) return;
@@ -691,7 +692,18 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, cancelCurrentLocationRequest, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
+    [
+      apart,
+      cancelCurrentLocationRequest,
+      detachPermalink,
+      fpvActive,
+      fpvSelecting,
+      gpxProjection,
+      invalidateMapSearchRequest,
+      mapManeuver,
+      modeTransition,
+      viewMode,
+    ],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
@@ -766,6 +778,8 @@ export default function App() {
   }, []);
   const panMapPreview = useCallback(
     (dx: number, dy: number) => {
+      const buffer = mapBufferRef.current;
+      if (!buffer || buffer.pad <= 0) return;
       const [x, y] = mapDragOffsetRef.current;
       const next: [number, number] = [
         Math.max(-MAP_PAN_BUFFER, Math.min(MAP_PAN_BUFFER, x + dx)),
@@ -789,17 +803,20 @@ export default function App() {
     mapDragOffsetRef.current = begin;
     drawMapBuffer(begin);
   }, [drawMapBuffer]);
-  const panMap = useCallback((_dx: number, _dy: number) => {
+  const panMap = useCallback((dx: number, dy: number) => {
     const [offsetX, offsetY] = mapDragOffsetRef.current;
+    const buffer = mapBufferRef.current;
+    const panX = buffer?.pad === 0 ? dx : offsetX;
+    const panY = buffer?.pad === 0 ? dy : offsetY;
     const current = mapProjectionRef.current;
-    if (!current || (offsetX === 0 && offsetY === 0)) return;
+    if (!current || (panX === 0 && panY === 0)) return;
     invalidateMapSearchRequest();
     cancelCurrentLocationRequest();
     detachPermalink('map_pan');
     addAction('map_pan_completed', {
-      distance_px: Math.round(Math.hypot(offsetX, offsetY)),
-      delta_x_px: Math.round(offsetX),
-      delta_y_px: Math.round(offsetY),
+      distance_px: Math.round(Math.hypot(panX, panY)),
+      delta_x_px: Math.round(panX),
+      delta_y_px: Math.round(panY),
     });
     setMapViewport((viewportState) => {
       if (!viewportState) return viewportState;
@@ -810,7 +827,7 @@ export default function App() {
         current.height,
         viewportState.scale,
       );
-      const center = projection.inverse(projection.width / 2 - offsetX, projection.height / 2 - offsetY);
+      const center = projection.inverse(projection.width / 2 - panX, projection.height / 2 - panY);
       return { ...viewportState, ...center };
     });
   }, [cancelCurrentLocationRequest, detachPermalink, invalidateMapSearchRequest]);
@@ -1749,7 +1766,7 @@ export default function App() {
   }, [cancelCurrentLocationRequest]);
 
   const model = useMemo<EngineModel | null>(() => {
-    if (!projection || !terrain) return null;
+    if (!projection || (coverageRegion !== 'unsupported' && !terrain)) return null;
     const gpx = viewMode === 'gpx' && progress && profile;
     return {
       ...layout,
@@ -1769,7 +1786,25 @@ export default function App() {
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [currentLocation, date, effectiveMapStyle, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [
+    coverageRegion,
+    currentLocation,
+    date,
+    effectiveMapStyle,
+    high,
+    layout,
+    mapPin,
+    mapProjection,
+    mapSunlight,
+    profile,
+    progress,
+    projection,
+    showHigh,
+    terrain,
+    track,
+    viewMode,
+    ways,
+  ]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);

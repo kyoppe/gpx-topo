@@ -32,7 +32,7 @@ function redactMapResourceUrl(event: RumEvent): boolean {
   if (event.type !== 'resource') return true;
   try {
     const url = new URL(event.resource.url);
-    if (MAP_RESOURCE_HOSTS.has(url.hostname.toLowerCase())) {
+    if (MAP_RESOURCE_HOSTS.has(url.hostname.toLowerCase()) || url.pathname === '/api/search') {
       (event.resource as { url: string }).url = url.origin;
     }
   } catch {
