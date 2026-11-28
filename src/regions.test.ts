@@ -5,6 +5,9 @@ import { regionForCoordinates, regionProfileFor } from './regions';
 describe('map coverage regions', () => {
   it('keeps Japan on the GSI provider', () => {
     expect(regionForCoordinates(35.681236, 139.767125)).toBe('japan');
+    expect(regionForCoordinates(38.2682, 140.8694)).toBe('japan');
+    expect(regionForCoordinates(36.5613, 136.6562)).toBe('japan');
+    expect(regionForCoordinates(33.5904, 130.4017)).toBe('japan');
   });
 
   it('routes US coordinates to the US providers', () => {
@@ -14,6 +17,8 @@ describe('map coverage regions', () => {
     expect(regionForCoordinates(25.7617, -80.1918)).toBe('united-states');
     expect(regionForCoordinates(31.7619, -106.485)).toBe('united-states');
     expect(regionForCoordinates(42.3314, -83.0458)).toBe('united-states');
+    expect(regionForCoordinates(46.495, -84.35)).toBe('united-states');
+    expect(regionForCoordinates(46.681, -68.015)).toBe('united-states');
     expect(regionForCoordinates(61.2176, -149.8997)).toBe('united-states');
     expect(regionProfileFor('united-states')).toEqual({
       id: 'united-states',
@@ -26,6 +31,8 @@ describe('map coverage regions', () => {
     expect(regionForCoordinates(43.6532, -79.3832)).toBe('unsupported');
     expect(regionForCoordinates(45.5019, -73.5674)).toBe('unsupported');
     expect(regionForCoordinates(45.4215, -75.6972)).toBe('unsupported');
+    expect(regionForCoordinates(42.3149, -83.0364)).toBe('unsupported');
+    expect(regionForCoordinates(46.52, -84.34)).toBe('unsupported');
     expect(regionForCoordinates(60.7212, -135.0568)).toBe('unsupported');
     expect(regionForCoordinates(51.5074, -0.1278)).toBe('unsupported');
     expect(regionForCoordinates(37.5665, 126.978)).toBe('unsupported');

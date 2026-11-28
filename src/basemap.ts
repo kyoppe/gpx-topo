@@ -40,9 +40,14 @@ function usesHillshade(style: MapStyle, region: CoverageRegion) {
 type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 type CachedTileBlob = { blob: Blob; expiresAt: number };
+type TileBlobLoad = {
+  controller: AbortController;
+  promise: Promise<CachedTileBlob | null>;
+  consumers: number;
+};
 
 const tileBlobCache = new Map<string, CachedTileBlob>();
-const tileBlobLoads = new Map<string, Promise<CachedTileBlob | null>>();
+const tileBlobLoads = new Map<string, TileBlobLoad>();
 const MAX_TILE_BLOBS = 256;
 
 function cacheExpiry(response: Response) {
@@ -69,8 +74,10 @@ async function loadTile(url: string, signal?: AbortSignal) {
     if (!source) {
       let loading = tileBlobLoads.get(url);
       if (!loading) {
-        loading = (async () => {
-          const response = await fetch(url);
+        const controller = new AbortController();
+        loading = { controller, promise: Promise.resolve(null), consumers: 0 };
+        loading.promise = (async () => {
+          const response = await fetch(url, { signal: controller.signal });
           if (!response.ok) return null;
           const loaded = { blob: await response.blob(), expiresAt: cacheExpiry(response) };
           if (loaded.expiresAt > 0) {
@@ -79,13 +86,30 @@ async function loadTile(url: string, signal?: AbortSignal) {
           }
           return loaded;
         })().finally(() => {
-          tileBlobLoads.delete(url);
+          if (tileBlobLoads.get(url) === loading) tileBlobLoads.delete(url);
         });
         tileBlobLoads.set(url, loading);
       }
-      const loaded = await loading;
-      if (!loaded) return null;
-      source = loaded;
+      loading.consumers += 1;
+      let removeAbortListener: (() => void) | undefined;
+      try {
+        const loaded = signal
+          ? await Promise.race([
+              loading.promise,
+              new Promise<null>((resolve) => {
+                const onAbort = () => resolve(null);
+                signal.addEventListener('abort', onAbort, { once: true });
+                removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+              }),
+            ])
+          : await loading.promise;
+        if (!loaded || signal?.aborted) return null;
+        source = loaded;
+      } finally {
+        removeAbortListener?.();
+        loading.consumers -= 1;
+        if (loading.consumers === 0 && tileBlobLoads.get(url) === loading) loading.controller.abort();
+      }
     }
     if (signal?.aborted) return null;
     return await createImageBitmap(source.blob);
