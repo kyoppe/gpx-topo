@@ -126,6 +126,7 @@ describe('compact bar', () => {
     expect(css).toContain(`.fb-ui[data-compact='true'] .fb-hud .key-open,`);
     expect(css).toContain('--fb-compact-gap: 3px;');
     expect(css).toContain('--fb-compact-key-width: 33px;');
+    expect(css).toContain('padding-left: env(safe-area-inset-left, 0px);');
     expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .hud-controls-center");
     expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n}");
   });

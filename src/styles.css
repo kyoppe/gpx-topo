@@ -3132,6 +3132,15 @@ html[data-fb-drag] .fb-panel-body {
     padding: 8px 0;
 }
 
+.fb-ui[data-compact='true'] .fb-hud {
+    /*
+     * Compact groups are centered around the flip key and need the full
+     * viewport width. Keep only the platform safe-area inset at the edges.
+     */
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+}
+
 .fb-ui[data-compact='true'] .fb-hud .hud-controls-left,
 .fb-ui[data-compact='true'] .fb-hud .hud-controls-right {
     gap: var(--fb-compact-gap);
