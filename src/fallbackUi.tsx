@@ -173,6 +173,12 @@ const KEY_ICONS = {
       <path d="m5.5 10 6.5-6.5 6.5 6.5" />
     </>
   ),
+  flat: (
+    <>
+      <path d="M3 12h18" />
+      <path d="m7 8-4 4 4 4M17 8l4 4-4 4" />
+    </>
+  ),
   route: (
     <>
       <circle cx="5.5" cy="18.5" r="2" />

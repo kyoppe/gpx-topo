@@ -3568,7 +3568,7 @@ export default function App() {
                   <span className="well" data-well="place" />
                 </>
               )}
-              <span className="well well-flip" data-well="flip" />
+              <span className="well well-flip-slot" aria-hidden="true" />
               {viewMode === 'gpx' && <span className="well" data-well="fly" />}
               {flyoverPlaying && (
                 <span className="well" data-well="stop" data-appear="" />
@@ -3579,12 +3579,10 @@ export default function App() {
               <span className="well" data-well="camera" />
               <span className="well" data-well="video" />
               {latestMedia && <span className="well" data-well="x" data-appear="" />}
-              <span className="bar-hint">
-                {copy.ui.dragHint}
-                <br />
-                {copy.ui.scrollHint}
-              </span>
+              <span className="well well-flip" data-well="flip" />
             </div>
+            <div className="hud-controls">
+            <div className="hud-controls-left">
             <button
               type="button"
               className="key key-mode"
@@ -3726,32 +3724,9 @@ export default function App() {
                 ×
               </button>
             )}
-            {movesKeyShown && (
-              <button
-                type="button"
-                className={`key key-moves${mapManeuverActive ? ' key-maneuver-cancel' : ''}`}
-                data-piece="key"
-                // the keys the page dims and lets through while something runs, and the engine's pointer check, know these names
-                data-key={fpvActive || fpvSelecting ? 'fpv' : mapManeuverActive ? 'map-cancel' : 'moves'}
-                data-latched={fpvActive || fpvSelecting ? '' : undefined}
-                drawable=""
-                aria-label={fpvActive || fpvSelecting ? copy.ui.fpvCancel : mapManeuverActive ? copy.ui.cancelManeuver : copy.ui.viewMoves}
-                aria-expanded={movesRunning ? undefined : mapManeuverMenuOpen}
-                onClick={onMovesKey}
-              >
-                {movesRunning ? (
-                  '×'
-                ) : (
-                  <svg className="moves-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                )}
-              </button>
-            )}
-            {fb && compactBar && viewMode === 'map' && !movesKeyShown && (
-              <span className="key key-moves key-moves-placeholder" aria-hidden="true" />
-            )}
+            </div>
+            <div className={`hud-controls-center${fb && compactBar && flyoverPlaying ? ' is-flyover-compact' : ''}`}>
+            <span className="key-flip-slot" aria-hidden="true" />
             <button
               type="button"
               className={`key key-flip${fb && compactBar && flyoverPlaying ? ' key-flyover-compact' : ''}`}
@@ -3784,8 +3759,36 @@ export default function App() {
                 engineRef.current?.toggle();
               }}
             >
-              {copy.ui.layFlat}
+              {fb && compactBar && flyoverPlaying ? <KeyFace icon="flat" label={copy.ui.layFlat} /> : copy.ui.layFlat}
             </button>
+            </div>
+            <div className="hud-controls-right">
+            {fb && compactBar && viewMode === 'map' && !movesKeyShown && (
+              <span className="key key-moves key-moves-placeholder" aria-hidden="true" />
+            )}
+            {movesKeyShown && (
+              <button
+                type="button"
+                className={`key key-moves${mapManeuverActive ? ' key-maneuver-cancel' : ''}`}
+                data-piece="key"
+                // the keys the page dims and lets through while something runs, and the engine's pointer check, know these names
+                data-key={fpvActive || fpvSelecting ? 'fpv' : mapManeuverActive ? 'map-cancel' : 'moves'}
+                data-latched={fpvActive || fpvSelecting ? '' : undefined}
+                drawable=""
+                aria-label={fpvActive || fpvSelecting ? copy.ui.fpvCancel : mapManeuverActive ? copy.ui.cancelManeuver : copy.ui.viewMoves}
+                aria-expanded={movesRunning ? undefined : mapManeuverMenuOpen}
+                onClick={onMovesKey}
+              >
+                {movesRunning ? (
+                  '×'
+                ) : (
+                  <svg className="moves-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            )}
             {viewMode === 'gpx' && (
               <>
                 <button
@@ -3869,6 +3872,8 @@ export default function App() {
                 </svg>
               </button>
             )}
+            </div>
+            </div>
           </nav>
           </StageHost>
         </div>
