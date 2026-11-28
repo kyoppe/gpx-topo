@@ -54,8 +54,15 @@ async function decodeTile(bytes: Uint8Array<ArrayBuffer>) {
 
 async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSignal) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const requestController = new AbortController();
+    const forwardAbort = () => requestController.abort();
+    if (signal?.aborted) requestController.abort();
+    else signal?.addEventListener('abort', forwardAbort, { once: true });
+    const timeout = window.setTimeout(() => requestController.abort(), GSI_REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch(`https://cyberjapandata.gsi.go.jp/xyz/dem_png/${z}/${x}/${y}.png`, { signal });
+      const response = await fetch(`https://cyberjapandata.gsi.go.jp/xyz/dem_png/${z}/${x}/${y}.png`, {
+        signal: requestController.signal,
+      });
       if (response.status === 404) {
         return 'sea' as const;
       }
@@ -67,6 +74,9 @@ async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSigna
       if (signal?.aborted) {
         throw error;
       }
+    } finally {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener('abort', forwardAbort);
     }
   }
   return null;
@@ -79,6 +89,8 @@ const USGS_SAMPLES_URL = 'https://elevation.nationalmap.gov/arcgis/rest/services
 const USGS_MAX_SAMPLE_POINTS = 1000;
 const USGS_MAX_CONCURRENT_REQUESTS = 4;
 const USGS_REQUEST_TIMEOUT_MS = 30_000;
+const GSI_MAX_CONCURRENT_REQUESTS = 8;
+const GSI_REQUEST_TIMEOUT_MS = 15_000;
 // ArcGIS documents an approximate 1,000-sample operation limit. Use a denser
 // 64 x 64 lattice for the fine pass and split it into browser-safe requests.
 const USGS_MAX_SAMPLE_INTERVALS = 63;
@@ -247,16 +259,20 @@ export async function loadDemGrid(
   const tiles = projection.tiles(zoom);
   const decoded = new Map<string, Float32Array | 'sea'>();
   let failed = 0;
-  await Promise.all(
-    tiles.map(async (tile) => {
+  let nextTile = 0;
+  const worker = async () => {
+    while (nextTile < tiles.length) {
+      const tile = tiles[nextTile];
+      nextTile += 1;
       const values = await fetchDemTile(tile.z, tile.x, tile.y, signal);
       if (values === null) {
         failed += 1;
       } else {
         decoded.set(`${tile.x}/${tile.y}`, values);
       }
-    }),
-  );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GSI_MAX_CONCURRENT_REQUESTS, tiles.length) }, () => worker()));
   if (decoded.size === 0 || failed > tiles.length / 2) {
     throw new Error('GSI DEM tiles are unavailable for this area.');
   }

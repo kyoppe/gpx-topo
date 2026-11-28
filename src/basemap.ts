@@ -16,6 +16,7 @@ const HILLSHADE_OPACITY = 0.35;
 const PAPER = '#f2f1ee';
 const TILE = 256;
 const PHOTO_NAMES_OPACITY = 0.42;
+const TILE_REQUEST_TIMEOUT_MS = 15_000;
 
 export type MapStyle = 'std' | 'pale' | 'blank' | 'photo' | 'photoNames';
 
@@ -94,18 +95,27 @@ async function loadTile(url: string, signal?: AbortSignal) {
     }
     if (!source) {
       let loading = tileBlobLoads.get(url);
+      if (loading?.controller.signal.aborted) {
+        tileBlobLoads.delete(url);
+        loading = undefined;
+      }
       if (!loading) {
         const controller = new AbortController();
         loading = { controller, promise: Promise.resolve(null), consumers: 0 };
         loading.promise = (async () => {
-          const response = await fetch(url, { signal: controller.signal });
-          if (!response.ok) return null;
-          const loaded = { blob: await response.blob(), expiresAt: cacheExpiry(response) };
-          if (loaded.expiresAt > 0) {
-            tileBlobCache.set(url, loaded);
-            if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+          const timeout = window.setTimeout(() => controller.abort(), TILE_REQUEST_TIMEOUT_MS);
+          try {
+            const response = await fetch(url, { signal: controller.signal });
+            if (!response.ok) return null;
+            const loaded = { blob: await response.blob(), expiresAt: cacheExpiry(response) };
+            if (loaded.expiresAt > 0) {
+              tileBlobCache.set(url, loaded);
+              if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+            }
+            return loaded;
+          } finally {
+            window.clearTimeout(timeout);
           }
-          return loaded;
         })().finally(() => {
           if (tileBlobLoads.get(url) === loading) tileBlobLoads.delete(url);
         });

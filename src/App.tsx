@@ -1483,15 +1483,18 @@ export default function App() {
             demGrid.grid.source === expectedSource &&
             !!projectionRect(demGrid.projection, projection)
           : demGrid.grid.source === expectedSource && !!projectionRect(demGrid.projection, projection));
-    const pendingEntry = demRequestsRef.current.has(key)
-      ? ([key, demRequestsRef.current.get(key)!] as const)
-      : [...demRequestsRef.current.entries()].find(
-          ([, candidate]) =>
-            candidate.region === coverageRegion &&
-            candidate.projection.width >= projection.width &&
-            candidate.projection.height >= projection.height &&
-            projectionRect(candidate.projection, projection),
-        );
+    const exactPending = demRequestsRef.current.get(key);
+    const pendingEntry =
+      exactPending && !exactPending.controller.signal.aborted
+        ? ([key, exactPending] as const)
+        : [...demRequestsRef.current.entries()].find(
+            ([, candidate]) =>
+              !candidate.controller.signal.aborted &&
+              candidate.region === coverageRegion &&
+              candidate.projection.width >= projection.width &&
+              candidate.projection.height >= projection.height &&
+              projectionRect(candidate.projection, projection),
+          );
     const pendingKey = pendingEntry?.[0] ?? key;
     const pending = pendingEntry?.[1];
     if (!pending && canReuse) {
