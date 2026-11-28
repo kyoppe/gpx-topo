@@ -17,6 +17,7 @@ describe('map coverage regions', () => {
     expect(regionForCoordinates(34.0522, -118.2437)).toBe('united-states');
     expect(regionForCoordinates(25.7617, -80.1918)).toBe('united-states');
     expect(regionForCoordinates(31.7619, -106.485)).toBe('united-states');
+    expect(regionForCoordinates(29.24666706192231, -103.30491923588015)).toBe('united-states');
     expect(regionForCoordinates(42.3314, -83.0458)).toBe('united-states');
     expect(regionForCoordinates(46.495, -84.35)).toBe('united-states');
     expect(regionForCoordinates(46.681, -68.015)).toBe('united-states');
