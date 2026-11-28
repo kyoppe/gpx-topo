@@ -288,6 +288,11 @@ export const FRAME_Y = 120;
 export function pageFit(viewWidth: number, viewHeight: number, pageWidth: number, pageHeight: number) {
   return Math.min((viewWidth - FRAME_X) / pageWidth, (viewHeight - FRAME_Y) / pageHeight, 1.3);
 }
+
+/** Whether every projected x coordinate stays inside the drawable screen width. */
+export function fitsWithinScreenWidth(xs: readonly (number | null)[], width: number) {
+  return xs.length > 0 && xs.every((x) => x !== null && x >= 0 && x <= width);
+}
 const RAISE = 40;
 const FOV = 0.5;
 /** The model stands on a plinth this many px thick. */
@@ -944,6 +949,37 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
       (c[0] / c[3] * 0.5 + 0.5) * vw,
       (-c[1] / c[3] * 0.5 + 0.5) * vh,
     ];
+  }
+
+  function terrainScreenXs(lift: number): (number | null)[] {
+    const top = topZ(lift);
+    const points = [
+      [MAPX, MAPY],
+      [MAPX + MW, MAPY],
+      [MAPX + MW, MAPY + MH],
+      [MAPX, MAPY + MH],
+    ];
+    return points.flatMap(([x, y]) => [0, top].map((z) => toScreen([x, y, z])?.[0] ?? null));
+  }
+
+  function terrainCenterPivot(lift: number): RotationPivot | null {
+    const point: Vec3 = [
+      MAPX + MW / 2,
+      MAPY + MH / 2,
+      groundZ(MW / 2, MH / 2, lift),
+    ];
+    const screen = toScreen(point);
+    return screen ? { point, sx: screen[0], sy: screen[1] } : null;
+  }
+
+  function rotationPivot(lift: number): RotationPivot | null {
+    if (!fallback && fitsWithinScreenWidth(terrainScreenXs(lift), vw)) {
+      const center = terrainCenterPivot(lift);
+      if (center) return center;
+    }
+    const [sx, sy] = mapDisplayCenter();
+    const point = pick(cam, sx, sy, lift);
+    return point ? { point, sx, sy } : null;
   }
 
   function fpvFov(zoom: number) {
@@ -4884,11 +4920,7 @@ export function createEngine(canvas: HtmlInCanvasElement, page: HTMLElement, cal
           return { point, sx: (c[0] / c[3] * 0.5 + 0.5) * vw, sy: (-c[1] / c[3] * 0.5 + 0.5) * vh };
         })()
       : drag === 'turn'
-      ? (() => {
-          const [sx, sy] = mapDisplayCenter();
-          const point = pick(cam, sx, sy, liftOf(st.e));
-          return point ? { point, sx, sy } : null;
-        })()
+      ? rotationPivot(liftOf(st.e))
       : null;
     const start = { pointerId: ev.pointerId, startedAt: performance.now() };
     cameraDrag = drag === 'pan'
