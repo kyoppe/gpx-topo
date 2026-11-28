@@ -2937,12 +2937,10 @@ html[data-fb-drag] .fb-panel-body {
 
 .fb-hud .hud {
   position: relative;
-  display: flex;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
   padding: 8px 10px;
   border-radius: 16px;
   background: linear-gradient(#f6f7f8, #eceef1);
@@ -2950,6 +2948,45 @@ html[data-fb-drag] .fb-panel-body {
     0 6px 22px rgba(24, 32, 43, 0.2),
     inset 0 0 0 1px rgba(24, 32, 43, 0.09);
   pointer-events: auto;
+}
+
+.hud-controls,
+.hud-controls-left,
+.hud-controls-center,
+.hud-controls-right {
+  display: contents;
+}
+
+.fb-hud .hud-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+}
+
+.fb-hud .hud-controls-left,
+.fb-hud .hud-controls-right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.fb-hud .hud-controls-left {
+  justify-content: flex-end;
+}
+
+.fb-hud .hud-controls-right {
+  justify-content: flex-start;
+}
+
+.fb-hud .hud-controls-center {
+  position: relative;
+  display: grid;
+  width: 84px;
+  min-width: 84px;
+  height: 40px;
+  place-items: center;
 }
 
 /* in the sheet the keys sit straight on it, with no bar of their own */
@@ -2965,6 +3002,14 @@ html[data-fb-drag] .fb-panel-body {
 
 .key-flip-slot {
   display: none;
+}
+
+.fb-hud .key-flip-slot {
+  display: block;
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 40px;
+  visibility: hidden;
 }
 
 .fb-hud .key {
@@ -3013,39 +3058,7 @@ html[data-fb-drag] .fb-panel-body {
 .fb-hud .key-flip {
   width: 84px;
   min-width: 84px;
-}
-
-.fb-ui[data-compact='false'] .fb-hud .key-flip-slot,
-.fb-ui[data-compact='true'] .fb-hud .key-flip-slot {
-  display: block;
-  height: 40px;
-  flex: none;
-}
-
-.fb-ui[data-compact='false'] .fb-hud .key-flip-slot,
-.fb-ui[data-compact='false'] .fb-hud .key[data-key='flip'] {
-  width: 84px;
-  min-width: 84px;
-}
-
-.fb-ui[data-compact='true'] .fb-hud .key-flip-slot,
-.fb-ui[data-compact='true'] .fb-hud .key[data-key='flip'] {
-  width: var(--fb-compact-flip-width);
-  min-width: var(--fb-compact-flip-width);
-}
-
-.fb-ui[data-compact='true'] .fb-hud .key-flyover-compact-slot,
-.fb-ui[data-compact='true'] .fb-hud .key[data-key='flip'].key-flyover-compact {
-  width: var(--fb-compact-key-width);
-  min-width: var(--fb-compact-key-width);
-}
-
-.fb-ui[data-compact='false'] .fb-hud .key[data-key='flip'],
-.fb-ui[data-compact='true'] .fb-hud .key[data-key='flip'] {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  grid-area: 1 / 1;
 }
 
 .fb-hud .key-moves {
@@ -3112,6 +3125,21 @@ html[data-fb-drag] .fb-panel-body {
     flex-wrap: nowrap;
     gap: var(--fb-compact-gap);
     padding: 8px 0;
+}
+
+.fb-ui[data-compact='true'] .fb-hud .hud-controls-left,
+.fb-ui[data-compact='true'] .fb-hud .hud-controls-right {
+    gap: var(--fb-compact-gap);
+}
+
+.fb-ui[data-compact='true'] .fb-hud .hud-controls-center {
+    width: var(--fb-compact-flip-width);
+    min-width: var(--fb-compact-flip-width);
+}
+
+.fb-ui[data-compact='true'] .fb-hud .hud-controls-center.is-flyover-compact {
+    width: var(--fb-compact-key-width);
+    min-width: var(--fb-compact-key-width);
 }
 
 .fb-ui[data-compact='true'] .fb-hud .key-mode,

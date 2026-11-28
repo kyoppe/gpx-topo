@@ -3581,6 +3581,8 @@ export default function App() {
               {latestMedia && <span className="well" data-well="x" data-appear="" />}
               <span className="well well-flip" data-well="flip" />
             </div>
+            <div className="hud-controls">
+            <div className="hud-controls-left">
             <button
               type="button"
               className="key key-mode"
@@ -3748,7 +3750,9 @@ export default function App() {
             {fb && compactBar && viewMode === 'map' && !movesKeyShown && (
               <span className="key key-moves key-moves-placeholder" aria-hidden="true" />
             )}
-            <span className={`key-flip-slot${fb && compactBar && flyoverPlaying ? ' key-flyover-compact-slot' : ''}`} aria-hidden="true" />
+            </div>
+            <div className={`hud-controls-center${fb && compactBar && flyoverPlaying ? ' is-flyover-compact' : ''}`}>
+            <span className="key-flip-slot" aria-hidden="true" />
             <button
               type="button"
               className={`key key-flip${fb && compactBar && flyoverPlaying ? ' key-flyover-compact' : ''}`}
@@ -3783,6 +3787,8 @@ export default function App() {
             >
               {copy.ui.layFlat}
             </button>
+            </div>
+            <div className="hud-controls-right">
             {viewMode === 'gpx' && (
               <>
                 <button
@@ -3866,6 +3872,8 @@ export default function App() {
                 </svg>
               </button>
             )}
+            </div>
+            </div>
           </nav>
           </StageHost>
         </div>

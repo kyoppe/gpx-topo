@@ -114,7 +114,8 @@ describe('compact bar', () => {
     const { readFileSync } = await import('node:fs');
     const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
     expect(css).toContain(`.fb-ui[data-compact='true'] .fb-hud .key-open,`);
-    expect(css).toContain("    padding: 8px 0;\n}\n\n.fb-ui[data-compact='true'] .fb-hud .key-mode,");
+    expect(css).toContain('--fb-compact-gap: 6px;');
+    expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .hud-controls-center");
     expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n}");
   });
 
@@ -123,9 +124,9 @@ describe('compact bar', () => {
     const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
     expect(css).toContain('.well-flip-slot');
     expect(css).toContain("left: calc(50% - 65px);");
-    expect(css).toContain(".fb-ui[data-compact='false'] .fb-hud .key-flip-slot");
-    expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-flip-slot");
-    expect(css).toContain('key-flyover-compact-slot');
+    expect(css).toContain('.fb-hud .hud-controls');
+    expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .hud-controls-center");
+    expect(css).toContain('hud-controls-center.is-flyover-compact');
     expect(css).not.toContain('.bar-hint');
   });
 });
