@@ -30,7 +30,7 @@ describe('GSI DEM PNG decoder', () => {
 
   it('resamples a USGS sample lattice and fills missing samples', () => {
     const values = interpolateElevationSamples([0, 10, null, 30], 1, 1, 2, 2);
-    expect(Array.from(values)).toEqual([0, 5, 10, 5, 12.5, 20, 10, 20, 30]);
+    expect(Array.from(values)).toEqual([0, 5, 10, 0, 10, 20, 0, 15, 30]);
   });
 
   it('uses a 64 x 64 fine USGS lattice with concurrent POST batches', async () => {

@@ -150,16 +150,23 @@ async function fetchUsgsSamples(points: readonly { lat: number; lon: number }[],
   }
 }
 
-function fillMissingSamples(samples: readonly (number | null)[]) {
+function fillMissingSamples(samples: readonly (number | null)[], sampleNx: number, sampleNy: number) {
   const filled = samples.slice();
-  const valid = filled.flatMap((value, index) => (value === null ? [] : [{ index, value }]));
+  const sampleWidth = sampleNx + 1;
+  const valid = filled.flatMap((value, index) =>
+    value === null
+      ? []
+      : [{ index, x: index % sampleWidth, y: Math.floor(index / sampleWidth), value }],
+  );
   if (!valid.length) throw new Error('USGS 3DEP has no elevation data for this area.');
   for (let index = 0; index < filled.length; index += 1) {
     if (filled[index] !== null) continue;
     let nearest = valid[0];
-    let distance = Math.abs(nearest.index - index);
+    const x = index % sampleWidth;
+    const y = Math.floor(index / sampleWidth);
+    let distance = (nearest.x - x) ** 2 + (nearest.y - y) ** 2;
     for (const candidate of valid.slice(1)) {
-      const nextDistance = Math.abs(candidate.index - index);
+      const nextDistance = (candidate.x - x) ** 2 + (candidate.y - y) ** 2;
       if (nextDistance < distance) {
         nearest = candidate;
         distance = nextDistance;
@@ -179,7 +186,7 @@ export function interpolateElevationSamples(
   ny: number,
 ) {
   const sourceW = sampleNx + 1;
-  const source = fillMissingSamples(samples);
+  const source = fillMissingSamples(samples, sampleNx, sampleNy);
   const values = new Float32Array((nx + 1) * (ny + 1));
   for (let j = 0; j <= ny; j += 1) {
     const gy = (j / Math.max(1, ny)) * sampleNy;

@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { googleMapsLocation, normalizeSearchResults, onRequest } from './search';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('googleMapsLocation', () => {
   it('formats a resolved Google Maps coordinate as a search result', () => {
@@ -57,5 +61,16 @@ describe('onRequest', () => {
       request: new Request(`https://example.test/api/search?q=${encodeURIComponent('富士山')}`),
     });
     expect(await response.json()).toEqual({ results: [] });
+  });
+
+  it('does not cache a transient Google resolution failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('temporary failure'))));
+
+    const response = await onRequest({
+      request: new Request(`https://example.test/api/search?q=${encodeURIComponent('https://maps.app.goo.gl/example')}`),
+    });
+
+    expect(await response.json()).toEqual({ results: [] });
+    expect(response.headers.get('cache-control')).toBe('no-store');
   });
 });

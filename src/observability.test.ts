@@ -113,6 +113,27 @@ describe('startObservability', () => {
     expect(event.resource.url).toBe('https://gpx-topo.example');
   });
 
+  it('redacts coordinates and labels from RUM view URLs', async () => {
+    vi.mocked(supportsHtmlInCanvas).mockReturnValue(true);
+    const { startObservability } = await import('./observability');
+    startObservability();
+
+    const config = vi.mocked(datadogRum.init).mock.calls[0][0] as {
+      beforeSend?: (event: { type: string; view?: { url?: string; referrer?: string } }, context: unknown) => boolean;
+    };
+    const event = {
+      type: 'view',
+      view: {
+        url: 'https://gpx-topo.example/?mode=map&lat=51.5074&lon=-0.1278&pin_label=Home',
+        referrer: 'https://example.test/?lat=35.6&lon=139.7',
+      },
+    };
+
+    expect(config.beforeSend?.(event, {})).toBe(true);
+    expect(event.view.url).toBe('https://gpx-topo.example/');
+    expect(event.view.referrer).toBe('https://example.test/');
+  });
+
   it.each([
     { supported: true, path: 'native' },
     { supported: false, path: 'fallback' },

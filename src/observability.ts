@@ -28,7 +28,19 @@ const MAP_RESOURCE_HOSTS = new Set([
   'tile.openstreetmap.org',
 ]);
 
+function redactPageUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return value;
+  }
+}
+
 function redactMapResourceUrl(event: RumEvent): boolean {
+  const view = event.view as { url?: string; referrer?: string } | undefined;
+  if (view?.url) view.url = redactPageUrl(view.url);
+  if (view?.referrer) view.referrer = redactPageUrl(view.referrer);
   if (event.type !== 'resource') return true;
   try {
     const url = new URL(event.resource.url);

@@ -68,6 +68,7 @@ function fromPair(value: string | null): Coordinates | null {
 }
 
 function isGoogleMapsLocationUrl(url: URL) {
+  if (url.protocol !== 'https:' || url.port) return false;
   const host = url.hostname.toLowerCase();
   if (host === 'maps.app.goo.gl' || (host === 'goo.gl' && /^\/maps(?:\/|$)/.test(url.pathname))) return true;
   if (GOOGLE_MAPS_HOST.test(host)) return true;

@@ -779,6 +779,7 @@ export default function App() {
   );
   const mapReady = !!projection && basemap === projection;
   const mapDataLoading = mapLoading || demLoading;
+  const canRaise = coverageRegion !== 'unsupported' && terrain !== null;
 
   const switchViewMode = useCallback(
     (next: ViewMode) => {
@@ -2053,13 +2054,15 @@ export default function App() {
   useEffect(() => {
     const engine = engineRef.current;
     if (!permalink || permalinkAppliedRef.current || !engine || !model || viewMode !== 'map') return;
+    const wantsRaisedView = permalink.view === '3d' || permalink.view === 'fpv';
+    if (wantsRaisedView && coverageRegion !== 'unsupported' && !terrain) return;
     permalinkApplyingRef.current = true;
     const focusPoint =
       permalink.view === '3d' && permalink.focus && mapProjection
         ? mapProjection.project(permalink.focus)
         : null;
     try {
-      if (permalink.view === 'fpv' && permalink.fpv && mapProjection) {
+      if (permalink.view === 'fpv' && permalink.fpv && mapProjection && canRaise) {
         const point = mapProjection.project({ lat: permalink.fpv.lat, lon: permalink.fpv.lon });
         engine.startFpvAtMapPoint(point.x, point.y, {
           bearing: permalink.fpv.bearing,
@@ -2074,7 +2077,7 @@ export default function App() {
         });
       } else {
         engine.setViewState({
-          raised: permalink.view === '3d',
+          raised: wantsRaisedView && canRaise,
           bearing: permalink.bearing ?? undefined,
           pitch: permalink.pitch ?? undefined,
           zoom: permalink.zoom ?? undefined,
@@ -2082,7 +2085,7 @@ export default function App() {
         });
         if (focusPoint) engine.centerViewOnMapPoint(focusPoint.x, focusPoint.y);
       }
-      if (permalink.sun === 'auto' && permalink.view === '3d') {
+      if (permalink.sun === 'auto' && permalink.view === '3d' && canRaise) {
         const sun = sunInput(fb?.root ?? pageRef.current);
         if (sun) {
           const start = daylight?.rise == null ? 0 : Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET);
@@ -2104,7 +2107,7 @@ export default function App() {
       date_source: permalink.date ? 'query' : 'today',
       sun: permalink.sun ?? 'default',
     });
-  }, [daylight, mapProjection, model, permalink, viewMode]);
+  }, [canRaise, coverageRegion, daylight, mapProjection, model, permalink, terrain, viewMode]);
 
   useEffect(() => {
     engineRef.current?.setPlacing(placing);
@@ -3243,13 +3246,13 @@ export default function App() {
                         </div>
                       )}
                       {mapSearchLocation && (
-                        <div className="map-search-location" data-selectable="">
+                        <div className="map-search-location" data-dd-privacy="mask" data-selectable="">
                           {mapSearchLocation.label}
                         </div>
                       )}
                       {mapSearchError && <p className="map-search-error" data-selectable="">{mapSearchError}</p>}
                       {mapSearchResults.length > 0 && (
-                        <ol className="map-search-results" data-scroll="">
+                        <ol className="map-search-results" data-dd-privacy="mask" data-scroll="">
                           {mapSearchResults.map((result) => (
                             <li key={`${result.lat}:${result.lon}:${result.label}`}>
                               <button type="button" onClick={() => centerMap(result, 'result', result)}>
@@ -4013,7 +4016,7 @@ export default function App() {
               data-key="flip"
               data-face="front"
               drawable=""
-              disabled={fpvActive || fpvSelecting}
+              disabled={fpvActive || fpvSelecting || (!apart && !canRaise)}
               tabIndex={apart ? -1 : 0}
               onClick={() => {
                 detachPermalink('raise');
@@ -4335,7 +4338,7 @@ export default function App() {
               type="button"
               data-hud-hit="flip"
               tabIndex={-1}
-              disabled={fpvActive || fpvSelecting}
+              disabled={fpvActive || fpvSelecting || (!apart && !canRaise)}
               onClick={() => {
                 addAction('view_mode_toggled', { target: apart ? 'flat' : 'raised' });
                 engineRef.current?.toggle();

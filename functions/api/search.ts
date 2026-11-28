@@ -28,6 +28,6 @@ export async function onRequest(context: { request: Request }) {
       { headers: { 'cache-control': 'public, max-age=3600' } },
     );
   } catch {
-    return Response.json({ results: [] }, { headers: { 'cache-control': 'public, max-age=3600' } });
+    return Response.json({ results: [] }, { headers: { 'cache-control': 'no-store' } });
   }
 }
