@@ -122,6 +122,106 @@ type DemCache = {
   grid: ElevationGrid;
 };
 
+type DemLoadRequest = {
+  controller: AbortController;
+  coarse: Promise<ElevationGrid>;
+  fine: Promise<ElevationGrid>;
+  coarseGrid: ElevationGrid | null;
+  coarseError: unknown | null;
+  consumers: number;
+  settled: boolean;
+  abortQueued: boolean;
+};
+
+function demCacheKey(region: CoverageRegion, projection: MapProjection) {
+  return [
+    region,
+    projection.width,
+    projection.height,
+    projection.scale,
+    projection.originX,
+    projection.originY,
+  ]
+    .map((value) => String(value))
+    .join('|');
+}
+
+function createDemLoadRequest(
+  sourceProjection: MapProjection,
+  coarseNx: number,
+  coarseNy: number,
+  fineNx: number,
+  fineNy: number,
+  coverageRegion: CoverageRegion,
+): DemLoadRequest {
+  const controller = new AbortController();
+  let resolveCoarse!: (grid: ElevationGrid) => void;
+  let rejectCoarse!: (error: unknown) => void;
+  let resolveFine!: (grid: ElevationGrid) => void;
+  let rejectFine!: (error: unknown) => void;
+  const request: DemLoadRequest = {
+    controller,
+    coarse: new Promise<ElevationGrid>((resolve, reject) => {
+      resolveCoarse = resolve;
+      rejectCoarse = reject;
+    }),
+    fine: new Promise<ElevationGrid>((resolve, reject) => {
+      resolveFine = resolve;
+      rejectFine = reject;
+    }),
+    coarseGrid: null,
+    coarseError: null,
+    consumers: 0,
+    settled: false,
+    abortQueued: false,
+  };
+  const { signal } = controller;
+  void (async () => {
+    const stopCoarse = startVital('dem_load', { phase: 'coarse', nx: coarseNx, ny: coarseNy }, signal);
+    try {
+      const first = await loadDemGrid(sourceProjection, coarseNx, coarseNy, signal, coverageRegion, 'coarse');
+      stopCoarse('ok');
+      request.coarseGrid = first;
+      resolveCoarse(first);
+    } catch (error) {
+      stopCoarse(signal.aborted ? 'aborted' : 'error');
+      request.coarseError = error;
+      rejectCoarse(error);
+      rejectFine(error);
+      request.settled = true;
+      return;
+    }
+
+    const stopFine = startVital('dem_load', { phase: 'fine', nx: fineNx, ny: fineNy }, signal);
+    try {
+      const fine = await loadDemGrid(sourceProjection, fineNx, fineNy, signal, coverageRegion, 'fine');
+      stopFine('ok');
+      resolveFine(fine);
+    } catch (error) {
+      stopFine(signal.aborted ? 'aborted' : 'error');
+      rejectFine(error);
+    } finally {
+      request.settled = true;
+    }
+  })();
+  return request;
+}
+
+function acquireDemRequest(request: DemLoadRequest) {
+  request.consumers += 1;
+  request.abortQueued = false;
+}
+
+function releaseDemRequest(request: DemLoadRequest) {
+  request.consumers = Math.max(0, request.consumers - 1);
+  if (request.consumers > 0 || request.settled || request.abortQueued) return;
+  request.abortQueued = true;
+  queueMicrotask(() => {
+    request.abortQueued = false;
+    if (request.consumers === 0 && !request.settled) request.controller.abort();
+  });
+}
+
 function projectionRect(source: MapProjection, target: MapProjection) {
   if (Math.abs(source.scale - target.scale) > 1e-6) return null;
   const x = (target.originX - source.originX) * source.scale;
@@ -411,6 +511,8 @@ export default function App() {
   const [demLoading, setDemLoading] = useState(false);
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
+  const demCacheRef = useRef(new Map<string, DemCache>());
+  const demRequestsRef = useRef(new Map<string, DemLoadRequest>());
   const [apart, setApart] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('map');
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
@@ -1333,14 +1435,26 @@ export default function App() {
           projection.scale,
         )
       : projection;
+    const lattice = (density: number) => {
+      const k = Math.min(density, MAX_LATTICE / Math.max(sourceProjection.width, sourceProjection.height));
+      return [Math.round(sourceProjection.width * k), Math.round(sourceProjection.height * k)] as const;
+    };
+    const [cx, cy] = lattice(COARSE_DENSITY);
+    const [fx, fy] = lattice(FINE_DENSITY);
+    const key = demCacheKey(coverageRegion, sourceProjection);
+    const expectedSource = coverageRegion === 'japan' ? 'gsi-dem' : 'usgs-3dep';
+    const cached = demCacheRef.current.get(key);
+    if (cached?.grid.source === expectedSource) {
+      setDemGrid(cached);
+      setDemLoading(false);
+      return;
+    }
     const hasPrefetch =
       viewMode === 'gpx' ||
       (flatMapMode &&
         demGrid &&
         demGrid.projection.width >= projection.width + DEM_PREFETCH * 2 &&
         demGrid.projection.height >= projection.height + DEM_PREFETCH * 2);
-    const exactProjection = demGrid?.projection === projection;
-    const expectedSource = coverageRegion === 'japan' ? 'gsi-dem' : 'usgs-3dep';
     const canReuse =
       demGrid &&
       (viewMode === 'gpx'
@@ -1349,59 +1463,67 @@ export default function App() {
           ? hasPrefetch &&
             demGrid.grid.source === expectedSource &&
             !!projectionRect(demGrid.projection, projection)
-          : exactProjection);
-    if (canReuse) {
+          : demGrid.grid.source === expectedSource && !!projectionRect(demGrid.projection, projection));
+    const pending = demRequestsRef.current.get(key);
+    if (!pending && canReuse) {
       setDemLoading(false);
       return;
     }
-    setDemGrid(null);
+    const request = pending ?? createDemLoadRequest(sourceProjection, cx, cy, fx, fy, coverageRegion);
+    if (!pending) demRequestsRef.current.set(key, request);
+    acquireDemRequest(request);
+    if (request.coarseGrid) setDemGrid({ projection: sourceProjection, grid: request.coarseGrid });
+    else if (!canReuse) setDemGrid(null);
     setDemLoading(true);
-    const controller = new AbortController();
-    const { signal } = controller;
-    const lattice = (density: number) => {
-      const k = Math.min(density, MAX_LATTICE / Math.max(sourceProjection.width, sourceProjection.height));
-      return [Math.round(sourceProjection.width * k), Math.round(sourceProjection.height * k)] as const;
+
+    let active = true;
+    const removeRequest = () => {
+      if (demRequestsRef.current.get(key) === request) demRequestsRef.current.delete(key);
     };
-    void (async () => {
-      const [cx, cy] = lattice(COARSE_DENSITY);
-      const stopCoarse = startVital('dem_load', { phase: 'coarse', nx: cx, ny: cy }, signal);
-      try {
-        const first = await loadDemGrid(sourceProjection, cx, cy, signal, coverageRegion, 'coarse');
-        stopCoarse('ok');
-        if (signal.aborted) return;
+    const applyCoarseFallback = (error: unknown) => {
+      if (viewMode === 'gpx' && points) {
+        setToast(copy.toast.demFallback);
+        setDemGrid({
+          projection: sourceProjection,
+          grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
+        });
+      } else {
+        if (!tutorialMode) setToast(copy.toast.demUnavailable);
+        setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
+      }
+      reportWarning('load_dem_coarse', error);
+      setDemLoading(false);
+    };
+    void request.coarse
+      .then((first) => {
+        if (!active) return;
         setDemGrid({ projection: sourceProjection, grid: first });
-      } catch (error) {
-        stopCoarse(signal.aborted ? 'aborted' : 'error');
-        if (signal.aborted) return;
-        reportWarning('load_dem_coarse', error);
-        if (viewMode === 'gpx' && points) {
-          setToast(copy.toast.demFallback);
-          setDemGrid({
-            projection: sourceProjection,
-            grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
-          });
-        } else {
-          if (!tutorialMode) setToast(copy.toast.demUnavailable);
-          setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
-        }
+      })
+      .catch((error) => {
+        removeRequest();
+        if (!active || request.controller.signal.aborted) return;
+        applyCoarseFallback(error);
+      });
+    void request.fine
+      .then((fine) => {
+        removeRequest();
+        demCacheRef.current.set(key, { projection: sourceProjection, grid: fine });
+        if (!active) return;
+        setDemGrid({ projection: sourceProjection, grid: fine });
         setDemLoading(false);
-        return;
-      }
-      const [fx, fy] = lattice(FINE_DENSITY);
-      const stopFine = startVital('dem_load', { phase: 'fine', nx: fx, ny: fy }, signal);
-      try {
-        const fine = await loadDemGrid(sourceProjection, fx, fy, signal, coverageRegion, 'fine');
-        stopFine('ok');
-        if (!signal.aborted) setDemGrid({ projection: sourceProjection, grid: fine });
-      } catch (error) {
-        stopFine(signal.aborted ? 'aborted' : 'error');
-        // the first pass stays
-        if (!signal.aborted) reportWarning('load_dem_fine', error);
-      }
-      if (!signal.aborted) setDemLoading(false);
-    })();
-    return () => controller.abort();
-  }, [coverageRegion, flatMapMode, projection, points, viewMode]);
+      })
+      .catch((error) => {
+        removeRequest();
+        if (!active || request.controller.signal.aborted || request.coarseError !== null) return;
+        // The coarse grid remains visible when only the refinement fails.
+        reportWarning('load_dem_fine', error);
+        setDemLoading(false);
+      });
+    return () => {
+      active = false;
+      releaseDemRequest(request);
+    };
+  }, [copy, coverageRegion, flatMapMode, points, projection, tutorialMode, viewMode]);
 
   useEffect(() => {
     if (!toast) return;

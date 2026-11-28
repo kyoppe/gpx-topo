@@ -73,9 +73,11 @@ async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSigna
 }
 
 const USGS_SAMPLES_URL = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
-// Keep the query well below common URL-size limits. The service supports more
-// samples, but browser GET requests become unreliable before that limit.
-const USGS_MAX_SAMPLE_POINTS = 100;
+// POST keeps the geometry out of the URL. The service accepts up to about 1,000
+// sample points per operation, so larger batches avoid the long serial tail of
+// many small browser requests.
+const USGS_MAX_SAMPLE_POINTS = 1000;
+const USGS_MAX_CONCURRENT_REQUESTS = 4;
 // ArcGIS documents an approximate 1,000-sample operation limit. Use a denser
 // 64 x 64 lattice for the fine pass and split it into browser-safe requests.
 const USGS_MAX_SAMPLE_INTERVALS = 63;
@@ -92,29 +94,42 @@ type UsgsSamplesResponse = {
 
 async function fetchUsgsSamples(points: readonly { lat: number; lon: number }[], signal?: AbortSignal) {
   const values = new Array<number | null>(points.length).fill(null);
-  for (let offset = 0; offset < points.length; offset += USGS_MAX_SAMPLE_POINTS) {
-    const batch = points.slice(offset, offset + USGS_MAX_SAMPLE_POINTS);
-    const params = new URLSearchParams({
-      geometry: JSON.stringify({
-        points: batch.map((point) => [point.lon, point.lat]),
-        spatialReference: { wkid: 4326 },
-      }),
-      geometryType: 'esriGeometryMultipoint',
-      returnFirstValueOnly: 'true',
-      interpolation: 'RSP_BilinearInterpolation',
-      f: 'json',
-    });
-    const response = await fetch(`${USGS_SAMPLES_URL}?${params}`, { signal });
-    if (!response.ok) throw new Error(`USGS 3DEP sample request failed: ${response.status}`);
-    const body = (await response.json()) as UsgsSamplesResponse;
-    if (body.error) throw new Error(body.error.message ?? 'USGS 3DEP sample request failed.');
-    for (let index = 0; index < (body.samples?.length ?? 0); index += 1) {
-      const sample = body.samples?.[index];
-      const localIndex = Number.isInteger(sample?.locationId) ? Number(sample?.locationId) : index;
-      const value = Number(sample?.value);
-      if (localIndex >= 0 && localIndex < batch.length && Number.isFinite(value)) values[offset + localIndex] = value;
+  const batches = Array.from({ length: Math.ceil(points.length / USGS_MAX_SAMPLE_POINTS) }, (_, batchIndex) => {
+    const offset = batchIndex * USGS_MAX_SAMPLE_POINTS;
+    return { offset, points: points.slice(offset, offset + USGS_MAX_SAMPLE_POINTS) };
+  });
+  let nextBatch = 0;
+  const worker = async () => {
+    while (nextBatch < batches.length) {
+      const batch = batches[nextBatch];
+      nextBatch += 1;
+      const params = new URLSearchParams({
+        geometry: JSON.stringify({
+          points: batch.points.map((point) => [point.lon, point.lat]),
+          spatialReference: { wkid: 4326 },
+        }),
+        geometryType: 'esriGeometryMultipoint',
+        returnFirstValueOnly: 'true',
+        interpolation: 'RSP_BilinearInterpolation',
+        f: 'json',
+      });
+      const response = await fetch(USGS_SAMPLES_URL, {
+        method: 'POST',
+        body: params,
+        signal,
+      });
+      if (!response.ok) throw new Error(`USGS 3DEP sample request failed: ${response.status}`);
+      const body = (await response.json()) as UsgsSamplesResponse;
+      if (body.error) throw new Error(body.error.message ?? 'USGS 3DEP sample request failed.');
+      for (let index = 0; index < (body.samples?.length ?? 0); index += 1) {
+        const sample = body.samples?.[index];
+        const localIndex = Number.isInteger(sample?.locationId) ? Number(sample?.locationId) : index;
+        const value = Number(sample?.value);
+        if (localIndex >= 0 && localIndex < batch.points.length && Number.isFinite(value)) values[batch.offset + localIndex] = value;
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(USGS_MAX_CONCURRENT_REQUESTS, batches.length) }, () => worker()));
   return values;
 }
 

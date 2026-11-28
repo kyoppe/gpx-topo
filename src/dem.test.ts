@@ -33,14 +33,14 @@ describe('GSI DEM PNG decoder', () => {
     expect(Array.from(values)).toEqual([0, 5, 10, 5, 12.5, 20, 10, 20, 30]);
   });
 
-  it('uses a 64 x 64 fine USGS lattice while batching browser requests', async () => {
-    const requests: string[] = [];
+  it('uses a 64 x 64 fine USGS lattice with concurrent POST batches', async () => {
+    const requests: { method: string; points: number }[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(String(input));
-        requests.push(url.href);
-        const points = JSON.parse(url.searchParams.get('geometry') ?? '{"points":[]}').points as unknown[];
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const params = new URLSearchParams(String(init?.body ?? ''));
+        const points = JSON.parse(params.get('geometry') ?? '{"points":[]}').points as unknown[];
+        requests.push({ method: init?.method ?? 'GET', points: points.length });
         return new Response(
           JSON.stringify({ samples: points.map((_, index) => ({ locationId: index, value: index })) }),
           { headers: { 'content-type': 'application/json' } },
@@ -50,12 +50,9 @@ describe('GSI DEM PNG decoder', () => {
 
     const projection = createCenteredProjection(36.1, -112.1, 1000, 1000, 1);
     const grid = await loadDemGrid(projection, 64, 64, undefined, 'united-states', 'fine');
-    const batchSizes = requests.map((request) => {
-      const geometry = JSON.parse(new URL(request).searchParams.get('geometry') ?? '{"points":[]}');
-      return geometry.points.length;
-    });
 
     expect(grid.source).toBe('usgs-3dep');
-    expect(batchSizes).toEqual([...Array.from({ length: 40 }, () => 100), 96]);
+    expect(requests.every((request) => request.method === 'POST')).toBe(true);
+    expect(requests.map((request) => request.points).sort((a, b) => a - b)).toEqual([96, 1000, 1000, 1000, 1000]);
   });
 });
