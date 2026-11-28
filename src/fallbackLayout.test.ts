@@ -85,7 +85,7 @@ describe('compact bar', () => {
   });
 
   it('uses the post-dock width for a docked window', () => {
-    expect(isCompactBar(760)).toBe(false);
+    expect(isCompactBar(COMPACT_BAR_MAX_WIDTH + 1)).toBe(false);
     expect(isCompactBar(760 - DOCK_WIDTH)).toBe(true);
     expect(compactHudSize(319)).toBe('small');
     expect(compactHudSize(320)).toBe('medium');
@@ -110,11 +110,22 @@ describe('compact bar', () => {
     }
   });
 
+  it('fits the widest compact side group on either side of the centered flip key', () => {
+    for (const width of [280, 320, 375, 390]) {
+      const { keyWidth, flipWidth, gap } = compactHudMetrics(width);
+      const sideGroup = compactHudRowWidth(Array.from({ length: 4 }, () => keyWidth), gap);
+      const normalSideGroup = compactHudRowWidth(Array.from({ length: 3 }, () => keyWidth), gap);
+      expect(sideGroup).toBeLessThanOrEqual((width - keyWidth) / 2);
+      expect(normalSideGroup).toBeLessThanOrEqual((width - flipWidth) / 2);
+    }
+  });
+
   it('matches the width the bar turns to pictures at in the stylesheet', async () => {
     const { readFileSync } = await import('node:fs');
     const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
     expect(css).toContain(`.fb-ui[data-compact='true'] .fb-hud .key-open,`);
-    expect(css).toContain('--fb-compact-gap: 6px;');
+    expect(css).toContain('--fb-compact-gap: 3px;');
+    expect(css).toContain('--fb-compact-key-width: 33px;');
     expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .hud-controls-center");
     expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .key-moves {\n    width: var(--fb-compact-key-width);\n    min-width: var(--fb-compact-key-width);\n    padding: 0;\n}");
   });
@@ -123,6 +134,7 @@ describe('compact bar', () => {
     const { readFileSync } = await import('node:fs');
     const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8');
     expect(css).toContain('.well-flip-slot');
+    expect(css).toContain('width: 282px;');
     expect(css).toContain("left: calc(50% - 65px);");
     expect(css).toContain('.fb-hud .hud-controls');
     expect(css).toContain(".fb-ui[data-compact='true'] .fb-hud .hud-controls-center");

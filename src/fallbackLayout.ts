@@ -68,9 +68,10 @@ export function sheetOpenHeight(windowHeight: number): number {
 
 /**
  * A bar this narrow shows its keys as pictures, and has no room for the first person view and the aerial shots as keys of
- * their own: one key opens them instead. Keep in step with the `max-width: 560px` media query of the bar in styles.css.
+ * their own: one key opens them instead. The threshold also leaves each side of the centered flip key room for its
+ * widest compact control group.
  */
-export const COMPACT_BAR_MAX_WIDTH = 560;
+export const COMPACT_BAR_MAX_WIDTH = 760;
 
 export function isCompactBar(width: number): boolean {
   return width <= COMPACT_BAR_MAX_WIDTH;
@@ -79,7 +80,7 @@ export function isCompactBar(width: number): boolean {
 /** Compact fallback HUD values. Keep these in step with the compact controls in styles.css. */
 export const COMPACT_HUD_KEY_WIDTH = 40;
 export const COMPACT_HUD_FLIP_WIDTH = 84;
-export const COMPACT_HUD_GAP = 6;
+export const COMPACT_HUD_GAP = 3;
 export const COMPACT_HUD_MEDIUM_MAX_WIDTH = 385;
 export const COMPACT_HUD_SMALL_MAX_WIDTH = 319;
 
@@ -99,8 +100,8 @@ export function compactHudSize(width: number): CompactHudSize {
 
 export function compactHudMetrics(width: number): CompactHudMetrics {
   const size = compactHudSize(width);
-  if (size === 'small') return { keyWidth: 30, flipWidth: 56, gap: 2 };
-  if (size === 'medium') return { keyWidth: 34, flipWidth: 64, gap: 3 };
+  if (size === 'small') return { keyWidth: 30, flipWidth: 56, gap: 1 };
+  if (size === 'medium') return { keyWidth: 33, flipWidth: 64, gap: 3 };
   return { keyWidth: COMPACT_HUD_KEY_WIDTH, flipWidth: COMPACT_HUD_FLIP_WIDTH, gap: COMPACT_HUD_GAP };
 }
 

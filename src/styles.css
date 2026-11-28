@@ -1827,7 +1827,12 @@ main[lang='en'] .pop-foot small {
 }
 
 .well-flip-slot {
-  width: 130px;
+  /*
+   * The native controls are not symmetrical in every state. Reserve enough
+   * center space for the widest side difference so the centered flip well
+   * never covers a neighboring control.
+   */
+  width: 282px;
   visibility: hidden;
 }
 
@@ -3120,7 +3125,7 @@ html[data-fb-drag] .fb-panel-body {
 .fb-ui[data-compact='true'] .fb-hud .hud {
     --fb-compact-key-width: 40px;
     --fb-compact-flip-width: 84px;
-    --fb-compact-gap: 6px;
+    --fb-compact-gap: 3px;
     width: 100%;
     flex-wrap: nowrap;
     gap: var(--fb-compact-gap);
@@ -3171,7 +3176,7 @@ html[data-fb-drag] .fb-panel-body {
 }
 
 .fb-ui[data-compact-size='medium'] .fb-hud .hud {
-    --fb-compact-key-width: 34px;
+    --fb-compact-key-width: 33px;
     --fb-compact-flip-width: 64px;
     --fb-compact-gap: 3px;
 }
@@ -3179,7 +3184,7 @@ html[data-fb-drag] .fb-panel-body {
 .fb-ui[data-compact-size='small'] .fb-hud .hud {
     --fb-compact-key-width: 30px;
     --fb-compact-flip-width: 56px;
-    --fb-compact-gap: 2px;
+    --fb-compact-gap: 1px;
 }
 
 /* the photo and the video are made here too; the dialog after them takes the share sheet's place of the scene's print */

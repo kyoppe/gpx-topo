@@ -3747,9 +3747,6 @@ export default function App() {
                 )}
               </button>
             )}
-            {fb && compactBar && viewMode === 'map' && !movesKeyShown && (
-              <span className="key key-moves key-moves-placeholder" aria-hidden="true" />
-            )}
             </div>
             <div className={`hud-controls-center${fb && compactBar && flyoverPlaying ? ' is-flyover-compact' : ''}`}>
             <span className="key-flip-slot" aria-hidden="true" />
@@ -3789,6 +3786,9 @@ export default function App() {
             </button>
             </div>
             <div className="hud-controls-right">
+            {fb && compactBar && viewMode === 'map' && !movesKeyShown && (
+              <span className="key key-moves key-moves-placeholder" aria-hidden="true" />
+            )}
             {viewMode === 'gpx' && (
               <>
                 <button
