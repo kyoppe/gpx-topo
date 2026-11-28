@@ -2880,11 +2880,6 @@ export default function App() {
                   {copy.ui.mapCoverageUnsupported}
                 </div>
               )}
-              {mapCredit && (
-                <div className="map-attribution" data-piece="coverage" data-map-control="" drawable="" data-selectable="">
-                  {mapCredit}
-                </div>
-              )}
               <StageHost host={fb?.mapControls ?? null}>
               <div className="map-actions">
                 {shouldShowCurrentLocationControl(viewMode, apart) && (
@@ -3102,7 +3097,6 @@ export default function App() {
                           ))}
                         </ol>
                       )}
-                      {mapCredit && <p className="credit" data-selectable="">{mapCredit}</p>}
                     </div>
                   )}
                 </section>

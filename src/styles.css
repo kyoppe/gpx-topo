@@ -902,21 +902,6 @@ main[lang='en'] .in-ways > .row small {
   pointer-events: none;
 }
 
-.map-attribution {
-  position: absolute;
-  z-index: 3;
-  right: 8px;
-  bottom: 8px;
-  max-width: calc(100% - 16px);
-  padding: 2px 5px;
-  color: rgba(35, 38, 42, 0.76);
-  background: rgb(255 255 255 / 68%);
-  border-radius: 3px;
-  font-size: 9px;
-  line-height: 1.3;
-  pointer-events: none;
-}
-
 .map-search-results {
   max-height: 160px;
   margin: 8px 0 0;
