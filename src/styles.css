@@ -1315,7 +1315,7 @@ main[lang='en'] .in-ways > .row small {
 .map-credit {
   position: absolute;
   right: 14px;
-  top: 14px;
+  bottom: 14px;
   z-index: 2;
   max-width: calc(100% - 28px);
   padding: 3px 7px;
@@ -2703,9 +2703,13 @@ main[lang='en'] .bar-hint {
 
 .fb-map-controls .map-credit {
   position: fixed;
-  top: max(var(--fb-edge), env(safe-area-inset-top));
   right: max(var(--fb-edge), env(safe-area-inset-right));
-  bottom: auto;
+  bottom: calc(
+    var(--fb-sheet-h, 0px) + 17px + 40px
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+  );
+  top: auto;
   left: auto;
 }
 
@@ -2737,7 +2741,11 @@ main[lang='en'] .bar-hint {
 
 .fb-ui[data-dock='true'] .fb-map-controls .map-credit {
   right: calc(var(--fb-dock-width) + max(var(--fb-edge), env(safe-area-inset-right)));
-  top: max(var(--fb-edge), env(safe-area-inset-top));
+  bottom: calc(
+    40px
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+    + max(var(--fb-edge), env(safe-area-inset-bottom))
+  );
 }
 
 /* the room a docked panel takes beside the canvas (its width and the margin either side) */
