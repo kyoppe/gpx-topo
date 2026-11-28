@@ -76,9 +76,9 @@ const USGS_SAMPLES_URL = 'https://elevation.nationalmap.gov/arcgis/rest/services
 // Keep the query well below common URL-size limits. The service supports more
 // samples, but browser GET requests become unreliable before that limit.
 const USGS_MAX_SAMPLE_POINTS = 100;
-// ArcGIS documents an approximate 1,000-sample operation limit. Use almost
-// that many points per viewport, split into small browser-safe requests.
-const USGS_MAX_SAMPLE_INTERVALS = 30;
+// ArcGIS documents an approximate 1,000-sample operation limit. Use a denser
+// 64 x 64 lattice for the fine pass and split it into browser-safe requests.
+const USGS_MAX_SAMPLE_INTERVALS = 63;
 
 type UsgsSample = {
   locationId?: number;

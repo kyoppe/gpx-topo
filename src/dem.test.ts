@@ -33,7 +33,7 @@ describe('GSI DEM PNG decoder', () => {
     expect(Array.from(values)).toEqual([0, 5, 10, 5, 12.5, 20, 10, 20, 30]);
   });
 
-  it('keeps a fine USGS lattice near the service limit while batching browser requests', async () => {
+  it('uses a 64 x 64 fine USGS lattice while batching browser requests', async () => {
     const requests: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -56,6 +56,6 @@ describe('GSI DEM PNG decoder', () => {
     });
 
     expect(grid.source).toBe('usgs-3dep');
-    expect(batchSizes).toEqual([100, 100, 100, 100, 100, 100, 100, 100, 100, 61]);
+    expect(batchSizes).toEqual([...Array.from({ length: 40 }, () => 100), 96]);
   });
 });
