@@ -252,6 +252,7 @@ describe('word plates (pins and the probe)', () => {
   it('are pieces the fallback draws', () => {
     expect(FALLBACK_PIECE_KINDS.has('pin')).toBe(true);
     expect(FALLBACK_PIECE_KINDS.has('probe')).toBe(true);
+    expect(FALLBACK_PIECE_KINDS.has('coverage')).toBe(true);
   });
 
   /** jsdom has no layout: say where each letter of a text node sits, by its offset. */

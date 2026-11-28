@@ -40,6 +40,7 @@ export type Copy = {
   toast: {
     mapTilesFailed: string;
     demFallback: string;
+    demUnavailable: string;
     waypointAdded(name: string, km: number): string;
     addKmRequired: string;
     clickRoute: string;
@@ -75,6 +76,7 @@ export type Copy = {
     hillshadeOn: string;
     hillshadeOff: string;
     mapLoading: string;
+    elevationLoading: string;
     highestPoint(elevation: number): string;
     highestPointLabel: string;
     positionAtTime: string;
@@ -109,6 +111,10 @@ export type Copy = {
     deleteWaypointAria(name: string): string;
     estimated: string;
     gsiCredit: string;
+    osmCredit: string;
+    usgsCredit: string;
+    mapCoverageUnsupported: string;
+    mapSearchUnsupported: string;
     previousMonth: string;
     nextMonth: string;
     elapsedTime: string;
@@ -221,8 +227,9 @@ function makeCopy(language: Language): Copy {
         return `${Math.floor(minutes / 60)}時間${minutes % 60}分`;
       },
       toast: {
-        mapTilesFailed: '地理院タイルを読み込めませんでした。',
-        demFallback: 'GSI DEM を読み込めなかったため、GPX の標高から地形を作っています。',
+        mapTilesFailed: '地図タイルを読み込めませんでした。',
+        demFallback: '地形データを読み込めなかったため、GPX の標高から地形を作っています。',
+        demUnavailable: '地形データを読み込めなかったため、平坦な地形を表示しています。',
         waypointAdded: (name, km) => `${name} を ${km.toFixed(1)} km に追加しました。`,
         addKmRequired: '追加する位置を km で入力してください。',
         clickRoute: 'ルートの上をクリックしてください。',
@@ -258,6 +265,7 @@ function makeCopy(language: Language): Copy {
         hillshadeOn: '陰影あり',
         hillshadeOff: '陰影なし',
         mapLoading: '地図を読み込み中',
+        elevationLoading: '等高線を読み込み中',
         highestPoint: (elevation) => `最高点 ${Math.round(elevation)} m`,
         highestPointLabel: '最高点',
         positionAtTime: 'この時刻の位置',
@@ -292,6 +300,10 @@ function makeCopy(language: Language): Copy {
         deleteWaypointAria: (name) => `${name} を削除`,
         estimated: '推定',
         gsiCredit: '地理院タイル (淡色地図・白地図・陰影起伏図・標高タイル) 国土地理院',
+        osmCredit: '地図: © OpenStreetMap contributors',
+        usgsCredit: '標高: USGS 3DEP',
+        mapCoverageUnsupported: 'この地域の地図と地形には未対応です。',
+        mapSearchUnsupported: 'この地域の地図と地形には未対応です。対応地域へ移動してください。',
         previousMonth: '前の月',
         nextMonth: '次の月',
         elapsedTime: 'スタートからの経過時間',
@@ -402,8 +414,9 @@ function makeCopy(language: Language): Copy {
       return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     },
     toast: {
-      mapTilesFailed: 'Could not load the GSI map tiles.',
-      demFallback: 'Could not load the GSI DEM, so the terrain is built from GPX elevations.',
+      mapTilesFailed: 'Could not load the map tiles.',
+      demFallback: 'Could not load the elevation data, so the terrain is built from GPX elevations.',
+      demUnavailable: 'Could not load the elevation data, so a flat terrain surface is shown.',
       waypointAdded: (name, km) => `${name} added at ${km.toFixed(1)} km.`,
       addKmRequired: 'Enter a position in km.',
       clickRoute: 'Click the route.',
@@ -439,6 +452,7 @@ function makeCopy(language: Language): Copy {
       hillshadeOn: 'Hillshade on',
       hillshadeOff: 'Hillshade off',
       mapLoading: 'Loading map',
+      elevationLoading: 'Loading contour data',
       highestPoint: (elevation) => `Highest point ${Math.round(elevation)} m`,
       highestPointLabel: 'Highest point',
       positionAtTime: 'Position at this time',
@@ -473,6 +487,10 @@ function makeCopy(language: Language): Copy {
       deleteWaypointAria: (name) => `Delete ${name}`,
       estimated: 'estimated',
       gsiCredit: 'GSI tiles (Pale map, blank map, hillshade, elevation) Geospatial Information Authority of Japan',
+      osmCredit: 'Map: © OpenStreetMap contributors',
+      usgsCredit: 'Elevation: USGS 3DEP',
+      mapCoverageUnsupported: 'This region is not supported for maps and terrain.',
+      mapSearchUnsupported: 'This region is not supported for maps and terrain. Move to a supported area.',
       previousMonth: 'Previous month',
       nextMonth: 'Next month',
       elapsedTime: 'Elapsed time from start',

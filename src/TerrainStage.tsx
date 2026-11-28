@@ -137,7 +137,7 @@ function createProgram(gl: WebGL2RenderingContext) {
 
 /** Before the elevations arrive the model is a flat sheet. */
 function flatGrid(): ElevationGrid {
-  return { nx: 1, ny: 1, values: new Float32Array(4), source: 'gsi-dem' };
+  return { nx: 1, ny: 1, values: new Float32Array(4), source: 'flat' };
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));

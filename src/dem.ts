@@ -1,6 +1,7 @@
 import { createCenteredProjection, type MapProjection } from './geo';
 import type { SiteScene } from './siteScene';
 import { decodePng } from './png';
+import { regionProfileFor, type CoverageRegion } from './regions';
 
 const TILE = 256;
 const INVALID_RGB = (128 << 16) | (0 << 8) | 0;
@@ -12,7 +13,7 @@ export type ElevationGrid = {
   nx: number;
   ny: number;
   values: Float32Array;
-  source: 'gsi-dem' | 'gpx';
+  source: 'gsi-dem' | 'usgs-3dep' | 'gpx' | 'flat';
 };
 
 export function decodeDemElevation(red: number, green: number, blue: number) {
@@ -53,8 +54,15 @@ async function decodeTile(bytes: Uint8Array<ArrayBuffer>) {
 
 async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSignal) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const requestController = new AbortController();
+    const forwardAbort = () => requestController.abort();
+    if (signal?.aborted) requestController.abort();
+    else signal?.addEventListener('abort', forwardAbort, { once: true });
+    const timeout = window.setTimeout(() => requestController.abort(), GSI_REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch(`https://cyberjapandata.gsi.go.jp/xyz/dem_png/${z}/${x}/${y}.png`, { signal });
+      const response = await fetch(`https://cyberjapandata.gsi.go.jp/xyz/dem_png/${z}/${x}/${y}.png`, {
+        signal: requestController.signal,
+      });
       if (response.status === 404) {
         return 'sea' as const;
       }
@@ -66,9 +74,173 @@ async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSigna
       if (signal?.aborted) {
         throw error;
       }
+    } finally {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener('abort', forwardAbort);
     }
   }
   return null;
+}
+
+const USGS_SAMPLES_URL = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
+// POST keeps the geometry out of the URL. The service accepts up to about 1,000
+// sample points per operation, so larger batches avoid the long serial tail of
+// many small browser requests.
+const USGS_MAX_SAMPLE_POINTS = 1000;
+const USGS_MAX_CONCURRENT_REQUESTS = 4;
+const USGS_REQUEST_TIMEOUT_MS = 30_000;
+const GSI_MAX_CONCURRENT_REQUESTS = 8;
+const GSI_REQUEST_TIMEOUT_MS = 15_000;
+// ArcGIS documents an approximate 1,000-sample operation limit. Use a denser
+// 64 x 64 lattice for the fine pass and split it into browser-safe requests.
+const USGS_MAX_SAMPLE_INTERVALS = 63;
+
+type UsgsSample = {
+  locationId?: number;
+  value?: number | string;
+};
+
+type UsgsSamplesResponse = {
+  samples?: UsgsSample[];
+  error?: { message?: string };
+};
+
+async function fetchUsgsSamples(points: readonly { lat: number; lon: number }[], signal?: AbortSignal) {
+  const values = new Array<number | null>(points.length).fill(null);
+  const batches = Array.from({ length: Math.ceil(points.length / USGS_MAX_SAMPLE_POINTS) }, (_, batchIndex) => {
+    const offset = batchIndex * USGS_MAX_SAMPLE_POINTS;
+    return { offset, points: points.slice(offset, offset + USGS_MAX_SAMPLE_POINTS) };
+  });
+  const batchController = new AbortController();
+  const forwardAbort = () => batchController.abort();
+  if (signal?.aborted) batchController.abort();
+  else signal?.addEventListener('abort', forwardAbort, { once: true });
+  const timeout = window.setTimeout(() => batchController.abort(), USGS_REQUEST_TIMEOUT_MS);
+  let nextBatch = 0;
+  const worker = async () => {
+    try {
+      while (nextBatch < batches.length) {
+        if (batchController.signal.aborted) throw new Error('USGS 3DEP sample requests aborted.');
+        const batch = batches[nextBatch];
+        nextBatch += 1;
+        const params = new URLSearchParams({
+          geometry: JSON.stringify({
+            points: batch.points.map((point) => [point.lon, point.lat]),
+            spatialReference: { wkid: 4326 },
+          }),
+          geometryType: 'esriGeometryMultipoint',
+          returnFirstValueOnly: 'true',
+          interpolation: 'RSP_BilinearInterpolation',
+          f: 'json',
+        });
+        const response = await fetch(USGS_SAMPLES_URL, {
+          method: 'POST',
+          body: params,
+          signal: batchController.signal,
+        });
+        if (!response.ok) throw new Error(`USGS 3DEP sample request failed: ${response.status}`);
+        const body = (await response.json()) as UsgsSamplesResponse;
+        if (body.error) throw new Error(body.error.message ?? 'USGS 3DEP sample request failed.');
+        for (let index = 0; index < (body.samples?.length ?? 0); index += 1) {
+          const sample = body.samples?.[index];
+          const localIndex = Number.isInteger(sample?.locationId) ? Number(sample?.locationId) : index;
+          const value = Number(sample?.value);
+          if (localIndex >= 0 && localIndex < batch.points.length && Number.isFinite(value)) values[batch.offset + localIndex] = value;
+        }
+      }
+    } catch (error) {
+      batchController.abort();
+      throw error;
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(USGS_MAX_CONCURRENT_REQUESTS, batches.length) }, () => worker()));
+    return values;
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener('abort', forwardAbort);
+  }
+}
+
+function fillMissingSamples(samples: readonly (number | null)[], sampleNx: number, sampleNy: number) {
+  const filled = samples.slice();
+  const sampleWidth = sampleNx + 1;
+  const valid = filled.flatMap((value, index) =>
+    value === null
+      ? []
+      : [{ index, x: index % sampleWidth, y: Math.floor(index / sampleWidth), value }],
+  );
+  if (!valid.length) throw new Error('USGS 3DEP has no elevation data for this area.');
+  for (let index = 0; index < filled.length; index += 1) {
+    if (filled[index] !== null) continue;
+    let nearest = valid[0];
+    const x = index % sampleWidth;
+    const y = Math.floor(index / sampleWidth);
+    let distance = (nearest.x - x) ** 2 + (nearest.y - y) ** 2;
+    for (const candidate of valid.slice(1)) {
+      const nextDistance = (candidate.x - x) ** 2 + (candidate.y - y) ** 2;
+      if (nextDistance < distance) {
+        nearest = candidate;
+        distance = nextDistance;
+      }
+    }
+    filled[index] = nearest.value;
+  }
+  return filled as number[];
+}
+
+/** Resamples a small USGS sample lattice to the lattice consumed by the terrain renderer. */
+export function interpolateElevationSamples(
+  samples: readonly (number | null)[],
+  sampleNx: number,
+  sampleNy: number,
+  nx: number,
+  ny: number,
+) {
+  const sourceW = sampleNx + 1;
+  const source = fillMissingSamples(samples, sampleNx, sampleNy);
+  const values = new Float32Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j += 1) {
+    const gy = (j / Math.max(1, ny)) * sampleNy;
+    const y0 = Math.min(sampleNy - 1, Math.floor(gy));
+    const fy = gy - y0;
+    for (let i = 0; i <= nx; i += 1) {
+      const gx = (i / Math.max(1, nx)) * sampleNx;
+      const x0 = Math.min(sampleNx - 1, Math.floor(gx));
+      const fx = gx - x0;
+      const a = source[y0 * sourceW + x0];
+      const b = source[y0 * sourceW + x0 + 1];
+      const c = source[(y0 + 1) * sourceW + x0];
+      const d = source[(y0 + 1) * sourceW + x0 + 1];
+      values[j * (nx + 1) + i] = a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+    }
+  }
+  return values;
+}
+
+async function loadUsgsDemGrid(
+  projection: MapProjection,
+  nx: number,
+  ny: number,
+  signal?: AbortSignal,
+  quality: 'coarse' | 'fine' = 'fine',
+): Promise<ElevationGrid> {
+  const maxIntervals = quality === 'coarse' ? 9 : USGS_MAX_SAMPLE_INTERVALS;
+  const sampleNx = Math.min(Math.max(1, nx), maxIntervals);
+  const sampleNy = Math.min(Math.max(1, ny), maxIntervals);
+  const points = [];
+  for (let j = 0; j <= sampleNy; j += 1) {
+    for (let i = 0; i <= sampleNx; i += 1) {
+      points.push(projection.inverse((i / sampleNx) * projection.width, (j / sampleNy) * projection.height));
+    }
+  }
+  const samples = await fetchUsgsSamples(points, signal);
+  return {
+    nx,
+    ny,
+    values: interpolateElevationSamples(samples, sampleNx, sampleNy, nx, ny),
+    source: 'usgs-3dep',
+  };
 }
 
 /** Samples GSI DEM tiles (DEM10B) on the lattice the terrain is built from. */
@@ -77,21 +249,30 @@ export async function loadDemGrid(
   nx: number,
   ny: number,
   signal?: AbortSignal,
+  region: CoverageRegion = 'japan',
+  quality: 'coarse' | 'fine' = 'fine',
 ): Promise<ElevationGrid> {
+  const profile = regionProfileFor(region);
+  if (profile.elevation === 'usgs-3dep') return loadUsgsDemGrid(projection, nx, ny, signal, quality);
+  if (profile.elevation === 'none') throw new Error('Elevation data is unavailable for this region.');
   const zoom = projection.zoomFor((2 * nx) / projection.width, 5, 14);
   const tiles = projection.tiles(zoom);
   const decoded = new Map<string, Float32Array | 'sea'>();
   let failed = 0;
-  await Promise.all(
-    tiles.map(async (tile) => {
+  let nextTile = 0;
+  const worker = async () => {
+    while (nextTile < tiles.length) {
+      const tile = tiles[nextTile];
+      nextTile += 1;
       const values = await fetchDemTile(tile.z, tile.x, tile.y, signal);
       if (values === null) {
         failed += 1;
       } else {
         decoded.set(`${tile.x}/${tile.y}`, values);
       }
-    }),
-  );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GSI_MAX_CONCURRENT_REQUESTS, tiles.length) }, () => worker()));
   if (decoded.size === 0 || failed > tiles.length / 2) {
     throw new Error('GSI DEM tiles are unavailable for this area.');
   }

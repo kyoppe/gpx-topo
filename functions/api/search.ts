@@ -1,5 +1,5 @@
-import { formatCoordinates, MAX_SEARCH_RESULTS, resolveGoogleMapsLocation, type Coordinates } from '../../src/mapSearch';
-import { loadMunicipalityNames, normalizeGsiSearchResults } from '../../src/gsiSearch';
+import { formatCoordinates, isGoogleMapsUrl, MAX_SEARCH_RESULTS, resolveGoogleMapsLocation, type Coordinates } from '../../src/mapSearch';
+import { normalizeGsiSearchResults } from '../../src/gsiSearch';
 
 export function googleMapsLocation(coordinates: Coordinates & { label?: string }) {
   return {
@@ -18,24 +18,16 @@ export async function onRequest(context: { request: Request }) {
   if (!query || query.length > 200) {
     return Response.json({ results: [] }, { status: 400 });
   }
+  if (!isGoogleMapsUrl(query)) {
+    return Response.json({ results: [] }, { headers: { 'cache-control': 'public, max-age=3600' } });
+  }
   try {
     const location = await resolveGoogleMapsLocation(query);
-    if (location) {
-      return Response.json({ results: [googleMapsLocation(location)] }, { headers: { 'cache-control': 'public, max-age=3600' } });
-    }
+    return Response.json(
+      { results: location ? [googleMapsLocation(location)] : [] },
+      { headers: { 'cache-control': location ? 'public, max-age=3600' : 'no-store' } },
+    );
   } catch {
-    // Fall through to the normal address search if a Google Maps redirect cannot be resolved.
+    return Response.json({ results: [] }, { headers: { 'cache-control': 'no-store' } });
   }
-  const upstream = await fetch(`https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(query)}`, {
-    cf: { cacheEverything: true, cacheTtl: 3600 },
-  });
-  if (!upstream.ok) {
-    return new Response('GSI search unavailable.', { status: upstream.status });
-  }
-  const source = (await upstream.json()) as unknown[];
-  const municipalityNames = await loadMunicipalityNames();
-  return Response.json(
-    { results: normalizeGsiSearchResults(source, query, municipalityNames).slice(0, MAX_SEARCH_RESULTS) },
-    { headers: { 'cache-control': 'public, max-age=3600' } },
-  );
 }

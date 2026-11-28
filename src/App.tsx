@@ -29,10 +29,12 @@ import { shouldSwitchToGpxAfterFileLoad, toggleViewMode, type ViewMode } from '.
 import { shouldShowCurrentLocationControl } from './currentLocationControl';
 import { MAP_MANEUVER_KINDS, type MapManeuverKind, type MapManeuverPhase } from './mapManeuver';
 import { buildMapPermalink, normalizeMapPinLabel, parseMapPermalink, stripMapPermalinkParameters, type MapPermalinkPan, type MapPermalinkPin, type MapPermalinkSunSpeed } from './mapPermalink';
+import { MapCredit } from './MapCredit';
 import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } from './geolocation';
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
+import { regionForCoordinates, type CoverageRegion } from './regions';
 import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
@@ -64,6 +66,7 @@ const MIN_PAGE_HEIGHT = 640;
 const COARSE_DENSITY = 0.4;
 const FINE_DENSITY = 2.5;
 const MAX_LATTICE = 2047;
+const MAX_DEM_CACHE_ENTRIES = 2;
 /** Extra map pixels kept around the viewport so flat-map dragging never exposes an empty edge. */
 const MAP_PAN_BUFFER = 512;
 /** DEM prefetch extends beyond the visual drag buffer so the next viewport is already covered. */
@@ -100,7 +103,7 @@ function layoutFor(width: number, height: number): Layout {
 }
 
 function flatElevationGrid(nx: number, ny: number): ElevationGrid {
-  return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'gsi-dem' };
+  return { nx, ny, values: new Float32Array((nx + 1) * (ny + 1)), source: 'flat' };
 }
 
 function parseGpxWithVital(xml: string, source: 'file' | 'restore'): GpxRoute {
@@ -119,6 +122,120 @@ type DemCache = {
   projection: MapProjection;
   grid: ElevationGrid;
 };
+
+type DemLoadRequest = {
+  controller: AbortController;
+  projection: MapProjection;
+  region: CoverageRegion;
+  coarse: Promise<ElevationGrid>;
+  fine: Promise<ElevationGrid>;
+  coarseGrid: ElevationGrid | null;
+  coarseError: unknown | null;
+  consumers: number;
+  settled: boolean;
+  abortQueued: boolean;
+};
+
+function demCacheKey(region: CoverageRegion, projection: MapProjection) {
+  return [
+    region,
+    projection.width,
+    projection.height,
+    projection.scale,
+    projection.originX,
+    projection.originY,
+  ]
+    .map((value) => String(value))
+    .join('|');
+}
+
+function createDemLoadRequest(
+  sourceProjection: MapProjection,
+  coarseNx: number,
+  coarseNy: number,
+  fineNx: number,
+  fineNy: number,
+  coverageRegion: CoverageRegion,
+): DemLoadRequest {
+  const controller = new AbortController();
+  let resolveCoarse!: (grid: ElevationGrid) => void;
+  let rejectCoarse!: (error: unknown) => void;
+  let resolveFine!: (grid: ElevationGrid) => void;
+  let rejectFine!: (error: unknown) => void;
+  const request: DemLoadRequest = {
+    controller,
+    projection: sourceProjection,
+    region: coverageRegion,
+    coarse: new Promise<ElevationGrid>((resolve, reject) => {
+      resolveCoarse = resolve;
+      rejectCoarse = reject;
+    }),
+    fine: new Promise<ElevationGrid>((resolve, reject) => {
+      resolveFine = resolve;
+      rejectFine = reject;
+    }),
+    coarseGrid: null,
+    coarseError: null,
+    consumers: 0,
+    settled: false,
+    abortQueued: false,
+  };
+  const { signal } = controller;
+  void (async () => {
+    const stopCoarse = startVital('dem_load', { phase: 'coarse', nx: coarseNx, ny: coarseNy }, signal);
+    try {
+      const first = await loadDemGrid(sourceProjection, coarseNx, coarseNy, signal, coverageRegion, 'coarse');
+      stopCoarse('ok');
+      request.coarseGrid = first;
+      resolveCoarse(first);
+    } catch (error) {
+      stopCoarse(signal.aborted ? 'aborted' : 'error');
+      request.coarseError = error;
+      rejectCoarse(error);
+      rejectFine(error);
+      request.settled = true;
+      return;
+    }
+
+    const stopFine = startVital('dem_load', { phase: 'fine', nx: fineNx, ny: fineNy }, signal);
+    try {
+      const fine = await loadDemGrid(sourceProjection, fineNx, fineNy, signal, coverageRegion, 'fine');
+      stopFine('ok');
+      resolveFine(fine);
+    } catch (error) {
+      stopFine(signal.aborted ? 'aborted' : 'error');
+      rejectFine(error);
+    } finally {
+      request.settled = true;
+    }
+  })();
+  return request;
+}
+
+function rememberDemCache(cache: Map<string, DemCache>, key: string, value: DemCache) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > MAX_DEM_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
+function acquireDemRequest(request: DemLoadRequest) {
+  request.consumers += 1;
+  request.abortQueued = false;
+}
+
+function releaseDemRequest(request: DemLoadRequest) {
+  request.consumers = Math.max(0, request.consumers - 1);
+  if (request.consumers > 0 || request.settled || request.abortQueued) return;
+  request.abortQueued = true;
+  queueMicrotask(() => {
+    request.abortQueued = false;
+    if (request.consumers === 0 && !request.settled) request.controller.abort();
+  });
+}
 
 function projectionRect(source: MapProjection, target: MapProjection) {
   if (Math.abs(source.scale - target.scale) > 1e-6) return null;
@@ -406,8 +523,11 @@ export default function App() {
   const [mapSunAuto, setMapSunAuto] = useState(false);
   const [mapSunSpeed, setMapSunSpeed] = useState(() => MAP_SUN_SPEED_NAMES.indexOf(permalink?.sunSpeed ?? 'normal'));
   const [mapLoading, setMapLoading] = useState(false);
+  const [demLoading, setDemLoading] = useState(false);
   const [mapSwitchOpen, setMapSwitchOpen] = useState(false);
   const [demGrid, setDemGrid] = useState<DemCache | null>(null);
+  const demCacheRef = useRef(new Map<string, DemCache>());
+  const demRequestsRef = useRef(new Map<string, DemLoadRequest>());
   const [apart, setApart] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('map');
   const [mapViewport, setMapViewport] = useState<MapViewport | null>(() => {
@@ -528,6 +648,10 @@ export default function App() {
     currentLocationRecenterRef.current = false;
     if (resetBusy) setCurrentLocationBusy(false);
   }, []);
+  const invalidateMapSearchRequest = useCallback(() => {
+    mapSearchRequestRef.current += 1;
+    setMapSearchBusy(false);
+  }, []);
   const syncHudHitAreas = useCallback((areas: HudHitArea[]) => {
     const layer = hudHitLayerRef.current;
     if (!layer) return;
@@ -591,6 +715,8 @@ export default function App() {
     [mapViewport, layout.mapWidth, layout.mapHeight],
   );
   const projection = viewMode === 'map' ? mapProjection : gpxProjection;
+  const coverageRegion: CoverageRegion = projection ? regionForCoordinates(projection.centerLat, projection.centerLon) : 'japan';
+  const effectiveMapStyle: MapStyle = coverageRegion === 'united-states' ? 'std' : baseMapStyle;
   // Map-only prefetching is useful while flat for dragging, but the raised model
   // should use the same visible-area terrain pipeline as GPX mode.
   const flatMapMode = viewMode === 'map' && !apart;
@@ -630,7 +756,7 @@ export default function App() {
   };
 
   const grid = useMemo(() => {
-    if (!demGrid || !projection) return null;
+    if (coverageRegion === 'unsupported' || !demGrid || !projection) return null;
     const rect = projectionRect(demGrid.projection, projection);
     if (!rect) return null;
     const nx = Math.max(1, Math.round((demGrid.grid.nx * projection.width) / demGrid.projection.width));
@@ -646,12 +772,15 @@ export default function App() {
       nx,
       ny,
     );
-  }, [demGrid, projection]);
+  }, [coverageRegion, demGrid, projection]);
   const terrain = useMemo(
     () => (grid && projection ? buildTerrain(grid, layout.mapWidth, layout.mapHeight, projection.metersPerPixel) : null),
     [grid, projection, layout.mapWidth, layout.mapHeight],
   );
   const mapReady = !!projection && basemap === projection;
+  const mapDataLoading = mapLoading || demLoading;
+  const canRaise = coverageRegion !== 'unsupported' && terrain !== null;
+  const mapHillshade = coverageRegion === 'japan' && hillshade;
 
   const switchViewMode = useCallback(
     (next: ViewMode) => {
@@ -659,6 +788,7 @@ export default function App() {
       detachPermalink('view_mode');
       const target = toggleViewMode(viewMode, true);
       if (target !== next) return;
+      invalidateMapSearchRequest();
       if (viewMode === 'map' && target === 'gpx') cancelCurrentLocationRequest();
       if (target === 'map') {
         if (!gpxProjection) return;
@@ -684,7 +814,18 @@ export default function App() {
         });
       }, 260);
     },
-    [apart, cancelCurrentLocationRequest, detachPermalink, fpvActive, fpvSelecting, gpxProjection, mapManeuver, modeTransition, viewMode],
+    [
+      apart,
+      cancelCurrentLocationRequest,
+      detachPermalink,
+      fpvActive,
+      fpvSelecting,
+      gpxProjection,
+      invalidateMapSearchRequest,
+      mapManeuver,
+      modeTransition,
+      viewMode,
+    ],
   );
   const requestViewMode = useCallback(
     (next: ViewMode) => {
@@ -759,6 +900,8 @@ export default function App() {
   }, []);
   const panMapPreview = useCallback(
     (dx: number, dy: number) => {
+      const buffer = mapBufferRef.current;
+      if (!buffer || buffer.pad <= 0) return;
       const [x, y] = mapDragOffsetRef.current;
       const next: [number, number] = [
         Math.max(-MAP_PAN_BUFFER, Math.min(MAP_PAN_BUFFER, x + dx)),
@@ -782,15 +925,20 @@ export default function App() {
     mapDragOffsetRef.current = begin;
     drawMapBuffer(begin);
   }, [drawMapBuffer]);
-  const panMap = useCallback((_dx: number, _dy: number) => {
+  const panMap = useCallback((dx: number, dy: number) => {
     const [offsetX, offsetY] = mapDragOffsetRef.current;
+    const buffer = mapBufferRef.current;
+    const panX = buffer?.pad === 0 ? dx : offsetX;
+    const panY = buffer?.pad === 0 ? dy : offsetY;
     const current = mapProjectionRef.current;
-    if (!current || (offsetX === 0 && offsetY === 0)) return;
+    if (!current || (panX === 0 && panY === 0)) return;
+    invalidateMapSearchRequest();
+    cancelCurrentLocationRequest();
     detachPermalink('map_pan');
     addAction('map_pan_completed', {
-      distance_px: Math.round(Math.hypot(offsetX, offsetY)),
-      delta_x_px: Math.round(offsetX),
-      delta_y_px: Math.round(offsetY),
+      distance_px: Math.round(Math.hypot(panX, panY)),
+      delta_x_px: Math.round(panX),
+      delta_y_px: Math.round(panY),
     });
     setMapViewport((viewportState) => {
       if (!viewportState) return viewportState;
@@ -801,13 +949,22 @@ export default function App() {
         current.height,
         viewportState.scale,
       );
-      const center = projection.inverse(projection.width / 2 - offsetX, projection.height / 2 - offsetY);
+      const center = projection.inverse(projection.width / 2 - panX, projection.height / 2 - panY);
       return { ...viewportState, ...center };
     });
-  }, [detachPermalink]);
+  }, [cancelCurrentLocationRequest, detachPermalink, invalidateMapSearchRequest]);
   const centerMap = useCallback(
     (center: Coordinates, source: string, location?: SearchLocation) => {
       if (apartRef.current) return;
+      invalidateMapSearchRequest();
+      cancelCurrentLocationRequest();
+      if (regionForCoordinates(center.lat, center.lon) === 'unsupported') {
+        setMapSearchResults([]);
+        setMapSearchLocation(null);
+        setMapSearchError(copy.ui.mapSearchUnsupported);
+        addAction('map_search_unsupported_region', { source, region: 'unsupported' });
+        return;
+      }
       detachPermalink('map_center');
       setMapViewport((viewportState) => ({
         lat: center.lat,
@@ -817,9 +974,10 @@ export default function App() {
       setMapSearchResults([]);
       setMapSearchLocation(location ?? null);
       setMapSearchError(null);
+      setMapSearchBusy(false);
       addAction('map_search_selected', { source });
     },
-    [detachPermalink, gpxProjection],
+    [cancelCurrentLocationRequest, copy.ui.mapSearchUnsupported, detachPermalink, gpxProjection, invalidateMapSearchRequest],
   );
   const searchMap = useCallback(
     async (event?: FormEvent) => {
@@ -833,6 +991,7 @@ export default function App() {
         centerMap(coordinates, 'coordinates');
         return;
       }
+      cancelCurrentLocationRequest();
       const request = ++mapSearchRequestRef.current;
       setMapSearchBusy(true);
       setMapSearchError(null);
@@ -865,7 +1024,7 @@ export default function App() {
         if (request === mapSearchRequestRef.current) setMapSearchBusy(false);
       }
     },
-    [centerMap, copy.ui.mapSearchFailed, copy.ui.mapSearchNoResults, mapSearch],
+    [cancelCurrentLocationRequest, centerMap, copy.ui.mapSearchFailed, copy.ui.mapSearchNoResults, mapSearch],
   );
 
   // elevation profile: distance across, height up
@@ -1135,10 +1294,21 @@ export default function App() {
       setMapLoading(false);
       return;
     }
+    if (coverageRegion === 'unsupported') {
+      for (const canvas of [flat, relief, photo]) {
+        canvas.width = 1;
+        canvas.height = 1;
+      }
+      detailDrawn.current = null;
+      mapBufferRef.current = null;
+      setBasemap(null);
+      setMapLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setMapLoading(true);
     const density = Math.min(2, window.devicePixelRatio || 1);
-    const pad = flatMapMode ? MAP_PAN_BUFFER : 0;
+    const pad = flatMapMode && coverageRegion !== 'united-states' ? MAP_PAN_BUFFER : 0;
     const renderProjection = pad
       ? createCenteredProjection(projection.centerLat, projection.centerLon, projection.width + pad * 2, projection.height + pad * 2, projection.scale)
       : projection;
@@ -1217,7 +1387,16 @@ export default function App() {
       }
       setBasemap(projection);
     };
-    void renderBasemaps(renderProjection, density, { flat: nextFlat, relief: nextRelief, photo: nextPhoto }, controller.signal, () => {}, baseMapStyle, hillshade)
+    void renderBasemaps(
+      renderProjection,
+      density,
+      { flat: nextFlat, relief: nextRelief, photo: nextPhoto },
+      controller.signal,
+      () => {},
+      effectiveMapStyle,
+      mapHillshade,
+      coverageRegion,
+    )
       .then(() => {
         if (controller.signal.aborted) return;
         setMapLoading(false);
@@ -1243,7 +1422,7 @@ export default function App() {
         if (!controller.signal.aborted) {
           cancelCurrentLocationRequest();
           setMapLoading(false);
-          reportError('load_basemap', error, { map_style: baseMapStyle });
+          reportError('load_basemap', error, { map_style: effectiveMapStyle });
           setToast(copy.toast.mapTilesFailed);
         }
       });
@@ -1251,11 +1430,19 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [baseMapStyle, cancelCurrentLocationRequest, flatMapMode, hillshade, projection, viewMode]);
+  }, [cancelCurrentLocationRequest, coverageRegion, effectiveMapStyle, flatMapMode, mapHillshade, projection, viewMode]);
 
   useEffect(() => {
-    if (!projection) return;
-    const sourcePad = flatMapMode ? DEM_PREFETCH : 0;
+    if (!projection) {
+      setDemLoading(false);
+      return;
+    }
+    if (coverageRegion === 'unsupported') {
+      setDemGrid(null);
+      setDemLoading(false);
+      return;
+    }
+    const sourcePad = flatMapMode && coverageRegion !== 'united-states' ? DEM_PREFETCH : 0;
     const sourceProjection = sourcePad
       ? createCenteredProjection(
           projection.centerLat,
@@ -1265,64 +1452,111 @@ export default function App() {
           projection.scale,
         )
       : projection;
+    const lattice = (density: number) => {
+      const k = Math.min(density, MAX_LATTICE / Math.max(sourceProjection.width, sourceProjection.height));
+      return [Math.round(sourceProjection.width * k), Math.round(sourceProjection.height * k)] as const;
+    };
+    const [cx, cy] = lattice(COARSE_DENSITY);
+    const [fx, fy] = lattice(FINE_DENSITY);
+    const key = demCacheKey(coverageRegion, sourceProjection);
+    const expectedSource = coverageRegion === 'japan' ? 'gsi-dem' : 'usgs-3dep';
+    const cached = demCacheRef.current.get(key);
+    if (cached?.grid.source === expectedSource) {
+      demCacheRef.current.delete(key);
+      demCacheRef.current.set(key, cached);
+      setDemGrid(cached);
+      setDemLoading(false);
+      return;
+    }
     const hasPrefetch =
       viewMode === 'gpx' ||
       (flatMapMode &&
         demGrid &&
         demGrid.projection.width >= projection.width + DEM_PREFETCH * 2 &&
         demGrid.projection.height >= projection.height + DEM_PREFETCH * 2);
-    const exactProjection = demGrid?.projection === projection;
     const canReuse =
       demGrid &&
       (viewMode === 'gpx'
-        ? hasPrefetch && projectionRect(demGrid.projection, projection)
+        ? hasPrefetch && demGrid.grid.source === expectedSource && projectionRect(demGrid.projection, projection)
         : flatMapMode
-          ? hasPrefetch && demGrid.grid.source === 'gsi-dem' && !!projectionRect(demGrid.projection, projection)
-          : exactProjection);
-    if (canReuse) return;
-    const controller = new AbortController();
-    const { signal } = controller;
-    const lattice = (density: number) => {
-      const k = Math.min(density, MAX_LATTICE / Math.max(sourceProjection.width, sourceProjection.height));
-      return [Math.round(sourceProjection.width * k), Math.round(sourceProjection.height * k)] as const;
+          ? hasPrefetch &&
+            demGrid.grid.source === expectedSource &&
+            !!projectionRect(demGrid.projection, projection)
+          : demGrid.grid.source === expectedSource && !!projectionRect(demGrid.projection, projection));
+    const exactPending = demRequestsRef.current.get(key);
+    const pendingEntry =
+      exactPending && !exactPending.controller.signal.aborted
+        ? ([key, exactPending] as const)
+        : [...demRequestsRef.current.entries()].find(
+            ([, candidate]) =>
+              !candidate.controller.signal.aborted &&
+              candidate.region === coverageRegion &&
+              candidate.projection.width >= projection.width &&
+              candidate.projection.height >= projection.height &&
+              projectionRect(candidate.projection, projection),
+          );
+    const pendingKey = pendingEntry?.[0] ?? key;
+    const pending = pendingEntry?.[1];
+    if (!pending && canReuse) {
+      setDemLoading(false);
+      return;
+    }
+    const request = pending ?? createDemLoadRequest(sourceProjection, cx, cy, fx, fy, coverageRegion);
+    if (!pending) demRequestsRef.current.set(key, request);
+    acquireDemRequest(request);
+    const requestProjection = pending?.projection ?? sourceProjection;
+    if (request.coarseGrid) setDemGrid({ projection: requestProjection, grid: request.coarseGrid });
+    else if (!canReuse) setDemGrid(null);
+    setDemLoading(true);
+
+    let active = true;
+    const removeRequest = () => {
+      if (demRequestsRef.current.get(pendingKey) === request) demRequestsRef.current.delete(pendingKey);
     };
-    void (async () => {
-      const [cx, cy] = lattice(COARSE_DENSITY);
-      const stopCoarse = startVital('dem_load', { phase: 'coarse', nx: cx, ny: cy }, signal);
-      try {
-        const first = await loadDemGrid(sourceProjection, cx, cy, signal);
-        stopCoarse('ok');
-        if (signal.aborted) return;
-        setDemGrid({ projection: sourceProjection, grid: first });
-      } catch (error) {
-        stopCoarse(signal.aborted ? 'aborted' : 'error');
-        if (signal.aborted) return;
-        reportWarning('load_dem_coarse', error);
-        if (viewMode === 'gpx' && points) {
-          setToast(copy.toast.demFallback);
-          setDemGrid({
-            projection: sourceProjection,
-            grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
-          });
-        } else if (!demGrid) {
-          setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
-        }
-        return;
+    const applyCoarseFallback = (error: unknown) => {
+      if (viewMode === 'gpx' && points) {
+        setToast(copy.toast.demFallback);
+        setDemGrid({
+          projection: sourceProjection,
+          grid: gpxElevationGrid(projectTrack(points, sourceProjection, 4), cx, cy, sourceProjection.width, sourceProjection.height),
+        });
+      } else {
+        if (!tutorialMode) setToast(copy.toast.demUnavailable);
+        setDemGrid({ projection: sourceProjection, grid: tutorialMode ? tutorialElevationGrid(cx, cy) : flatElevationGrid(cx, cy) });
       }
-      const [fx, fy] = lattice(FINE_DENSITY);
-      const stopFine = startVital('dem_load', { phase: 'fine', nx: fx, ny: fy }, signal);
-      try {
-        const fine = await loadDemGrid(sourceProjection, fx, fy, signal);
-        stopFine('ok');
-        if (!signal.aborted) setDemGrid({ projection: sourceProjection, grid: fine });
-      } catch (error) {
-        stopFine(signal.aborted ? 'aborted' : 'error');
-        // the first pass stays
-        if (!signal.aborted) reportWarning('load_dem_fine', error);
-      }
-    })();
-    return () => controller.abort();
-  }, [projection, points, viewMode]);
+      reportWarning('load_dem_coarse', error);
+      setDemLoading(false);
+    };
+    void request.coarse
+      .then((first) => {
+        if (!active) return;
+        setDemGrid({ projection: requestProjection, grid: first });
+      })
+      .catch((error) => {
+        removeRequest();
+        if (!active || request.controller.signal.aborted) return;
+        applyCoarseFallback(error);
+      });
+    void request.fine
+      .then((fine) => {
+        removeRequest();
+        rememberDemCache(demCacheRef.current, pendingKey, { projection: requestProjection, grid: fine });
+        if (!active) return;
+        setDemGrid({ projection: requestProjection, grid: fine });
+        setDemLoading(false);
+      })
+      .catch((error) => {
+        removeRequest();
+        if (!active || request.controller.signal.aborted || request.coarseError !== null) return;
+        // The coarse grid remains visible when only the refinement fails.
+        reportWarning('load_dem_fine', error);
+        setDemLoading(false);
+      });
+    return () => {
+      active = false;
+      releaseDemRequest(request);
+    };
+  }, [copy, coverageRegion, flatMapMode, points, projection, tutorialMode, viewMode]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1701,7 +1935,7 @@ export default function App() {
   }, [cancelCurrentLocationRequest]);
 
   const model = useMemo<EngineModel | null>(() => {
-    if (!projection || !terrain) return null;
+    if (!projection) return null;
     const gpx = viewMode === 'gpx' && progress && profile;
     return {
       ...layout,
@@ -1715,13 +1949,31 @@ export default function App() {
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
-      mapStyle: baseMapStyle,
+      mapStyle: effectiveMapStyle,
       mapMode: viewMode === 'map',
       sunlightEnabled: viewMode !== 'map' || mapSunlight,
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [baseMapStyle, currentLocation, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [
+    coverageRegion,
+    currentLocation,
+    date,
+    effectiveMapStyle,
+    high,
+    layout,
+    mapPin,
+    mapProjection,
+    mapSunlight,
+    profile,
+    progress,
+    projection,
+    showHigh,
+    terrain,
+    track,
+    viewMode,
+    ways,
+  ]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
@@ -1806,13 +2058,15 @@ export default function App() {
   useEffect(() => {
     const engine = engineRef.current;
     if (!permalink || permalinkAppliedRef.current || !engine || !model || viewMode !== 'map') return;
+    const wantsRaisedView = permalink.view === '3d' || permalink.view === 'fpv';
+    if (wantsRaisedView && coverageRegion !== 'unsupported' && !terrain) return;
     permalinkApplyingRef.current = true;
     const focusPoint =
       permalink.view === '3d' && permalink.focus && mapProjection
         ? mapProjection.project(permalink.focus)
         : null;
     try {
-      if (permalink.view === 'fpv' && permalink.fpv && mapProjection) {
+      if (permalink.view === 'fpv' && permalink.fpv && mapProjection && canRaise) {
         const point = mapProjection.project({ lat: permalink.fpv.lat, lon: permalink.fpv.lon });
         engine.startFpvAtMapPoint(point.x, point.y, {
           bearing: permalink.fpv.bearing,
@@ -1827,7 +2081,7 @@ export default function App() {
         });
       } else {
         engine.setViewState({
-          raised: permalink.view === '3d',
+          raised: wantsRaisedView && canRaise,
           bearing: permalink.bearing ?? undefined,
           pitch: permalink.pitch ?? undefined,
           zoom: permalink.zoom ?? undefined,
@@ -1835,7 +2089,7 @@ export default function App() {
         });
         if (focusPoint) engine.centerViewOnMapPoint(focusPoint.x, focusPoint.y);
       }
-      if (permalink.sun === 'auto' && permalink.view === '3d') {
+      if (permalink.sun === 'auto' && permalink.view === '3d' && canRaise) {
         const sun = sunInput(fb?.root ?? pageRef.current);
         if (sun) {
           const start = daylight?.rise == null ? 0 : Math.max(0, daylight.rise - MAP_SUNRISE_OFFSET);
@@ -1857,7 +2111,7 @@ export default function App() {
       date_source: permalink.date ? 'query' : 'today',
       sun: permalink.sun ?? 'default',
     });
-  }, [daylight, mapProjection, model, permalink, viewMode]);
+  }, [canRaise, coverageRegion, daylight, mapProjection, model, permalink, terrain, viewMode]);
 
   useEffect(() => {
     engineRef.current?.setPlacing(placing);
@@ -1913,8 +2167,8 @@ export default function App() {
     const region = shownDetail;
     const s = region.density;
     const last = detailDrawn.current;
-    const photoOnly = baseMapStyle === 'photo';
-    const namesOnly = baseMapStyle === 'photoNames';
+    const photoOnly = effectiveMapStyle === 'photo';
+    const namesOnly = effectiveMapStyle === 'photoNames';
     const photoBase = photoRef.current;
     if (namesOnly && !photoBase) return;
     let keep: OffscreenCanvas | null = null;
@@ -1960,8 +2214,8 @@ export default function App() {
       engineRef.current?.refreshDetail();
     };
     const stream = namesOnly
-      ? streamNames(projection, s, region, nextContext, controller.signal, () => {})
-      : streamRelief(projection, s, region, nextContext, controller.signal, () => {}, baseMapStyle);
+      ? streamNames(projection, s, region, nextContext, controller.signal, () => {}, coverageRegion)
+      : streamRelief(projection, s, region, nextContext, controller.signal, () => {}, effectiveMapStyle, coverageRegion);
     void stream
       .then(() => {
         if (controller.signal.aborted) return;
@@ -1987,7 +2241,7 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [detailWanted, shownDetail, projection, baseMapStyle]);
+  }, [coverageRegion, detailWanted, effectiveMapStyle, shownDetail, projection]);
 
   useLayoutEffect(() => {
     engineRef.current?.refreshPop();
@@ -2529,16 +2783,16 @@ export default function App() {
     !!terrain &&
     !mapManeuverActive &&
     (apart || fpvActive || fpvSelecting);
-  const photoRouteOverlay = (baseMapStyle === 'photo' || baseMapStyle === 'photoNames') && apart && !!shownDetail;
+  const photoRouteOverlay = (effectiveMapStyle === 'photo' || effectiveMapStyle === 'photoNames') && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
   const mapStyleLabel =
-    baseMapStyle === 'std'
+    effectiveMapStyle === 'std'
       ? copy.ui.standardMap
-      : baseMapStyle === 'pale'
+      : effectiveMapStyle === 'pale'
         ? copy.ui.paleMap
-        : baseMapStyle === 'blank'
+        : effectiveMapStyle === 'blank'
           ? copy.ui.blankMap
-          : baseMapStyle === 'photo'
+          : effectiveMapStyle === 'photo'
             ? copy.ui.aerial
             : copy.ui.photoNames;
   const gpxActionLabel =
@@ -2609,14 +2863,13 @@ export default function App() {
   const clearCurrentLocation = () => {
     if (!currentLocation) return;
     detachPermalink('current_location_clear');
-    currentLocationRequestRef.current += 1;
-    pendingCurrentLocationRef.current = null;
-    currentLocationRecenterRef.current = false;
+    invalidateMapSearchRequest();
+    cancelCurrentLocationRequest();
     setCurrentLocation(null);
-    setCurrentLocationBusy(false);
   };
   const showCurrentLocation = async () => {
     if (viewMode !== 'map' || !mapReady) return;
+    invalidateMapSearchRequest();
     const requestId = ++currentLocationRequestRef.current;
     setCurrentLocationBusy(true);
     try {
@@ -2790,6 +3043,11 @@ export default function App() {
             </div>
 
             <div className="map" data-map="" style={mapStyle}>
+              {coverageRegion === 'unsupported' && (
+                <div className="map-coverage-message" data-piece="coverage" data-map-control="" drawable="" role="status" data-selectable="">
+                  {copy.ui.mapCoverageUnsupported}
+                </div>
+              )}
               <StageHost host={fb?.mapControls ?? null}>
               <div className="map-actions">
                 {shouldShowCurrentLocationControl(viewMode, apart) && (
@@ -2817,10 +3075,10 @@ export default function App() {
                     onClick={() => setMapSwitchOpen((open) => !open)}
                   >
                     <span>{mapSwitchOpen ? copy.ui.map : mapStyleLabel}</span>
-                  {mapLoading && (
+                  {mapDataLoading && (
                     <span className="map-switch-loading" role="status" aria-live="polite">
                       <i className="map-spinner" aria-hidden="true" />
-                      {copy.ui.mapLoading}
+                      {mapLoading ? copy.ui.mapLoading : copy.ui.elevationLoading}
                     </span>
                   )}
                     <b className="map-switch-chevron" aria-hidden="true">
@@ -2829,27 +3087,31 @@ export default function App() {
                   </button>
                   {mapSwitchOpen && (
                     <>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
+                      <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
                         {copy.ui.standardMap}
                       </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
-                        {copy.ui.paleMap}
-                      </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
-                        {copy.ui.blankMap}
-                      </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
-                        {copy.ui.aerial}
-                      </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
-                        {copy.ui.photoNames}
-                      </button>
+                      {coverageRegion !== 'united-states' && (
+                        <>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
+                            {copy.ui.paleMap}
+                          </button>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
+                            {copy.ui.blankMap}
+                          </button>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
+                            {copy.ui.aerial}
+                          </button>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
+                            {copy.ui.photoNames}
+                          </button>
+                        </>
+                      )}
                       <span className="map-switch-divider" aria-hidden="true" />
                       <button
                         type="button"
                         className="map-switch-option"
                         aria-pressed={hillshade}
-                        disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
+                        disabled={effectiveMapStyle === 'photo' || effectiveMapStyle === 'photoNames'}
                         onClick={toggleHillshade}
                       >
                         {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
@@ -2857,6 +3119,7 @@ export default function App() {
                     </>
                   )}
                 </div>
+                <MapCredit region={coverageRegion} copy={copy} />
               </div>
               </StageHost>
               {viewMode === 'map' && mapPin && (
@@ -2973,6 +3236,7 @@ export default function App() {
                           onChange={(event) => setMapSearch(event.target.value)}
                           placeholder={copy.ui.mapSearchPlaceholder}
                           aria-label={copy.ui.mapSearchPlaceholder}
+                          data-dd-privacy="mask"
                           spellCheck={false}
                         />
                         <button type="submit" className="field" disabled={mapSearchBusy}>
@@ -2986,13 +3250,13 @@ export default function App() {
                         </div>
                       )}
                       {mapSearchLocation && (
-                        <div className="map-search-location" data-selectable="">
+                        <div className="map-search-location" data-dd-privacy="mask" data-selectable="">
                           {mapSearchLocation.label}
                         </div>
                       )}
                       {mapSearchError && <p className="map-search-error" data-selectable="">{mapSearchError}</p>}
                       {mapSearchResults.length > 0 && (
-                        <ol className="map-search-results" data-scroll="">
+                        <ol className="map-search-results" data-dd-privacy="mask" data-scroll="">
                           {mapSearchResults.map((result) => (
                             <li key={`${result.lat}:${result.lon}:${result.label}`}>
                               <button type="button" onClick={() => centerMap(result, 'result', result)}>
@@ -3266,9 +3530,6 @@ export default function App() {
                       </li>
                     ))}
                   </ol>
-                  <p className="credit" data-selectable="">
-                    {copy.ui.gsiCredit}
-                  </p>
                 </div>
                 </section>
               )}
@@ -3759,7 +4020,7 @@ export default function App() {
               data-key="flip"
               data-face="front"
               drawable=""
-              disabled={fpvActive || fpvSelecting}
+              disabled={fpvActive || fpvSelecting || (!apart && !canRaise)}
               tabIndex={apart ? -1 : 0}
               onClick={() => {
                 detachPermalink('raise');
@@ -4081,7 +4342,7 @@ export default function App() {
               type="button"
               data-hud-hit="flip"
               tabIndex={-1}
-              disabled={fpvActive || fpvSelecting}
+              disabled={fpvActive || fpvSelecting || (!apart && !canRaise)}
               onClick={() => {
                 addAction('view_mode_toggled', { target: apart ? 'flat' : 'raised' });
                 engineRef.current?.toggle();

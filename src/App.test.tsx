@@ -463,6 +463,26 @@ describe('App initial restore lifecycle', () => {
     expect(container.querySelector('.terrain-status')?.textContent).toMatch(/Loading terrain|地形を読み込み中/);
   });
 
+  it('shows the map loading indicator while map data is loading', async () => {
+    const { container } = await renderApp();
+
+    expect(container.querySelector('.map-switch-loading')?.textContent).toMatch(/Loading map|地図を読み込み中/);
+  });
+
+  it('keeps attribution inside the map control group', async () => {
+    const { container } = await renderApp();
+    const mapActions = container.querySelector('.map-actions');
+
+    expect(mapActions?.querySelector('.map-credit')).not.toBeNull();
+    expect(mapActions?.lastElementChild?.classList.contains('map-credit')).toBe(true);
+  });
+
+  it('masks map search input values from session replay', async () => {
+    const { container } = await renderApp();
+
+    expect(container.querySelector('.map-search-form input')?.getAttribute('data-dd-privacy')).toBe('mask');
+  });
+
   it('waits for and then centers on a saved GPX', async () => {
     harness.savedGpx = SAVED_GPX;
 

@@ -1,4 +1,5 @@
 import type { MapProjection, MapTile } from './geo';
+import { regionProfileFor, type CoverageRegion } from './regions';
 
 /**
  * Two pictures of the selected GSI map. The flat pale map is Zessoku's: the hillshade over it at 35 %.
@@ -7,6 +8,7 @@ import type { MapProjection, MapTile } from './geo';
  */
 const MAP_MAX_ZOOM = 18;
 const BLANK_MAX_ZOOM = 14;
+const OSM_MAX_ZOOM = 19;
 /** Start with one extra source zoom so the first close view does not need a new base texture. */
 const INITIAL_ZOOM_BONUS = 1;
 const HILLSHADE_MAX_ZOOM = 16;
@@ -14,43 +16,134 @@ const HILLSHADE_OPACITY = 0.35;
 const PAPER = '#f2f1ee';
 const TILE = 256;
 const PHOTO_NAMES_OPACITY = 0.42;
+const TILE_REQUEST_TIMEOUT_MS = 15_000;
 
 export type MapStyle = 'std' | 'pale' | 'blank' | 'photo' | 'photoNames';
 
-function mapLayer(style: MapStyle) {
+function mapLayer(style: MapStyle, region: CoverageRegion) {
+  if (regionProfileFor(region).mapTiles === 'osm') return 'standard';
   return style === 'photo' || style === 'photoNames' ? 'seamlessphoto' : style;
 }
 
-export function maxZoomForStyle(style: MapStyle) {
+export function maxZoomForStyle(style: MapStyle, region: CoverageRegion = 'japan') {
+  if (regionProfileFor(region).mapTiles === 'osm') return OSM_MAX_ZOOM;
   return style === 'blank' ? BLANK_MAX_ZOOM : MAP_MAX_ZOOM;
 }
 
-function stripsRelief(style: MapStyle) {
-  return style === 'std' || style === 'pale';
+function stripsRelief(style: MapStyle, region: CoverageRegion) {
+  return regionProfileFor(region).mapTiles !== 'osm' && (style === 'std' || style === 'pale');
 }
 
-function usesHillshade(style: MapStyle) {
-  return style === 'std' || style === 'pale' || style === 'blank';
+function usesHillshade(style: MapStyle, region: CoverageRegion) {
+  return regionProfileFor(region).mapTiles !== 'osm' && (style === 'std' || style === 'pale' || style === 'blank');
 }
 
 type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
-const tileBlobCache = new Map<string, Promise<Blob | null>>();
+type CachedTileBlob = { blob: Blob; expiresAt: number };
+type TileBlobLoad = {
+  controller: AbortController;
+  promise: Promise<CachedTileBlob | null>;
+  consumers: number;
+};
+
+const tileBlobCache = new Map<string, CachedTileBlob>();
+const tileBlobLoads = new Map<string, TileBlobLoad>();
 const MAX_TILE_BLOBS = 256;
+const MAX_TILE_CONCURRENT_REQUESTS = 8;
+
+async function forEachTile<T>(tiles: readonly MapTile[], load: (tile: MapTile, index: number) => Promise<T>) {
+  let next = 0;
+  const worker = async () => {
+    while (next < tiles.length) {
+      const index = next;
+      next += 1;
+      await load(tiles[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MAX_TILE_CONCURRENT_REQUESTS, tiles.length) }, () => worker()));
+}
+
+async function loadTiles(tiles: readonly MapTile[], load: (tile: MapTile) => Promise<ImageBitmap | null>) {
+  const images: Array<ImageBitmap | null> = new Array(tiles.length).fill(null);
+  await forEachTile(tiles, async (tile, index) => {
+    images[index] = await load(tile);
+  });
+  return images;
+}
+
+function cacheExpiry(response: Response) {
+  const cacheControl = response.headers.get('cache-control') ?? '';
+  if (/\bno-store\b/i.test(cacheControl)) return 0;
+  const maxAge = /\bmax-age=(\d+)/i.exec(cacheControl);
+  if (maxAge) {
+    const seconds = Number(maxAge[1]);
+    return seconds > 0 ? Date.now() + seconds * 1000 : 0;
+  }
+  const expires = response.headers.get('expires');
+  const timestamp = expires ? Date.parse(expires) : Number.NaN;
+  return Number.isFinite(timestamp) && timestamp > Date.now() ? timestamp : 0;
+}
 
 async function loadTile(url: string, signal?: AbortSignal) {
   try {
-    let blob = tileBlobCache.get(url);
-    if (!blob) {
-      blob = fetch(url)
-        .then((response) => (response.ok ? response.blob() : null))
-        .catch(() => null);
-      tileBlobCache.set(url, blob);
-      if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+    if (signal?.aborted) return null;
+    let source = tileBlobCache.get(url);
+    if (source && (source.expiresAt === 0 || (source.expiresAt > 0 && source.expiresAt <= Date.now()))) {
+      tileBlobCache.delete(url);
+      source = undefined;
     }
-    const source = await blob;
-    if (!source || signal?.aborted) return null;
-    return await createImageBitmap(source);
+    if (!source) {
+      let loading = tileBlobLoads.get(url);
+      if (loading?.controller.signal.aborted) {
+        tileBlobLoads.delete(url);
+        loading = undefined;
+      }
+      if (!loading) {
+        const controller = new AbortController();
+        loading = { controller, promise: Promise.resolve(null), consumers: 0 };
+        loading.promise = (async () => {
+          const timeout = window.setTimeout(() => controller.abort(), TILE_REQUEST_TIMEOUT_MS);
+          try {
+            const response = await fetch(url, { signal: controller.signal });
+            if (!response.ok) return null;
+            const loaded = { blob: await response.blob(), expiresAt: cacheExpiry(response) };
+            if (loaded.expiresAt > 0) {
+              tileBlobCache.set(url, loaded);
+              if (tileBlobCache.size > MAX_TILE_BLOBS) tileBlobCache.delete(tileBlobCache.keys().next().value as string);
+            }
+            return loaded;
+          } finally {
+            window.clearTimeout(timeout);
+          }
+        })().finally(() => {
+          if (tileBlobLoads.get(url) === loading) tileBlobLoads.delete(url);
+        });
+        tileBlobLoads.set(url, loading);
+      }
+      loading.consumers += 1;
+      let removeAbortListener: (() => void) | undefined;
+      try {
+        const loaded = signal
+          ? await Promise.race([
+              loading.promise,
+              new Promise<null>((resolve) => {
+                const onAbort = () => resolve(null);
+                signal.addEventListener('abort', onAbort, { once: true });
+                removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+              }),
+            ])
+          : await loading.promise;
+        if (!loaded || signal?.aborted) return null;
+        source = loaded;
+      } finally {
+        removeAbortListener?.();
+        loading.consumers -= 1;
+        if (loading.consumers === 0 && tileBlobLoads.get(url) === loading) loading.controller.abort();
+      }
+    }
+    if (signal?.aborted) return null;
+    return await createImageBitmap(source.blob);
   } catch (error) {
     if (signal?.aborted) throw error;
     return null;
@@ -66,7 +159,10 @@ function tilesIn(projection: MapProjection, zoom: number, region: MapRegion) {
     .filter((t) => t.left < region.x + region.w && t.left + t.size > region.x && t.top < region.y + region.h && t.top + t.size > region.y);
 }
 
-const tileUrl = (layer: string, tile: MapTile) => `https://cyberjapandata.gsi.go.jp/xyz/${layer}/${tile.z}/${tile.x}/${tile.y}.${layer === 'seamlessphoto' ? 'jpg' : 'png'}`;
+function tileUrl(layer: string, tile: MapTile, region: CoverageRegion) {
+  if (regionProfileFor(region).mapTiles === 'osm') return `https://tile.openstreetmap.org/${tile.z}/${tile.x}/${tile.y}.png`;
+  return `https://cyberjapandata.gsi.go.jp/xyz/${layer}/${tile.z}/${tile.x}/${tile.y}.${layer === 'seamlessphoto' ? 'jpg' : 'png'}`;
+}
 
 function placeTile(context: Context2D, image: CanvasImageSource, tile: MapTile, region: MapRegion, density: number) {
   // a hair of overlap so tile seams never show
@@ -251,6 +347,7 @@ export async function renderBasemaps(
   onProgress: () => void,
   style: MapStyle = 'pale',
   hillshade = true,
+  coverage: CoverageRegion = 'japan',
 ) {
   const region: MapRegion = { x: 0, y: 0, w: projection.width, h: projection.height };
   const width = Math.max(1, Math.round(region.w * density));
@@ -264,27 +361,26 @@ export async function renderBasemaps(
         : null
       : null;
   const strip = stripper();
-  const maxZoom = maxZoomForStyle(style);
+  const maxZoom = maxZoomForStyle(style, coverage);
   const zoom = Math.min(maxZoom, projection.zoomFor(density, 5, maxZoom) + INITIAL_ZOOM_BONUS);
-  const layer = mapLayer(style);
+  const layer = mapLayer(style, coverage);
   let loaded = 0;
-  await Promise.all(
-    tilesIn(projection, zoom, region).map(async (tile) => {
-      const image = await loadTile(tileUrl(layer, tile), signal);
-      if (!image) return;
-      if (signal.aborted) return image.close();
-      loaded += 1;
-      placeTile(flat, image, tile, region, density);
-      if (photo) placeTile(photo, image, tile, region, density);
-      placeTile(relief, stripsRelief(style) ? strip(image) : image, tile, region, density);
-      image.close();
-      onProgress();
-    }),
-  );
-  if (loaded === 0) throw new Error('GSI map tiles are unavailable.');
+  const tiles = tilesIn(projection, zoom, region);
+  await forEachTile(tiles, async (tile) => {
+    const image = await loadTile(tileUrl(layer, tile, coverage), signal);
+    if (!image) return;
+    if (signal.aborted) return image.close();
+    loaded += 1;
+    placeTile(flat, image, tile, region, density);
+    if (photo) placeTile(photo, image, tile, region, density);
+    placeTile(relief, stripsRelief(style, coverage) ? strip(image) : image, tile, region, density);
+    image.close();
+    onProgress();
+  });
+  if (loaded === 0) throw new Error('Map tiles are unavailable.');
   if (style === 'photoNames') {
     const nameTiles = tilesIn(projection, zoom, region);
-    const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile), signal)));
+    const names = await loadTiles(nameTiles, (tile) => loadTile(tileUrl('std', tile, coverage), signal));
     if (signal.aborted) return;
     flat.globalAlpha = PHOTO_NAMES_OPACITY;
     relief.globalAlpha = PHOTO_NAMES_OPACITY;
@@ -297,9 +393,9 @@ export async function renderBasemaps(
     flat.globalAlpha = 1;
     relief.globalAlpha = 1;
   }
-  if (hillshade && usesHillshade(style)) {
+  if (hillshade && usesHillshade(style, coverage)) {
     const hillTiles = tilesIn(projection, Math.min(zoom, HILLSHADE_MAX_ZOOM), region);
-    const shades = await Promise.all(hillTiles.map((tile) => loadTile(tileUrl('hillshademap', tile), signal)));
+    const shades = await loadTiles(hillTiles, (tile) => loadTile(tileUrl('hillshademap', tile, coverage), signal));
     if (signal.aborted) return;
     flat.globalAlpha = HILLSHADE_OPACITY;
     shades.forEach((image, index) => {
@@ -324,15 +420,15 @@ export async function streamRelief(
   signal: AbortSignal,
   onTile: () => void,
   style: MapStyle = 'pale',
+  coverage: CoverageRegion = 'japan',
 ) {
   const strip = stripper();
-  const zoom = projection.zoomFor(density, 5, maxZoomForStyle(style));
-  const layer = mapLayer(style);
+  const zoom = projection.zoomFor(density, 5, maxZoomForStyle(style, coverage));
   const fetchRegion: MapRegion = {
-    x: Math.max(0, region.x - region.w * DETAIL_HALO),
-    y: Math.max(0, region.y - region.h * DETAIL_HALO),
-    w: Math.min(projection.width, region.w * (1 + 2 * DETAIL_HALO)),
-    h: Math.min(projection.height, region.h * (1 + 2 * DETAIL_HALO)),
+    x: Math.max(0, region.x - (regionProfileFor(coverage).mapTiles === 'osm' ? 0 : region.w * DETAIL_HALO)),
+    y: Math.max(0, region.y - (regionProfileFor(coverage).mapTiles === 'osm' ? 0 : region.h * DETAIL_HALO)),
+    w: Math.min(projection.width, region.w * (regionProfileFor(coverage).mapTiles === 'osm' ? 1 : 1 + 2 * DETAIL_HALO)),
+    h: Math.min(projection.height, region.h * (regionProfileFor(coverage).mapTiles === 'osm' ? 1 : 1 + 2 * DETAIL_HALO)),
   };
   fetchRegion.w = Math.min(projection.width - fetchRegion.x, fetchRegion.w);
   fetchRegion.h = Math.min(projection.height - fetchRegion.y, fetchRegion.h);
@@ -340,19 +436,20 @@ export async function streamRelief(
   const cy = region.y + region.h / 2;
   const away = (t: MapTile) => Math.hypot(t.left + t.size / 2 - cx, t.top + t.size / 2 - cy);
   const tiles = tilesIn(projection, zoom, fetchRegion).sort((a, b) => away(a) - away(b));
-  await Promise.all(
-    tiles.map(async (tile) => {
-      const image = await loadTile(tileUrl(layer, tile), signal);
-      if (!image) return;
-      if (signal.aborted) return image.close();
-      placeTile(context, stripsRelief(style) ? strip(image) : image, tile, region, density);
-      image.close();
-      onTile();
-    }),
-  );
+  let loaded = 0;
+  await forEachTile(tiles, async (tile) => {
+    const image = await loadTile(tileUrl(mapLayer(style, coverage), tile, coverage), signal);
+    if (!image) return;
+    if (signal.aborted) return image.close();
+    placeTile(context, stripsRelief(style, coverage) ? strip(image) : image, tile, region, density);
+    image.close();
+    loaded += 1;
+    onTile();
+  });
+  if (!signal.aborted && loaded === 0) throw new Error('Map detail tiles are unavailable.');
   if (style === 'photoNames') {
     const nameTiles = tilesIn(projection, zoom, fetchRegion);
-    const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile), signal)));
+    const names = await loadTiles(nameTiles, (tile) => loadTile(tileUrl('std', tile, coverage), signal));
     if (signal.aborted) return;
     names.forEach((image, index) => {
       if (!image) return;
@@ -373,31 +470,30 @@ export async function streamNames(
   context: CanvasRenderingContext2D,
   signal: AbortSignal,
   onTile: () => void,
+  coverage: CoverageRegion = 'japan',
 ) {
-  const zoom = projection.zoomFor(density, 5, MAP_MAX_ZOOM);
+  const zoom = projection.zoomFor(density, 5, maxZoomForStyle('std', coverage));
   const fetchRegion: MapRegion = {
-    x: Math.max(0, region.x - region.w * DETAIL_HALO),
-    y: Math.max(0, region.y - region.h * DETAIL_HALO),
-    w: Math.min(projection.width, region.w * (1 + 2 * DETAIL_HALO)),
-    h: Math.min(projection.height, region.h * (1 + 2 * DETAIL_HALO)),
+    x: Math.max(0, region.x - (regionProfileFor(coverage).mapTiles === 'osm' ? 0 : region.w * DETAIL_HALO)),
+    y: Math.max(0, region.y - (regionProfileFor(coverage).mapTiles === 'osm' ? 0 : region.h * DETAIL_HALO)),
+    w: Math.min(projection.width, region.w * (regionProfileFor(coverage).mapTiles === 'osm' ? 1 : 1 + 2 * DETAIL_HALO)),
+    h: Math.min(projection.height, region.h * (regionProfileFor(coverage).mapTiles === 'osm' ? 1 : 1 + 2 * DETAIL_HALO)),
   };
   fetchRegion.w = Math.min(projection.width - fetchRegion.x, fetchRegion.w);
   fetchRegion.h = Math.min(projection.height - fetchRegion.y, fetchRegion.h);
   const tiles = tilesIn(projection, zoom, fetchRegion);
   let loaded = 0;
-  await Promise.all(
-    tiles.map(async (tile) => {
-      const image = await loadTile(tileUrl('std', tile), signal);
-      if (!image) return;
-      if (signal.aborted) return image.close();
-      const contextAlpha = context.globalAlpha;
-      context.globalAlpha = PHOTO_NAMES_OPACITY;
-      placeTile(context, image, tile, region, density);
-      context.globalAlpha = contextAlpha;
-      image.close();
-      loaded += 1;
-      onTile();
-    }),
-  );
-  if (!signal.aborted && loaded === 0) throw new Error('GSI name tiles are unavailable.');
+  await forEachTile(tiles, async (tile) => {
+    const image = await loadTile(tileUrl('std', tile, coverage), signal);
+    if (!image) return;
+    if (signal.aborted) return image.close();
+    const contextAlpha = context.globalAlpha;
+    context.globalAlpha = PHOTO_NAMES_OPACITY;
+    placeTile(context, image, tile, region, density);
+    context.globalAlpha = contextAlpha;
+    image.close();
+    loaded += 1;
+    onTile();
+  });
+  if (!signal.aborted && loaded === 0) throw new Error('Map name tiles are unavailable.');
 }
