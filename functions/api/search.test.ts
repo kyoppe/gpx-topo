@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { googleMapsLocation, normalizeSearchResults } from './search';
+import { googleMapsLocation, normalizeSearchResults, onRequest } from './search';
 
 describe('googleMapsLocation', () => {
   it('formats a resolved Google Maps coordinate as a search result', () => {
@@ -39,5 +39,16 @@ describe('normalizeSearchResults', () => {
         { geometry: { coordinates: [139, 35] }, properties: { title: 'valid' } },
       ]),
     ).toEqual([{ label: 'valid', lat: 35, lon: 139 }]);
+  });
+});
+
+describe('onRequest', () => {
+  it('returns a resolved overseas Google Maps link without using GSI search', async () => {
+    const response = await onRequest({
+      request: new Request(`https://example.test/api/search?q=${encodeURIComponent('https://www.google.com/maps/@51.5074,-0.1278,12z')}`),
+    });
+    expect(await response.json()).toEqual({
+      results: [{ label: '51.507400, -0.127800', lat: 51.5074, lon: -0.1278 }],
+    });
   });
 });

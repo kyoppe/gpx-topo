@@ -884,6 +884,24 @@ main[lang='en'] .in-ways > .row small {
   font-size: 11px;
 }
 
+.map-coverage-message {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  max-width: 240px;
+  padding: 10px 14px;
+  transform: translate(-50%, -50%);
+  color: #4f4d48;
+  background: rgb(255 255 255 / 88%);
+  border: 1px solid rgb(79 77 72 / 24%);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  pointer-events: none;
+}
+
 .map-search-results {
   max-height: 160px;
   margin: 8px 0 0;

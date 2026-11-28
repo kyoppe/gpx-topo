@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cropElevationGrid, decodeDemElevation } from './dem';
+import { cropElevationGrid, decodeDemElevation, interpolateElevationSamples } from './dem';
 
 describe('GSI DEM PNG decoder', () => {
   it('decodes positive and negative elevations from RGB values', () => {
@@ -21,5 +21,10 @@ describe('GSI DEM PNG decoder', () => {
     };
     const cropped = cropElevationGrid(source, 4, 4, 1, 1, 2, 2, 2, 2);
     expect(Array.from(cropped.values)).toEqual([10, 15, 20, 15, 20, 25, 20, 25, 30]);
+  });
+
+  it('resamples a USGS sample lattice and fills missing samples', () => {
+    const values = interpolateElevationSamples([0, 10, null, 30], 1, 1, 2, 2);
+    expect(Array.from(values)).toEqual([0, 5, 10, 5, 12.5, 20, 10, 20, 30]);
   });
 });

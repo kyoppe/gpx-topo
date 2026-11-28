@@ -36,6 +36,11 @@ describe('base map zoom limits', () => {
     expect(maxZoomForStyle('photo')).toBe(18);
     expect(maxZoomForStyle('photoNames')).toBe(18);
   });
+
+  it('uses the OSM zoom range for the United States provider', () => {
+    expect(maxZoomForStyle('blank', 'united-states')).toBe(19);
+    expect(maxZoomForStyle('photo', 'united-states')).toBe(19);
+  });
 });
 
 describe('pale map contour inks', () => {

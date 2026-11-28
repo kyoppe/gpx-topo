@@ -33,6 +33,7 @@ import { CurrentLocationError, requestCurrentLocation, type CurrentLocation } fr
 import { fromPermalinkView, toPermalinkView, type PermalinkFrame } from './permalinkView';
 import { ensureWaypoints, highestIndex, nextWaypointName, parseKm, planWaypoints, pointAtKm, trackProgress } from './plan';
 import { isGoogleMapsUrl, normalizeSearchResponse, parseMapSearchInput, type Coordinates, type SearchLocation } from './mapSearch';
+import { regionForCoordinates, type CoverageRegion } from './regions';
 import { shareTextWithPermalink } from './sharePermalink';
 import { formatClock, instantFor, parseClock, solarPosition, sunTimes } from './sun';
 import { FlagContent, useFlagBrushes } from './Flag';
@@ -591,6 +592,8 @@ export default function App() {
     [mapViewport, layout.mapWidth, layout.mapHeight],
   );
   const projection = viewMode === 'map' ? mapProjection : gpxProjection;
+  const coverageRegion: CoverageRegion = projection ? regionForCoordinates(projection.centerLat, projection.centerLon) : 'japan';
+  const effectiveMapStyle: MapStyle = coverageRegion === 'united-states' ? 'std' : baseMapStyle;
   // Map-only prefetching is useful while flat for dragging, but the raised model
   // should use the same visible-area terrain pipeline as GPX mode.
   const flatMapMode = viewMode === 'map' && !apart;
@@ -808,6 +811,13 @@ export default function App() {
   const centerMap = useCallback(
     (center: Coordinates, source: string, location?: SearchLocation) => {
       if (apartRef.current) return;
+      if (regionForCoordinates(center.lat, center.lon) === 'unsupported') {
+        setMapSearchResults([]);
+        setMapSearchLocation(null);
+        setMapSearchError(copy.ui.mapSearchUnsupported);
+        addAction('map_search_unsupported_region', { source, lat: center.lat, lon: center.lon });
+        return;
+      }
       detachPermalink('map_center');
       setMapViewport((viewportState) => ({
         lat: center.lat,
@@ -819,7 +829,7 @@ export default function App() {
       setMapSearchError(null);
       addAction('map_search_selected', { source });
     },
-    [detachPermalink, gpxProjection],
+    [copy.ui.mapSearchUnsupported, detachPermalink, gpxProjection],
   );
   const searchMap = useCallback(
     async (event?: FormEvent) => {
@@ -1135,10 +1145,21 @@ export default function App() {
       setMapLoading(false);
       return;
     }
+    if (coverageRegion === 'unsupported') {
+      for (const canvas of [flat, relief, photo]) {
+        canvas.width = 1;
+        canvas.height = 1;
+      }
+      detailDrawn.current = null;
+      mapBufferRef.current = null;
+      setBasemap(null);
+      setMapLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setMapLoading(true);
     const density = Math.min(2, window.devicePixelRatio || 1);
-    const pad = flatMapMode ? MAP_PAN_BUFFER : 0;
+    const pad = flatMapMode && coverageRegion !== 'united-states' ? MAP_PAN_BUFFER : 0;
     const renderProjection = pad
       ? createCenteredProjection(projection.centerLat, projection.centerLon, projection.width + pad * 2, projection.height + pad * 2, projection.scale)
       : projection;
@@ -1217,7 +1238,16 @@ export default function App() {
       }
       setBasemap(projection);
     };
-    void renderBasemaps(renderProjection, density, { flat: nextFlat, relief: nextRelief, photo: nextPhoto }, controller.signal, () => {}, baseMapStyle, hillshade)
+    void renderBasemaps(
+      renderProjection,
+      density,
+      { flat: nextFlat, relief: nextRelief, photo: nextPhoto },
+      controller.signal,
+      () => {},
+      effectiveMapStyle,
+      hillshade,
+      coverageRegion,
+    )
       .then(() => {
         if (controller.signal.aborted) return;
         setMapLoading(false);
@@ -1243,7 +1273,7 @@ export default function App() {
         if (!controller.signal.aborted) {
           cancelCurrentLocationRequest();
           setMapLoading(false);
-          reportError('load_basemap', error, { map_style: baseMapStyle });
+          reportError('load_basemap', error, { map_style: effectiveMapStyle });
           setToast(copy.toast.mapTilesFailed);
         }
       });
@@ -1251,11 +1281,11 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [baseMapStyle, cancelCurrentLocationRequest, flatMapMode, hillshade, projection, viewMode]);
+  }, [cancelCurrentLocationRequest, coverageRegion, effectiveMapStyle, flatMapMode, hillshade, projection, viewMode]);
 
   useEffect(() => {
     if (!projection) return;
-    const sourcePad = flatMapMode ? DEM_PREFETCH : 0;
+    const sourcePad = flatMapMode && coverageRegion !== 'united-states' ? DEM_PREFETCH : 0;
     const sourceProjection = sourcePad
       ? createCenteredProjection(
           projection.centerLat,
@@ -1277,7 +1307,10 @@ export default function App() {
       (viewMode === 'gpx'
         ? hasPrefetch && projectionRect(demGrid.projection, projection)
         : flatMapMode
-          ? hasPrefetch && demGrid.grid.source === 'gsi-dem' && !!projectionRect(demGrid.projection, projection)
+          ? hasPrefetch &&
+            ((coverageRegion === 'japan' && demGrid.grid.source === 'gsi-dem') ||
+              (coverageRegion === 'united-states' && demGrid.grid.source === 'usgs-3dep')) &&
+            !!projectionRect(demGrid.projection, projection)
           : exactProjection);
     if (canReuse) return;
     const controller = new AbortController();
@@ -1290,7 +1323,7 @@ export default function App() {
       const [cx, cy] = lattice(COARSE_DENSITY);
       const stopCoarse = startVital('dem_load', { phase: 'coarse', nx: cx, ny: cy }, signal);
       try {
-        const first = await loadDemGrid(sourceProjection, cx, cy, signal);
+        const first = await loadDemGrid(sourceProjection, cx, cy, signal, coverageRegion);
         stopCoarse('ok');
         if (signal.aborted) return;
         setDemGrid({ projection: sourceProjection, grid: first });
@@ -1312,7 +1345,7 @@ export default function App() {
       const [fx, fy] = lattice(FINE_DENSITY);
       const stopFine = startVital('dem_load', { phase: 'fine', nx: fx, ny: fy }, signal);
       try {
-        const fine = await loadDemGrid(sourceProjection, fx, fy, signal);
+        const fine = await loadDemGrid(sourceProjection, fx, fy, signal, coverageRegion);
         stopFine('ok');
         if (!signal.aborted) setDemGrid({ projection: sourceProjection, grid: fine });
       } catch (error) {
@@ -1322,7 +1355,7 @@ export default function App() {
       }
     })();
     return () => controller.abort();
-  }, [projection, points, viewMode]);
+  }, [coverageRegion, flatMapMode, projection, points, viewMode]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1715,13 +1748,13 @@ export default function App() {
       date,
       lat: projection.centerLat,
       lon: projection.centerLon,
-      mapStyle: baseMapStyle,
+      mapStyle: effectiveMapStyle,
       mapMode: viewMode === 'map',
       sunlightEnabled: viewMode !== 'map' || mapSunlight,
       profilePoint: gpx ? (km: number) => [profile.X(km), profile.Y(profile.eleAt(km))] : () => [0, 0],
       profileKm: gpx ? profile.K : () => 0,
     };
-  }, [baseMapStyle, currentLocation, date, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
+  }, [currentLocation, date, effectiveMapStyle, high, layout, mapPin, mapProjection, mapSunlight, profile, progress, projection, showHigh, terrain, track, viewMode, ways]);
 
   useLayoutEffect(() => {
     if (model) engineRef.current?.setModel(model);
@@ -1913,8 +1946,8 @@ export default function App() {
     const region = shownDetail;
     const s = region.density;
     const last = detailDrawn.current;
-    const photoOnly = baseMapStyle === 'photo';
-    const namesOnly = baseMapStyle === 'photoNames';
+    const photoOnly = effectiveMapStyle === 'photo';
+    const namesOnly = effectiveMapStyle === 'photoNames';
     const photoBase = photoRef.current;
     if (namesOnly && !photoBase) return;
     let keep: OffscreenCanvas | null = null;
@@ -1960,8 +1993,8 @@ export default function App() {
       engineRef.current?.refreshDetail();
     };
     const stream = namesOnly
-      ? streamNames(projection, s, region, nextContext, controller.signal, () => {})
-      : streamRelief(projection, s, region, nextContext, controller.signal, () => {}, baseMapStyle);
+      ? streamNames(projection, s, region, nextContext, controller.signal, () => {}, coverageRegion)
+      : streamRelief(projection, s, region, nextContext, controller.signal, () => {}, effectiveMapStyle, coverageRegion);
     void stream
       .then(() => {
         if (controller.signal.aborted) return;
@@ -1987,7 +2020,7 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [detailWanted, shownDetail, projection, baseMapStyle]);
+  }, [coverageRegion, detailWanted, effectiveMapStyle, shownDetail, projection]);
 
   useLayoutEffect(() => {
     engineRef.current?.refreshPop();
@@ -2529,18 +2562,19 @@ export default function App() {
     !!terrain &&
     !mapManeuverActive &&
     (apart || fpvActive || fpvSelecting);
-  const photoRouteOverlay = (baseMapStyle === 'photo' || baseMapStyle === 'photoNames') && apart && !!shownDetail;
+  const photoRouteOverlay = (effectiveMapStyle === 'photo' || effectiveMapStyle === 'photoNames') && apart && !!shownDetail;
   const mapStyle = { left: layout.mapX, top: layout.mapY, width: layout.mapWidth, height: layout.mapHeight };
   const mapStyleLabel =
-    baseMapStyle === 'std'
+    effectiveMapStyle === 'std'
       ? copy.ui.standardMap
-      : baseMapStyle === 'pale'
+      : effectiveMapStyle === 'pale'
         ? copy.ui.paleMap
-        : baseMapStyle === 'blank'
+        : effectiveMapStyle === 'blank'
           ? copy.ui.blankMap
-          : baseMapStyle === 'photo'
+          : effectiveMapStyle === 'photo'
             ? copy.ui.aerial
             : copy.ui.photoNames;
+  const mapCredit = coverageRegion === 'united-states' ? copy.ui.osmCredit : copy.ui.gsiCredit;
   const gpxActionLabel =
     gpxRestoreState === 'pending' ? copy.ui.loadingGpx : gpxSource === 'user' ? copy.ui.gpxMode : copy.ui.openGpx;
   const startMapManeuver = (kind: MapManeuverKind) => {
@@ -2790,6 +2824,11 @@ export default function App() {
             </div>
 
             <div className="map" data-map="" style={mapStyle}>
+              {coverageRegion === 'unsupported' && (
+                <div className="map-coverage-message" role="status" data-selectable="">
+                  {copy.ui.mapCoverageUnsupported}
+                </div>
+              )}
               <StageHost host={fb?.mapControls ?? null}>
               <div className="map-actions">
                 {shouldShowCurrentLocationControl(viewMode, apart) && (
@@ -2829,27 +2868,31 @@ export default function App() {
                   </button>
                   {mapSwitchOpen && (
                     <>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
+                      <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'std'} onClick={() => selectMapStyle('std')}>
                         {copy.ui.standardMap}
                       </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
-                        {copy.ui.paleMap}
-                      </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
-                        {copy.ui.blankMap}
-                      </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
-                        {copy.ui.aerial}
-                      </button>
-                      <button type="button" className="map-switch-option" aria-pressed={baseMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
-                        {copy.ui.photoNames}
-                      </button>
+                      {coverageRegion !== 'united-states' && (
+                        <>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'pale'} onClick={() => selectMapStyle('pale')}>
+                            {copy.ui.paleMap}
+                          </button>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'blank'} onClick={() => selectMapStyle('blank')}>
+                            {copy.ui.blankMap}
+                          </button>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'photo'} onClick={() => selectMapStyle('photo')}>
+                            {copy.ui.aerial}
+                          </button>
+                          <button type="button" className="map-switch-option" aria-pressed={effectiveMapStyle === 'photoNames'} onClick={() => selectMapStyle('photoNames')}>
+                            {copy.ui.photoNames}
+                          </button>
+                        </>
+                      )}
                       <span className="map-switch-divider" aria-hidden="true" />
                       <button
                         type="button"
                         className="map-switch-option"
                         aria-pressed={hillshade}
-                        disabled={baseMapStyle === 'photo' || baseMapStyle === 'photoNames'}
+                        disabled={effectiveMapStyle === 'photo' || effectiveMapStyle === 'photoNames'}
                         onClick={toggleHillshade}
                       >
                         {hillshade ? copy.ui.hillshadeOn : copy.ui.hillshadeOff}
@@ -3003,6 +3046,9 @@ export default function App() {
                           ))}
                         </ol>
                       )}
+                      <p className="credit" data-selectable="">
+                        {mapCredit}
+                      </p>
                     </div>
                   )}
                 </section>
@@ -3267,7 +3313,7 @@ export default function App() {
                     ))}
                   </ol>
                   <p className="credit" data-selectable="">
-                    {copy.ui.gsiCredit}
+                    {mapCredit}
                   </p>
                 </div>
                 </section>

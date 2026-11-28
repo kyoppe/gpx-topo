@@ -1,4 +1,4 @@
-import { formatCoordinates, MAX_SEARCH_RESULTS, resolveGoogleMapsLocation, type Coordinates } from '../../src/mapSearch';
+import { formatCoordinates, isGoogleMapsUrl, MAX_SEARCH_RESULTS, resolveGoogleMapsLocation, type Coordinates } from '../../src/mapSearch';
 import { loadMunicipalityNames, normalizeGsiSearchResults } from '../../src/gsiSearch';
 
 export function googleMapsLocation(coordinates: Coordinates & { label?: string }) {
@@ -19,12 +19,15 @@ export async function onRequest(context: { request: Request }) {
     return Response.json({ results: [] }, { status: 400 });
   }
   try {
-    const location = await resolveGoogleMapsLocation(query);
-    if (location) {
-      return Response.json({ results: [googleMapsLocation(location)] }, { headers: { 'cache-control': 'public, max-age=3600' } });
+    if (isGoogleMapsUrl(query)) {
+      const location = await resolveGoogleMapsLocation(query);
+      return Response.json(
+        { results: location ? [googleMapsLocation(location)] : [] },
+        { headers: { 'cache-control': 'public, max-age=3600' } },
+      );
     }
   } catch {
-    // Fall through to the normal address search if a Google Maps redirect cannot be resolved.
+    return Response.json({ results: [] }, { headers: { 'cache-control': 'public, max-age=3600' } });
   }
   const upstream = await fetch(`https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(query)}`, {
     cf: { cacheEverything: true, cacheTtl: 3600 },

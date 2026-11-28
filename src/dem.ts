@@ -1,6 +1,7 @@
 import { createCenteredProjection, type MapProjection } from './geo';
 import type { SiteScene } from './siteScene';
 import { decodePng } from './png';
+import { regionProfileFor, type CoverageRegion } from './regions';
 
 const TILE = 256;
 const INVALID_RGB = (128 << 16) | (0 << 8) | 0;
@@ -12,7 +13,7 @@ export type ElevationGrid = {
   nx: number;
   ny: number;
   values: Float32Array;
-  source: 'gsi-dem' | 'gpx';
+  source: 'gsi-dem' | 'usgs-3dep' | 'gpx';
 };
 
 export function decodeDemElevation(red: number, green: number, blue: number) {
@@ -71,13 +72,132 @@ async function fetchDemTile(z: number, x: number, y: number, signal?: AbortSigna
   return null;
 }
 
+const USGS_SAMPLES_URL = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
+// Keep the query well below common URL-size limits. The service supports more
+// samples, but browser GET requests become unreliable before that limit.
+const USGS_MAX_SAMPLE_POINTS = 100;
+
+type UsgsSample = {
+  locationId?: number;
+  value?: number | string;
+};
+
+type UsgsSamplesResponse = {
+  samples?: UsgsSample[];
+  error?: { message?: string };
+};
+
+async function fetchUsgsSamples(points: readonly { lat: number; lon: number }[], signal?: AbortSignal) {
+  const values = new Array<number | null>(points.length).fill(null);
+  for (let offset = 0; offset < points.length; offset += USGS_MAX_SAMPLE_POINTS) {
+    const batch = points.slice(offset, offset + USGS_MAX_SAMPLE_POINTS);
+    const params = new URLSearchParams({
+      geometry: JSON.stringify({
+        points: batch.map((point) => [point.lon, point.lat]),
+        spatialReference: { wkid: 4326 },
+      }),
+      geometryType: 'esriGeometryMultipoint',
+      returnFirstValueOnly: 'true',
+      interpolation: 'RSP_BilinearInterpolation',
+      f: 'json',
+    });
+    const response = await fetch(`${USGS_SAMPLES_URL}?${params}`, { signal });
+    if (!response.ok) throw new Error(`USGS 3DEP sample request failed: ${response.status}`);
+    const body = (await response.json()) as UsgsSamplesResponse;
+    if (body.error) throw new Error(body.error.message ?? 'USGS 3DEP sample request failed.');
+    for (let index = 0; index < (body.samples?.length ?? 0); index += 1) {
+      const sample = body.samples?.[index];
+      const localIndex = Number.isInteger(sample?.locationId) ? Number(sample?.locationId) : index;
+      const value = Number(sample?.value);
+      if (localIndex >= 0 && localIndex < batch.length && Number.isFinite(value)) values[offset + localIndex] = value;
+    }
+  }
+  return values;
+}
+
+function fillMissingSamples(samples: readonly (number | null)[]) {
+  const filled = samples.slice();
+  const valid = filled.flatMap((value, index) => (value === null ? [] : [{ index, value }]));
+  if (!valid.length) throw new Error('USGS 3DEP has no elevation data for this area.');
+  for (let index = 0; index < filled.length; index += 1) {
+    if (filled[index] !== null) continue;
+    let nearest = valid[0];
+    let distance = Math.abs(nearest.index - index);
+    for (const candidate of valid.slice(1)) {
+      const nextDistance = Math.abs(candidate.index - index);
+      if (nextDistance < distance) {
+        nearest = candidate;
+        distance = nextDistance;
+      }
+    }
+    filled[index] = nearest.value;
+  }
+  return filled as number[];
+}
+
+/** Resamples a small USGS sample lattice to the lattice consumed by the terrain renderer. */
+export function interpolateElevationSamples(
+  samples: readonly (number | null)[],
+  sampleNx: number,
+  sampleNy: number,
+  nx: number,
+  ny: number,
+) {
+  const sourceW = sampleNx + 1;
+  const source = fillMissingSamples(samples);
+  const values = new Float32Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j += 1) {
+    const gy = (j / Math.max(1, ny)) * sampleNy;
+    const y0 = Math.min(sampleNy - 1, Math.floor(gy));
+    const fy = gy - y0;
+    for (let i = 0; i <= nx; i += 1) {
+      const gx = (i / Math.max(1, nx)) * sampleNx;
+      const x0 = Math.min(sampleNx - 1, Math.floor(gx));
+      const fx = gx - x0;
+      const a = source[y0 * sourceW + x0];
+      const b = source[y0 * sourceW + x0 + 1];
+      const c = source[(y0 + 1) * sourceW + x0];
+      const d = source[(y0 + 1) * sourceW + x0 + 1];
+      values[j * (nx + 1) + i] = a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+    }
+  }
+  return values;
+}
+
+async function loadUsgsDemGrid(
+  projection: MapProjection,
+  nx: number,
+  ny: number,
+  signal?: AbortSignal,
+): Promise<ElevationGrid> {
+  const sampleNx = Math.min(Math.max(1, nx), 9);
+  const sampleNy = Math.min(Math.max(1, ny), 9);
+  const points = [];
+  for (let j = 0; j <= sampleNy; j += 1) {
+    for (let i = 0; i <= sampleNx; i += 1) {
+      points.push(projection.inverse((i / sampleNx) * projection.width, (j / sampleNy) * projection.height));
+    }
+  }
+  const samples = await fetchUsgsSamples(points, signal);
+  return {
+    nx,
+    ny,
+    values: interpolateElevationSamples(samples, sampleNx, sampleNy, nx, ny),
+    source: 'usgs-3dep',
+  };
+}
+
 /** Samples GSI DEM tiles (DEM10B) on the lattice the terrain is built from. */
 export async function loadDemGrid(
   projection: MapProjection,
   nx: number,
   ny: number,
   signal?: AbortSignal,
+  region: CoverageRegion = 'japan',
 ): Promise<ElevationGrid> {
+  const profile = regionProfileFor(region);
+  if (profile.elevation === 'usgs-3dep') return loadUsgsDemGrid(projection, nx, ny, signal);
+  if (profile.elevation === 'none') throw new Error('Elevation data is unavailable for this region.');
   const zoom = projection.zoomFor((2 * nx) / projection.width, 5, 14);
   const tiles = projection.tiles(zoom);
   const decoded = new Map<string, Float32Array | 'sea'>();
