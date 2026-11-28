@@ -2892,7 +2892,6 @@ export default function App() {
                 </div>
               )}
               <StageHost host={fb?.mapControls ?? null}>
-              <MapCredit region={coverageRegion} copy={copy} />
               <div className="map-actions">
                 {shouldShowCurrentLocationControl(viewMode, apart) && (
                   <CurrentLocationButton
@@ -2963,6 +2962,7 @@ export default function App() {
                     </>
                   )}
                 </div>
+                <MapCredit region={coverageRegion} copy={copy} />
               </div>
               </StageHost>
               {viewMode === 'map' && mapPin && (

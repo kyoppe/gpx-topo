@@ -1313,18 +1313,17 @@ main[lang='en'] .in-ways > .row small {
 }
 
 .map-credit {
-  position: absolute;
-  /* Reserve the full map-control column so the credit remains in the lower-right map area without covering it. */
-  right: calc(14px + 124px + 8px);
-  bottom: 14px;
-  z-index: 2;
-  max-width: calc(100% - 28px);
+  position: static;
+  width: max-content;
+  max-width: none;
+  flex: 0 0 auto;
   padding: 3px 7px;
   border-radius: 4px;
   background: rgb(255 255 255 / 82%);
   color: var(--ink3);
   font: 10px/1.3 var(--sans);
   text-align: right;
+  white-space: nowrap;
   pointer-events: auto;
 }
 
@@ -2703,22 +2702,18 @@ main[lang='en'] .bar-hint {
 }
 
 .fb-map-controls .map-credit {
-  position: fixed;
-  right: max(var(--fb-edge), env(safe-area-inset-right));
-  bottom: calc(
-    var(--fb-sheet-h, 0px) + 17px + 40px
-    + max(var(--fb-edge), env(safe-area-inset-bottom))
-    + max(var(--fb-edge), env(safe-area-inset-bottom))
-    + 38px + 8px
-  );
-  top: auto;
-  left: auto;
+  order: -1;
+  align-self: flex-start;
+  margin-top: 18px;
+  font-size: 9px;
+  text-align: left;
 }
 
 .fb-map-controls .map-actions {
   position: relative;
   right: auto;
   bottom: auto;
+  align-items: flex-start;
 }
 
 .fb-map-controls .map-location-button {
@@ -2738,16 +2733,6 @@ main[lang='en'] .bar-hint {
     40px
     + max(var(--fb-edge), env(safe-area-inset-bottom))
     + max(var(--fb-edge), env(safe-area-inset-bottom))
-  );
-}
-
-.fb-ui[data-dock='true'] .fb-map-controls .map-credit {
-  right: calc(var(--fb-dock-width) + max(var(--fb-edge), env(safe-area-inset-right)));
-  bottom: calc(
-    40px
-    + max(var(--fb-edge), env(safe-area-inset-bottom))
-    + max(var(--fb-edge), env(safe-area-inset-bottom))
-    + 38px + 8px
   );
 }
 
