@@ -25,7 +25,7 @@ export async function onRequest(context: { request: Request }) {
     const location = await resolveGoogleMapsLocation(query);
     return Response.json(
       { results: location ? [googleMapsLocation(location)] : [] },
-      { headers: { 'cache-control': 'public, max-age=3600' } },
+      { headers: { 'cache-control': location ? 'public, max-age=3600' : 'no-store' } },
     );
   } catch {
     return Response.json({ results: [] }, { headers: { 'cache-control': 'no-store' } });

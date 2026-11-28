@@ -39,12 +39,12 @@ function mapSearchRedirects(): Plugin {
           }
           response.statusCode = 200;
           response.setHeader('content-type', 'application/json');
-          response.setHeader('cache-control', 'public, max-age=3600');
+          response.setHeader('cache-control', 'no-store');
           response.end(JSON.stringify({ results: [] }));
         } catch {
           response.statusCode = 200;
           response.setHeader('content-type', 'application/json');
-          response.setHeader('cache-control', 'public, max-age=3600');
+          response.setHeader('cache-control', 'no-store');
           response.end(JSON.stringify({ results: [] }));
         }
       });

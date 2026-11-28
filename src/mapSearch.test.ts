@@ -105,6 +105,7 @@ describe('map search coordinates', () => {
     expect(isGoogleMapsUrl('https://maps.app.goo.gl/example')).toBe(true);
     expect(isGoogleMapsUrl('https://www.google.com/maps/@35.548554,139.435962,15z')).toBe(true);
     expect(isGoogleMapsUrl('https://maps.google.co.uk/maps/@51.5,-0.1,12z')).toBe(true);
+    expect(isGoogleMapsUrl('https://maps.google.tk/maps/@35.5,139.4,12z')).toBe(false);
     expect(isGoogleMapsUrl('https://maps.google.attacker.example/maps/@35.5,139.4,12z')).toBe(false);
     expect(isGoogleMapsUrl('https://www.google.com.attacker.example/maps/@35.5,139.4,12z')).toBe(false);
     expect(isGoogleMapsUrl('https://accounts.google.com/robots.txt')).toBe(false);

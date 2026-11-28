@@ -9,6 +9,11 @@ describe('map coverage regions', () => {
     expect(regionForCoordinates(36.5613, 136.6562)).toBe('japan');
     expect(regionForCoordinates(33.5904, 130.4017)).toBe('japan');
     expect(regionForCoordinates(43.3306, 145.5828)).toBe('japan');
+    expect(regionForCoordinates(24.3444, 124.1852)).toBe('japan');
+    expect(regionForCoordinates(24.805, 125.281)).toBe('japan');
+    expect(regionForCoordinates(28.3, 129.5)).toBe('japan');
+    expect(regionForCoordinates(34.2, 129.3)).toBe('japan');
+    expect(regionForCoordinates(27.1, 142.2)).toBe('japan');
   });
 
   it('routes US coordinates to the US providers', () => {

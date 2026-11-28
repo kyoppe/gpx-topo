@@ -73,4 +73,15 @@ describe('onRequest', () => {
     expect(await response.json()).toEqual({ results: [] });
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
+
+  it('does not cache a Google URL that resolves without coordinates', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
+
+    const response = await onRequest({
+      request: new Request(`https://example.test/api/search?q=${encodeURIComponent('https://maps.app.goo.gl/missing')}`),
+    });
+
+    expect(await response.json()).toEqual({ results: [] });
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
 });

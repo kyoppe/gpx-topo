@@ -44,9 +44,44 @@ const COORDINATE_PAIR = new RegExp(`^\\s*(${COORDINATE})\\s*[, ]\\s*(${COORDINAT
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_GOOGLE_REDIRECTS = 5;
 const GOOGLE_REDIRECT_TIMEOUT_MS = 5_000;
-const GOOGLE_COUNTRY_DOMAIN = '(?:[a-z]{2}|com|(?:com|co)\\.[a-z]{2})';
-const GOOGLE_MAPS_HOST = new RegExp(`^maps\\.google\\.${GOOGLE_COUNTRY_DOMAIN}$`);
-const GOOGLE_WEB_HOST = new RegExp(`^(?:www\\.)?google\\.${GOOGLE_COUNTRY_DOMAIN}$`);
+const GOOGLE_COUNTRY_DOMAINS = new Set([
+  'com',
+  'ca',
+  'co.uk',
+  'de',
+  'fr',
+  'es',
+  'it',
+  'nl',
+  'be',
+  'at',
+  'ch',
+  'se',
+  'no',
+  'dk',
+  'fi',
+  'pl',
+  'pt',
+  'ie',
+  'cz',
+  'hu',
+  'gr',
+  'ro',
+  'co.jp',
+  'co.kr',
+  'co.in',
+  'com.au',
+  'co.nz',
+  'com.br',
+  'com.mx',
+  'com.sg',
+  'com.tr',
+  'co.za',
+  'co.il',
+  'com.tw',
+  'com.hk',
+  'co.th',
+]);
 
 function coordinatePair(value: string): Coordinates | null {
   const match = COORDINATE_PAIR.exec(value);
@@ -71,8 +106,12 @@ function isGoogleMapsLocationUrl(url: URL) {
   if (url.protocol !== 'https:' || url.port) return false;
   const host = url.hostname.toLowerCase();
   if (host === 'maps.app.goo.gl' || (host === 'goo.gl' && /^\/maps(?:\/|$)/.test(url.pathname))) return true;
-  if (GOOGLE_MAPS_HOST.test(host)) return true;
-  return GOOGLE_WEB_HOST.test(host) && /^\/maps(?:\/|$)/.test(url.pathname);
+  if (host.startsWith('maps.google.') && GOOGLE_COUNTRY_DOMAINS.has(host.slice('maps.google.'.length))) return true;
+  const isGoogleWebHost =
+    host === 'google.com' ||
+    (host.startsWith('google.') && GOOGLE_COUNTRY_DOMAINS.has(host.slice('google.'.length))) ||
+    (host.startsWith('www.google.') && GOOGLE_COUNTRY_DOMAINS.has(host.slice('www.google.'.length)));
+  return isGoogleWebHost && /^\/maps(?:\/|$)/.test(url.pathname);
 }
 
 export function isGoogleMapsUrl(value: string) {

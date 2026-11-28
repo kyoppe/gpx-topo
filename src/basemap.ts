@@ -49,6 +49,27 @@ type TileBlobLoad = {
 const tileBlobCache = new Map<string, CachedTileBlob>();
 const tileBlobLoads = new Map<string, TileBlobLoad>();
 const MAX_TILE_BLOBS = 256;
+const MAX_TILE_CONCURRENT_REQUESTS = 8;
+
+async function forEachTile<T>(tiles: readonly MapTile[], load: (tile: MapTile, index: number) => Promise<T>) {
+  let next = 0;
+  const worker = async () => {
+    while (next < tiles.length) {
+      const index = next;
+      next += 1;
+      await load(tiles[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MAX_TILE_CONCURRENT_REQUESTS, tiles.length) }, () => worker()));
+}
+
+async function loadTiles(tiles: readonly MapTile[], load: (tile: MapTile) => Promise<ImageBitmap | null>) {
+  const images: Array<ImageBitmap | null> = new Array(tiles.length).fill(null);
+  await forEachTile(tiles, async (tile, index) => {
+    images[index] = await load(tile);
+  });
+  return images;
+}
 
 function cacheExpiry(response: Response) {
   const cacheControl = response.headers.get('cache-control') ?? '';
@@ -334,23 +355,22 @@ export async function renderBasemaps(
   const zoom = Math.min(maxZoom, projection.zoomFor(density, 5, maxZoom) + INITIAL_ZOOM_BONUS);
   const layer = mapLayer(style, coverage);
   let loaded = 0;
-  await Promise.all(
-    tilesIn(projection, zoom, region).map(async (tile) => {
-      const image = await loadTile(tileUrl(layer, tile, coverage), signal);
-      if (!image) return;
-      if (signal.aborted) return image.close();
-      loaded += 1;
-      placeTile(flat, image, tile, region, density);
-      if (photo) placeTile(photo, image, tile, region, density);
-      placeTile(relief, stripsRelief(style, coverage) ? strip(image) : image, tile, region, density);
-      image.close();
-      onProgress();
-    }),
-  );
+  const tiles = tilesIn(projection, zoom, region);
+  await forEachTile(tiles, async (tile) => {
+    const image = await loadTile(tileUrl(layer, tile, coverage), signal);
+    if (!image) return;
+    if (signal.aborted) return image.close();
+    loaded += 1;
+    placeTile(flat, image, tile, region, density);
+    if (photo) placeTile(photo, image, tile, region, density);
+    placeTile(relief, stripsRelief(style, coverage) ? strip(image) : image, tile, region, density);
+    image.close();
+    onProgress();
+  });
   if (loaded === 0) throw new Error('Map tiles are unavailable.');
   if (style === 'photoNames') {
     const nameTiles = tilesIn(projection, zoom, region);
-    const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile, coverage), signal)));
+    const names = await loadTiles(nameTiles, (tile) => loadTile(tileUrl('std', tile, coverage), signal));
     if (signal.aborted) return;
     flat.globalAlpha = PHOTO_NAMES_OPACITY;
     relief.globalAlpha = PHOTO_NAMES_OPACITY;
@@ -365,7 +385,7 @@ export async function renderBasemaps(
   }
   if (hillshade && usesHillshade(style, coverage)) {
     const hillTiles = tilesIn(projection, Math.min(zoom, HILLSHADE_MAX_ZOOM), region);
-    const shades = await Promise.all(hillTiles.map((tile) => loadTile(tileUrl('hillshademap', tile, coverage), signal)));
+    const shades = await loadTiles(hillTiles, (tile) => loadTile(tileUrl('hillshademap', tile, coverage), signal));
     if (signal.aborted) return;
     flat.globalAlpha = HILLSHADE_OPACITY;
     shades.forEach((image, index) => {
@@ -407,21 +427,19 @@ export async function streamRelief(
   const away = (t: MapTile) => Math.hypot(t.left + t.size / 2 - cx, t.top + t.size / 2 - cy);
   const tiles = tilesIn(projection, zoom, fetchRegion).sort((a, b) => away(a) - away(b));
   let loaded = 0;
-  await Promise.all(
-    tiles.map(async (tile) => {
-      const image = await loadTile(tileUrl(mapLayer(style, coverage), tile, coverage), signal);
-      if (!image) return;
-      if (signal.aborted) return image.close();
-      placeTile(context, stripsRelief(style, coverage) ? strip(image) : image, tile, region, density);
-      image.close();
-      loaded += 1;
-      onTile();
-    }),
-  );
+  await forEachTile(tiles, async (tile) => {
+    const image = await loadTile(tileUrl(mapLayer(style, coverage), tile, coverage), signal);
+    if (!image) return;
+    if (signal.aborted) return image.close();
+    placeTile(context, stripsRelief(style, coverage) ? strip(image) : image, tile, region, density);
+    image.close();
+    loaded += 1;
+    onTile();
+  });
   if (!signal.aborted && loaded === 0) throw new Error('Map detail tiles are unavailable.');
   if (style === 'photoNames') {
     const nameTiles = tilesIn(projection, zoom, fetchRegion);
-    const names = await Promise.all(nameTiles.map((tile) => loadTile(tileUrl('std', tile, coverage), signal)));
+    const names = await loadTiles(nameTiles, (tile) => loadTile(tileUrl('std', tile, coverage), signal));
     if (signal.aborted) return;
     names.forEach((image, index) => {
       if (!image) return;
@@ -455,19 +473,17 @@ export async function streamNames(
   fetchRegion.h = Math.min(projection.height - fetchRegion.y, fetchRegion.h);
   const tiles = tilesIn(projection, zoom, fetchRegion);
   let loaded = 0;
-  await Promise.all(
-    tiles.map(async (tile) => {
-      const image = await loadTile(tileUrl('std', tile, coverage), signal);
-      if (!image) return;
-      if (signal.aborted) return image.close();
-      const contextAlpha = context.globalAlpha;
-      context.globalAlpha = PHOTO_NAMES_OPACITY;
-      placeTile(context, image, tile, region, density);
-      context.globalAlpha = contextAlpha;
-      image.close();
-      loaded += 1;
-      onTile();
-    }),
-  );
+  await forEachTile(tiles, async (tile) => {
+    const image = await loadTile(tileUrl('std', tile, coverage), signal);
+    if (!image) return;
+    if (signal.aborted) return image.close();
+    const contextAlpha = context.globalAlpha;
+    context.globalAlpha = PHOTO_NAMES_OPACITY;
+    placeTile(context, image, tile, region, density);
+    context.globalAlpha = contextAlpha;
+    image.close();
+    loaded += 1;
+    onTile();
+  });
   if (!signal.aborted && loaded === 0) throw new Error('Map name tiles are unavailable.');
 }

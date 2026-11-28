@@ -780,6 +780,7 @@ export default function App() {
   const mapReady = !!projection && basemap === projection;
   const mapDataLoading = mapLoading || demLoading;
   const canRaise = coverageRegion !== 'unsupported' && terrain !== null;
+  const mapHillshade = coverageRegion === 'japan' && hillshade;
 
   const switchViewMode = useCallback(
     (next: ViewMode) => {
@@ -1393,7 +1394,7 @@ export default function App() {
       controller.signal,
       () => {},
       effectiveMapStyle,
-      hillshade,
+      mapHillshade,
       coverageRegion,
     )
       .then(() => {
@@ -1429,7 +1430,7 @@ export default function App() {
       controller.abort();
       cancelAnimationFrame(animation);
     };
-  }, [cancelCurrentLocationRequest, coverageRegion, effectiveMapStyle, flatMapMode, hillshade, projection, viewMode]);
+  }, [cancelCurrentLocationRequest, coverageRegion, effectiveMapStyle, flatMapMode, mapHillshade, projection, viewMode]);
 
   useEffect(() => {
     if (!projection) {
