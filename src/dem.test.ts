@@ -55,4 +55,50 @@ describe('GSI DEM PNG decoder', () => {
     expect(requests.every((request) => request.method === 'POST')).toBe(true);
     expect(requests.map((request) => request.points).sort((a, b) => a - b)).toEqual([96, 1000, 1000, 1000, 1000]);
   });
+
+  it('aborts remaining USGS batches after one request fails', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        calls += 1;
+        if (calls === 1) return Promise.resolve(new Response('failed', { status: 500 }));
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      }),
+    );
+
+    const projection = createCenteredProjection(36.1, -112.1, 1000, 1000, 1);
+    await expect(loadDemGrid(projection, 64, 64, undefined, 'united-states', 'fine')).rejects.toThrow(
+      'USGS 3DEP sample request failed: 500',
+    );
+    expect(calls).toBe(4);
+  });
+
+  it('times out stalled USGS sample batches', async () => {
+    vi.useFakeTimers();
+    try {
+      let abortedSignals = 0;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+          new Promise<Response>((resolve) => {
+            init?.signal?.addEventListener('abort', () => {
+              abortedSignals += 1;
+              resolve(new Response(JSON.stringify({ error: { message: 'aborted' } }), { status: 200 }));
+            }, { once: true });
+          })
+        )),
+      );
+
+      const projection = createCenteredProjection(36.1, -112.1, 1000, 1000, 1);
+      const loading = expect(loadDemGrid(projection, 64, 64, undefined, 'united-states', 'fine')).rejects.toThrow('aborted');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await loading;
+      expect(abortedSignals).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

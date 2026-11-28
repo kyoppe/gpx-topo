@@ -477,6 +477,12 @@ describe('App initial restore lifecycle', () => {
     expect(mapActions?.lastElementChild?.classList.contains('map-credit')).toBe(true);
   });
 
+  it('masks map search input values from session replay', async () => {
+    const { container } = await renderApp();
+
+    expect(container.querySelector('.map-search-form input')?.getAttribute('data-dd-privacy')).toBe('mask');
+  });
+
   it('waits for and then centers on a saved GPX', async () => {
     harness.savedGpx = SAVED_GPX;
 

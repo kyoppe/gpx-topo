@@ -43,7 +43,7 @@ const CONTIGUOUS_UNITED_STATES: readonly Point[] = [
   [-103.3, 29],
   [-102, 28.7],
   [-100, 28],
-  [-97.2, 25.8],
+  [-97.5, 25.8],
   [-95, 28.5],
   [-91.2, 29],
   [-88, 30],
@@ -105,12 +105,23 @@ const SOUTHERN_CANADA: readonly Point[] = [
 
 const ALASKA: readonly Point[] = [
   [-170, 51],
-  [-130, 51],
-  [-130, 54.5],
-  [-136, 57],
+  [-160, 53],
+  [-150, 54],
+  [-141, 55],
+  [-137, 54.6],
+  [-133, 54.6],
+  [-130, 56],
+  [-130, 60],
   [-141, 60],
   [-141, 72],
   [-170, 72],
+];
+
+const FLORIDA_KEYS: readonly Point[] = [
+  [-82.2, 24.3],
+  [-80, 24.3],
+  [-80, 26],
+  [-82.2, 26],
 ];
 
 const HAWAII: readonly Point[] = [
@@ -241,7 +252,8 @@ function inUnitedStates(lat: number, lon: number) {
       inPolygon(lon, lat, NORTHERN_MAINE)) &&
       !inPolygon(lon, lat, SOUTHERN_CANADA)) ||
     inPolygon(lon, lat, ALASKA) ||
-    inPolygon(lon, lat, HAWAII)
+    inPolygon(lon, lat, HAWAII) ||
+    inPolygon(lon, lat, FLORIDA_KEYS)
   );
 }
 

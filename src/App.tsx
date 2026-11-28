@@ -66,6 +66,7 @@ const MIN_PAGE_HEIGHT = 640;
 const COARSE_DENSITY = 0.4;
 const FINE_DENSITY = 2.5;
 const MAX_LATTICE = 2047;
+const MAX_DEM_CACHE_ENTRIES = 2;
 /** Extra map pixels kept around the viewport so flat-map dragging never exposes an empty edge. */
 const MAP_PAN_BUFFER = 512;
 /** DEM prefetch extends beyond the visual drag buffer so the next viewport is already covered. */
@@ -124,6 +125,8 @@ type DemCache = {
 
 type DemLoadRequest = {
   controller: AbortController;
+  projection: MapProjection;
+  region: CoverageRegion;
   coarse: Promise<ElevationGrid>;
   fine: Promise<ElevationGrid>;
   coarseGrid: ElevationGrid | null;
@@ -161,6 +164,8 @@ function createDemLoadRequest(
   let rejectFine!: (error: unknown) => void;
   const request: DemLoadRequest = {
     controller,
+    projection: sourceProjection,
+    region: coverageRegion,
     coarse: new Promise<ElevationGrid>((resolve, reject) => {
       resolveCoarse = resolve;
       rejectCoarse = reject;
@@ -205,6 +210,16 @@ function createDemLoadRequest(
     }
   })();
   return request;
+}
+
+function rememberDemCache(cache: Map<string, DemCache>, key: string, value: DemCache) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > MAX_DEM_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }
 
 function acquireDemRequest(request: DemLoadRequest) {
@@ -945,7 +960,7 @@ export default function App() {
         setMapSearchResults([]);
         setMapSearchLocation(null);
         setMapSearchError(copy.ui.mapSearchUnsupported);
-        addAction('map_search_unsupported_region', { source, lat: center.lat, lon: center.lon });
+        addAction('map_search_unsupported_region', { source, region: 'unsupported' });
         return;
       }
       detachPermalink('map_center');
@@ -1445,6 +1460,8 @@ export default function App() {
     const expectedSource = coverageRegion === 'japan' ? 'gsi-dem' : 'usgs-3dep';
     const cached = demCacheRef.current.get(key);
     if (cached?.grid.source === expectedSource) {
+      demCacheRef.current.delete(key);
+      demCacheRef.current.set(key, cached);
       setDemGrid(cached);
       setDemLoading(false);
       return;
@@ -1464,7 +1481,17 @@ export default function App() {
             demGrid.grid.source === expectedSource &&
             !!projectionRect(demGrid.projection, projection)
           : demGrid.grid.source === expectedSource && !!projectionRect(demGrid.projection, projection));
-    const pending = demRequestsRef.current.get(key);
+    const pendingEntry = demRequestsRef.current.has(key)
+      ? ([key, demRequestsRef.current.get(key)!] as const)
+      : [...demRequestsRef.current.entries()].find(
+          ([, candidate]) =>
+            candidate.region === coverageRegion &&
+            candidate.projection.width >= projection.width &&
+            candidate.projection.height >= projection.height &&
+            projectionRect(candidate.projection, projection),
+        );
+    const pendingKey = pendingEntry?.[0] ?? key;
+    const pending = pendingEntry?.[1];
     if (!pending && canReuse) {
       setDemLoading(false);
       return;
@@ -1472,13 +1499,14 @@ export default function App() {
     const request = pending ?? createDemLoadRequest(sourceProjection, cx, cy, fx, fy, coverageRegion);
     if (!pending) demRequestsRef.current.set(key, request);
     acquireDemRequest(request);
-    if (request.coarseGrid) setDemGrid({ projection: sourceProjection, grid: request.coarseGrid });
+    const requestProjection = pending?.projection ?? sourceProjection;
+    if (request.coarseGrid) setDemGrid({ projection: requestProjection, grid: request.coarseGrid });
     else if (!canReuse) setDemGrid(null);
     setDemLoading(true);
 
     let active = true;
     const removeRequest = () => {
-      if (demRequestsRef.current.get(key) === request) demRequestsRef.current.delete(key);
+      if (demRequestsRef.current.get(pendingKey) === request) demRequestsRef.current.delete(pendingKey);
     };
     const applyCoarseFallback = (error: unknown) => {
       if (viewMode === 'gpx' && points) {
@@ -1497,7 +1525,7 @@ export default function App() {
     void request.coarse
       .then((first) => {
         if (!active) return;
-        setDemGrid({ projection: sourceProjection, grid: first });
+        setDemGrid({ projection: requestProjection, grid: first });
       })
       .catch((error) => {
         removeRequest();
@@ -1507,9 +1535,9 @@ export default function App() {
     void request.fine
       .then((fine) => {
         removeRequest();
-        demCacheRef.current.set(key, { projection: sourceProjection, grid: fine });
+        rememberDemCache(demCacheRef.current, pendingKey, { projection: requestProjection, grid: fine });
         if (!active) return;
-        setDemGrid({ projection: sourceProjection, grid: fine });
+        setDemGrid({ projection: requestProjection, grid: fine });
         setDemLoading(false);
       })
       .catch((error) => {
@@ -3201,6 +3229,7 @@ export default function App() {
                           onChange={(event) => setMapSearch(event.target.value)}
                           placeholder={copy.ui.mapSearchPlaceholder}
                           aria-label={copy.ui.mapSearchPlaceholder}
+                          data-dd-privacy="mask"
                           spellCheck={false}
                         />
                         <button type="submit" className="field" disabled={mapSearchBusy}>

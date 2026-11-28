@@ -18,10 +18,13 @@ describe('map coverage regions', () => {
     expect(regionForCoordinates(25.7617, -80.1918)).toBe('united-states');
     expect(regionForCoordinates(31.7619, -106.485)).toBe('united-states');
     expect(regionForCoordinates(29.24666706192231, -103.30491923588015)).toBe('united-states');
+    expect(regionForCoordinates(25.9, -97.5)).toBe('united-states');
+    expect(regionForCoordinates(24.55, -81.78)).toBe('united-states');
     expect(regionForCoordinates(42.3314, -83.0458)).toBe('united-states');
     expect(regionForCoordinates(46.495, -84.35)).toBe('united-states');
     expect(regionForCoordinates(46.681, -68.015)).toBe('united-states');
     expect(regionForCoordinates(61.2176, -149.8997)).toBe('united-states');
+    expect(regionForCoordinates(58.3, -134.4)).toBe('united-states');
     expect(regionProfileFor('united-states')).toEqual({
       id: 'united-states',
       mapTiles: 'osm',
@@ -36,6 +39,8 @@ describe('map coverage regions', () => {
     expect(regionForCoordinates(42.3149, -83.0364)).toBe('unsupported');
     expect(regionForCoordinates(46.52, -84.34)).toBe('unsupported');
     expect(regionForCoordinates(60.7212, -135.0568)).toBe('unsupported');
+    expect(regionForCoordinates(53.5, -132.5)).toBe('unsupported');
+    expect(regionForCoordinates(54.31, -130.32)).toBe('unsupported');
     expect(regionForCoordinates(51.5074, -0.1278)).toBe('unsupported');
     expect(regionForCoordinates(37.5665, 126.978)).toBe('unsupported');
     expect(regionForCoordinates(35.1796, 129.0756)).toBe('unsupported');

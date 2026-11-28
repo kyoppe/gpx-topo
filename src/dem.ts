@@ -78,6 +78,7 @@ const USGS_SAMPLES_URL = 'https://elevation.nationalmap.gov/arcgis/rest/services
 // many small browser requests.
 const USGS_MAX_SAMPLE_POINTS = 1000;
 const USGS_MAX_CONCURRENT_REQUESTS = 4;
+const USGS_REQUEST_TIMEOUT_MS = 30_000;
 // ArcGIS documents an approximate 1,000-sample operation limit. Use a denser
 // 64 x 64 lattice for the fine pass and split it into browser-safe requests.
 const USGS_MAX_SAMPLE_INTERVALS = 63;
@@ -98,39 +99,55 @@ async function fetchUsgsSamples(points: readonly { lat: number; lon: number }[],
     const offset = batchIndex * USGS_MAX_SAMPLE_POINTS;
     return { offset, points: points.slice(offset, offset + USGS_MAX_SAMPLE_POINTS) };
   });
+  const batchController = new AbortController();
+  const forwardAbort = () => batchController.abort();
+  if (signal?.aborted) batchController.abort();
+  else signal?.addEventListener('abort', forwardAbort, { once: true });
+  const timeout = window.setTimeout(() => batchController.abort(), USGS_REQUEST_TIMEOUT_MS);
   let nextBatch = 0;
   const worker = async () => {
-    while (nextBatch < batches.length) {
-      const batch = batches[nextBatch];
-      nextBatch += 1;
-      const params = new URLSearchParams({
-        geometry: JSON.stringify({
-          points: batch.points.map((point) => [point.lon, point.lat]),
-          spatialReference: { wkid: 4326 },
-        }),
-        geometryType: 'esriGeometryMultipoint',
-        returnFirstValueOnly: 'true',
-        interpolation: 'RSP_BilinearInterpolation',
-        f: 'json',
-      });
-      const response = await fetch(USGS_SAMPLES_URL, {
-        method: 'POST',
-        body: params,
-        signal,
-      });
-      if (!response.ok) throw new Error(`USGS 3DEP sample request failed: ${response.status}`);
-      const body = (await response.json()) as UsgsSamplesResponse;
-      if (body.error) throw new Error(body.error.message ?? 'USGS 3DEP sample request failed.');
-      for (let index = 0; index < (body.samples?.length ?? 0); index += 1) {
-        const sample = body.samples?.[index];
-        const localIndex = Number.isInteger(sample?.locationId) ? Number(sample?.locationId) : index;
-        const value = Number(sample?.value);
-        if (localIndex >= 0 && localIndex < batch.points.length && Number.isFinite(value)) values[batch.offset + localIndex] = value;
+    try {
+      while (nextBatch < batches.length) {
+        if (batchController.signal.aborted) throw new Error('USGS 3DEP sample requests aborted.');
+        const batch = batches[nextBatch];
+        nextBatch += 1;
+        const params = new URLSearchParams({
+          geometry: JSON.stringify({
+            points: batch.points.map((point) => [point.lon, point.lat]),
+            spatialReference: { wkid: 4326 },
+          }),
+          geometryType: 'esriGeometryMultipoint',
+          returnFirstValueOnly: 'true',
+          interpolation: 'RSP_BilinearInterpolation',
+          f: 'json',
+        });
+        const response = await fetch(USGS_SAMPLES_URL, {
+          method: 'POST',
+          body: params,
+          signal: batchController.signal,
+        });
+        if (!response.ok) throw new Error(`USGS 3DEP sample request failed: ${response.status}`);
+        const body = (await response.json()) as UsgsSamplesResponse;
+        if (body.error) throw new Error(body.error.message ?? 'USGS 3DEP sample request failed.');
+        for (let index = 0; index < (body.samples?.length ?? 0); index += 1) {
+          const sample = body.samples?.[index];
+          const localIndex = Number.isInteger(sample?.locationId) ? Number(sample?.locationId) : index;
+          const value = Number(sample?.value);
+          if (localIndex >= 0 && localIndex < batch.points.length && Number.isFinite(value)) values[batch.offset + localIndex] = value;
+        }
       }
+    } catch (error) {
+      batchController.abort();
+      throw error;
     }
   };
-  await Promise.all(Array.from({ length: Math.min(USGS_MAX_CONCURRENT_REQUESTS, batches.length) }, () => worker()));
-  return values;
+  try {
+    await Promise.all(Array.from({ length: Math.min(USGS_MAX_CONCURRENT_REQUESTS, batches.length) }, () => worker()));
+    return values;
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener('abort', forwardAbort);
+  }
 }
 
 function fillMissingSamples(samples: readonly (number | null)[]) {

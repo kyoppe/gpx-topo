@@ -101,8 +101,9 @@ The initial overseas coverage is the United States:
 
 - `std`: OpenStreetMap standard raster tiles, requested directly by the browser and attributed on the map
 - `usgs-3dep`: USGS 3DEP elevation samples, requested directly by the browser and converted into the terrain grid
-- USGS fine loading uses a 31 x 31 sample lattice, split into sequential batches of at most 100 points. The documented approximate `getSamples` operation limit is about 1,000 samples, so the fine pass stays below that limit while avoiding a large URL.
+- USGS fine loading uses a 64 x 64 sample lattice, split into batches of at most 1,000 points with at most four requests in flight. The fine pass is therefore five direct browser requests for the default 4,225 samples.
 - The coarse pass is loaded first for progressive display. If the USGS request fails, the app explicitly reports that a flat surface is being shown instead of labeling it as GSI or USGS terrain.
+- Fine grids are reused for the same projection and the two most recent completed projections are retained in memory.
 - Map tiles and DEM requests are not routed through a Cloudflare Proxy or Pages Function. The browser calls each provider directly, subject to provider CORS, terms, cache headers, attribution, and service limits.
 
 Coordinates outside the supported Japan and United States coverage are reported as unsupported. European coverage is tracked separately.
